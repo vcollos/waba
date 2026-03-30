@@ -1,0 +1,14 @@
+node_modules
+dist
+.next
+coverage
+.env
+data/*.json
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+!.gitkeep
+npm-debug.log*
+apps/**/dist
+apps/**/.next
+*.tsbuildinfo
