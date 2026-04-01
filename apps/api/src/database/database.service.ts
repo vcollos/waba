@@ -72,8 +72,9 @@ export class DatabaseService implements OnModuleDestroy {
       await this.ensureReady();
       const state = structuredClone(this.metaStateCache);
       await mutator(state);
-      this.metaStateCache = stripRelationalState(structuredClone(state));
-      await this.persistMetaState(stripRelationalState(state));
+      const compactedState = compactMetaStateForStorage(stripRelationalState(state));
+      this.metaStateCache = structuredClone(compactedState);
+      await this.persistMetaState(compactedState);
     });
     this.queue = task.then(() => undefined, () => undefined);
     return task;
@@ -83,8 +84,9 @@ export class DatabaseService implements OnModuleDestroy {
     const task = this.queue.then(async () => {
       await this.ensureReady();
       this.persistRelationalState(state);
-      this.metaStateCache = stripRelationalState(structuredClone(state));
-      await this.persistMetaState(stripRelationalState(state));
+      const compactedState = compactMetaStateForStorage(stripRelationalState(state));
+      this.metaStateCache = structuredClone(compactedState);
+      await this.persistMetaState(compactedState);
     });
     this.queue = task.then(() => undefined, () => undefined);
     return task;
@@ -221,8 +223,9 @@ export class DatabaseService implements OnModuleDestroy {
     if (!metaRow && !sqliteRow) {
       const initialState = await this.readLegacyState();
       this.persistRelationalState(initialState);
-      this.metaStateCache = stripRelationalState(structuredClone(initialState));
-      await this.persistMetaState(stripRelationalState(initialState));
+      const compactedState = compactMetaStateForStorage(stripRelationalState(initialState));
+      this.metaStateCache = structuredClone(compactedState);
+      await this.persistMetaState(compactedState);
       return;
     }
 
@@ -239,10 +242,10 @@ export class DatabaseService implements OnModuleDestroy {
       this.persistRelationalState(state);
     }
 
-    this.metaStateCache = stripRelationalState(state);
+    this.metaStateCache = compactMetaStateForStorage(stripRelationalState(state));
 
     if (this.metaClient && !metaRow) {
-      await this.persistMetaState(stripRelationalState(state));
+      await this.persistMetaState(this.metaStateCache);
     }
   }
 
