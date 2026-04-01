@@ -138,7 +138,7 @@ export default function ResultsPage() {
 
     responsesInFlightRef.current = true;
     try {
-      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses');
+      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses?limit=500');
       setResponses(payload);
       setError(null);
     } catch (err) {
@@ -158,13 +158,8 @@ export default function ResultsPage() {
       void loadSummary();
     }, 15000);
 
-    const responsesTimer = window.setInterval(() => {
-      void loadResponses();
-    }, 60000);
-
     return () => {
       window.clearInterval(summaryTimer);
-      window.clearInterval(responsesTimer);
     };
   }, []);
 

@@ -10,6 +10,7 @@ export class ResultsService {
     campaignId?: string;
     flowCacheId?: string;
     contactId?: string;
+    limit?: number;
   }) {
     const state = await this.database.readMetaSnapshot();
     const filteredResponses = state.flowResponses.filter((response) =>
@@ -42,7 +43,9 @@ export class ResultsService {
           : null;
 
         return {
-          ...response,
+          id: response.id,
+          completedAt: response.completedAt,
+          responsePayload: response.responsePayload,
           campaignName: campaign?.name ?? null,
           contactName: contact?.name ?? null,
           contactPhone: contact?.phoneE164 ?? null,
@@ -51,7 +54,8 @@ export class ResultsService {
           detectedPayloadDefinitions: flow?.completionPayloadDefinitions ?? [],
         };
       })
-      .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+      .sort((left, right) => right.completedAt.localeCompare(left.completedAt))
+      .slice(0, filters?.limit ?? 500);
   }
 
   async summary() {
@@ -286,6 +290,7 @@ const matchesFlowResponseFilters = (
     campaignId?: string;
     flowCacheId?: string;
     contactId?: string;
+    limit?: number;
   },
 ) => {
   if (filters?.campaignId && response.campaignId !== filters.campaignId) {
