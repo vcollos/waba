@@ -37,7 +37,7 @@ export class WebhooksService {
     const timestamp = String(status.timestamp ?? Math.floor(Date.now() / 1000));
     const dedupeKey = hash(`${providerMessageId}:${nextStatus}:${timestamp}`);
 
-    const state = await this.database.readMeta();
+    const state = await this.database.readMetaSnapshot();
     if (state.messageEvents.some((event) => event.dedupeKey === dedupeKey)) {
       return;
     }
@@ -97,7 +97,7 @@ export class WebhooksService {
       return;
     }
 
-    const state = await this.database.readMeta();
+    const state = await this.database.readMetaSnapshot();
     const contact = await this.database.execute((database) => {
       const row = database
         .prepare(
