@@ -3,12 +3,17 @@ dist
 .next
 coverage
 .env
+apps/web/.env.local
 data/*.json
 data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
+data/*.bak
+data/*.bak-*
 !.gitkeep
 npm-debug.log*
 apps/**/dist
 apps/**/.next
+apps/api/data/
+tmp/
 *.tsbuildinfo

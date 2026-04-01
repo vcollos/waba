@@ -62,6 +62,36 @@ npm --workspace @campaign-sender/web run dev
 - web: `http://localhost:4310`
 - api: `http://localhost:4311/api`
 
+## Como rodar com Docker
+
+O repositório já tem `docker-compose.yml` e Dockerfiles para:
+
+- `api`
+- `web`
+- `caddy`
+
+Suba assim:
+
+```bash
+docker compose up -d --build
+```
+
+Validação rápida:
+
+```bash
+docker compose ps
+curl -I http://localhost:4310
+curl -I http://localhost:4311/api/dashboard/summary
+```
+
+Observações:
+
+- o `web` agora recebe `NEXT_PUBLIC_API_BASE_URL` no `build` e no runtime
+- os serviços estão com `restart: unless-stopped`
+- depois do primeiro `docker compose up -d`, eles voltam automaticamente quando o Docker Desktop subir
+
+No macOS, para isso funcionar após reinício da máquina, você ainda precisa deixar o Docker Desktop iniciando no login.
+
 Credenciais default do piloto:
 
 - email: `admin@example.com`

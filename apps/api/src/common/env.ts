@@ -15,6 +15,7 @@ export interface AppEnv {
   adminPassword: string;
   jwtSecret: string;
   encryptionKey: string;
+  postgresUrl?: string;
   sqlitePath: string;
   legacyDataFilePath: string;
   webhookPath: string;
@@ -50,6 +51,7 @@ export const getEnv = (): AppEnv => {
   const encryptionKey = createHash('sha256')
     .update(required('APP_ENCRYPTION_KEY', 'pilot-encryption-key-change-me'))
     .digest('hex');
+  const postgresUrl = normalizeOptionalSecret(process.env.POSTGRES_URL ?? process.env.DATABASE_URL);
   const sqlitePath =
     process.env.SQLITE_PATH ?? resolve(process.cwd(), 'data/campaign-sender.sqlite');
   const legacyDataFilePath =
@@ -74,6 +76,7 @@ export const getEnv = (): AppEnv => {
     adminPassword,
     jwtSecret,
     encryptionKey,
+    postgresUrl,
     sqlitePath,
     legacyDataFilePath,
     webhookPath,

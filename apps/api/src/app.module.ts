@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, Reflector } from '@nestjs/core';
 import { AppBootstrapService } from './app-bootstrap.service';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './common/auth.guard';
@@ -28,7 +28,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     AppBootstrapService,
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      inject: [Reflector],
+      useFactory: (reflector: Reflector) => new JwtAuthGuard(reflector),
     },
   ],
 })

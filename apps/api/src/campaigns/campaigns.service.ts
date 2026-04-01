@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, nowIso, resolveParameterValue } from '../database/helpers';
 import {
+  CampaignAudienceConfig,
+  CampaignAudienceOrderField,
   CampaignMessageRecord,
   CampaignRecord,
   ContactRecord,
@@ -21,6 +23,12 @@ export interface CreateCampaignInput {
   flowCacheId?: string;
   sendRateMps?: number;
   parameterMapping?: Record<string, ParameterSource>;
+  audience?: Partial<CampaignAudienceConfig>;
+}
+
+interface GetCampaignOptions {
+  limit?: number;
+  offset?: number;
 }
 
 @Injectable()
@@ -31,31 +39,65 @@ export class CampaignsService {
   ) {}
 
   async list() {
-    const state = await this.database.read();
+    const state = await this.database.readMeta();
+    const listsById = await this.loadListsByIds(state.campaigns.map((campaign) => campaign.listId));
     return state.campaigns
       .map((campaign) => ({
         ...campaign,
         template: state.templates.find((template) => template.id === campaign.templateCacheId) ?? null,
-        list: state.lists.find((list) => list.id === campaign.listId) ?? null,
+        list: listsById.get(campaign.listId) ?? null,
       }))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async getCampaign(id: string) {
-    const state = await this.database.read();
+  async getCampaign(id: string, options?: GetCampaignOptions) {
+    const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
     if (!campaign) {
       throw new NotFoundException('Campanha não encontrada');
     }
 
+    const template = campaign.templateCacheId
+      ? state.templates.find((item) => item.id === campaign.templateCacheId) ?? null
+      : null;
+    const flow = campaign.flowCacheId
+      ? state.flows.find((item) => item.id === campaign.flowCacheId) ?? null
+      : null;
+    const list = (await this.loadListsByIds([campaign.listId])).get(campaign.listId) ?? null;
+    const allMessages = state.campaignMessages.filter((message) => message.campaignId === id);
+    const limit = Math.max(1, Math.min(500, Number(options?.limit ?? 100)));
+    const offset = Math.max(0, Number(options?.offset ?? 0));
+    const pagedMessages = allMessages.slice(offset, offset + limit);
+    const contactsById = await this.loadContactsByIds(pagedMessages.map((message) => message.contactId));
+
     return {
       ...campaign,
-      messages: state.campaignMessages.filter((message) => message.campaignId === id),
+      template,
+      flow,
+      list,
+      messagesTotal: allMessages.length,
+      messagesLimit: limit,
+      messagesOffset: offset,
+      messagesHasMore: offset + pagedMessages.length < allMessages.length,
+      messages: pagedMessages
+        .map((message) => {
+          const contact = contactsById.get(message.contactId) ?? null;
+          return {
+            ...message,
+            contactFirstName: contact?.firstName ?? null,
+            contactLastName: contact?.lastName ?? null,
+            contactName: contact?.name ?? null,
+            contactClientName: contact?.clientName ?? null,
+            contactCategory: contact?.category ?? null,
+            contactRecordStatus: contact?.recordStatus ?? null,
+          };
+        })
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     };
   }
 
-  async create(input: CreateCampaignInput, actor: UserSession): Promise<CampaignRecord> {
-    const state = await this.database.read();
+  async create(input: CreateCampaignInput, actor: UserSession) {
+    const state = await this.database.readMeta();
     const template = input.templateCacheId
       ? state.templates.find((item) => item.id === input.templateCacheId)
       : undefined;
@@ -66,7 +108,7 @@ export class CampaignsService {
     if (!state.integrations.some((item) => item.id === input.integrationId)) {
       throw new NotFoundException('Integração não encontrada');
     }
-    if (!state.lists.some((item) => item.id === input.listId)) {
+    if (!(await this.loadListsByIds([input.listId])).has(input.listId)) {
       throw new NotFoundException('Lista não encontrada');
     }
     if (input.templateCacheId && !template) {
@@ -92,18 +134,11 @@ export class CampaignsService {
       flowCacheId: input.flowCacheId ?? inferredFlow?.id ?? null,
       listId: input.listId,
       parameterMapping: mapping,
+      audience: normalizeAudienceConfig(input.audience),
+      audienceSnapshot: emptyAudienceSnapshot(),
       sendRateMps: Math.max(1, Math.min(80, Number(input.sendRateMps ?? 20))),
       status: 'draft',
-      summary: {
-        total: 0,
-        pending: 0,
-        accepted: 0,
-        sent: 0,
-        delivered: 0,
-        read: 0,
-        failed: 0,
-        skipped: 0,
-      },
+      summary: emptySummary(),
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -111,6 +146,8 @@ export class CampaignsService {
     await this.database.write((draft) => {
       draft.campaigns.push(campaign);
     });
+
+    await this.prepareMessages(campaign.id);
 
     await this.audit.log({
       actorUserId: actor.id,
@@ -120,21 +157,32 @@ export class CampaignsService {
       metadata: {
         listId: campaign.listId,
         templateCacheId: campaign.templateCacheId,
+        audience: campaign.audience,
       },
     });
 
-    return campaign;
+    return this.getCampaign(campaign.id);
   }
 
   async start(id: string, actor: UserSession) {
-    const state = await this.database.read();
+    const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
     if (!campaign) {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    if (campaign.status === 'draft') {
+    const existingMessages = state.campaignMessages.filter((item) => item.campaignId === id);
+    if (existingMessages.length === 0) {
       await this.prepareMessages(campaign.id);
+    }
+
+    const prepared = await this.getCampaign(id);
+    if (prepared.summary.total === 0) {
+      throw new BadRequestException('Campanha sem contatos elegíveis para envio');
+    }
+
+    if (prepared.summary.pending === 0 && prepared.summary.failed === 0) {
+      throw new BadRequestException('Campanha não possui mensagens pendentes para envio');
     }
 
     await this.database.write((draft) => {
@@ -163,6 +211,11 @@ export class CampaignsService {
   }
 
   async resume(id: string, actor: UserSession) {
+    const campaign = await this.getCampaign(id, { limit: 1 });
+    if (campaign.summary.pending === 0 && campaign.summary.failed === 0) {
+      throw new BadRequestException('Campanha não possui mensagens para retomar');
+    }
+
     await this.transitionStatus(id, 'queued', actor, 'campaign.resumed');
     return this.getCampaign(id);
   }
@@ -174,7 +227,14 @@ export class CampaignsService {
       )) {
         message.status = 'pending';
         message.nextAttemptAt = nowIso();
+        message.failedAt = null;
         message.updatedAt = nowIso();
+      }
+
+      const campaign = state.campaigns.find((item) => item.id === id);
+      if (campaign) {
+        campaign.status = 'queued';
+        campaign.updatedAt = nowIso();
       }
     });
 
@@ -185,11 +245,54 @@ export class CampaignsService {
       entityId: id,
     });
 
+    await this.refreshCampaignSummary(id);
     return this.getCampaign(id);
   }
 
+  async removeDraft(id: string, actor: UserSession) {
+    const state = await this.database.readMeta();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (!campaign) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+
+    if (campaign.status !== 'draft') {
+      throw new BadRequestException('Só é permitido excluir campanhas em rascunho');
+    }
+
+    const relatedMessageIds = new Set(
+      state.campaignMessages
+        .filter((message) => message.campaignId === id)
+        .map((message) => message.id),
+    );
+
+    await this.database.write((draft) => {
+      draft.campaigns = draft.campaigns.filter((item) => item.id !== id);
+      draft.campaignMessages = draft.campaignMessages.filter((message) => message.campaignId !== id);
+      draft.messageEvents = draft.messageEvents.filter((event) => {
+        if (event.campaignMessageId && relatedMessageIds.has(event.campaignMessageId)) {
+          return false;
+        }
+        return true;
+      });
+      draft.flowResponses = draft.flowResponses.filter((response) => response.campaignId !== id);
+    });
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'campaign.deleted_draft',
+      entityType: 'campaign',
+      entityId: id,
+      metadata: {
+        removedMessageCount: relatedMessageIds.size,
+      },
+    });
+
+    return { deleted: true, id };
+  }
+
   async prepareMessages(campaignId: string) {
-    const state = await this.database.read();
+    const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === campaignId);
     if (!campaign) {
       throw new NotFoundException('Campanha não encontrada');
@@ -198,19 +301,16 @@ export class CampaignsService {
     const template = campaign.templateCacheId
       ? state.templates.find((item) => item.id === campaign.templateCacheId)
       : undefined;
-    const listMembers = state.listMembers.filter((member) => member.listId === campaign.listId);
-    const contacts = listMembers
-      .map((member) => state.contacts.find((contact) => contact.id === member.contactId))
-      .filter(Boolean) as ContactRecord[];
+    const selection = selectCampaignContacts(campaign, await this.loadContactsForList(campaign.listId), state.campaignMessages);
 
     await this.database.write((draft) => {
-      for (const contact of contacts) {
-        const exists = draft.campaignMessages.some(
-          (item) => item.campaignId === campaignId && item.contactId === contact.id,
-        );
-        if (exists) {
-          continue;
-        }
+      draft.campaignMessages = draft.campaignMessages.filter((item) => item.campaignId !== campaignId);
+
+      for (const contact of selection.selectedContacts) {
+        const flowToken = template?.hasFlowButton
+          ? `cmp_${campaign.id}_ctt_${contact.id}`
+          : null;
+        const payload = this.buildTemplatePayload(campaign, template, contact, flowToken);
 
         const baseMessage: CampaignMessageRecord = {
           id: newId(),
@@ -218,35 +318,25 @@ export class CampaignsService {
           contactId: contact.id,
           phoneE164: contact.phoneE164,
           status: 'pending',
-          payload: {},
-          payloadHash: '',
-          flowToken: null,
+          payload,
+          payloadHash: hash(JSON.stringify(payload)),
+          flowToken,
           attemptCount: 0,
+          nextAttemptAt: null,
+          lastAttemptAt: null,
           createdAt: nowIso(),
           updatedAt: nowIso(),
         };
 
-        if (!contact.isValid) {
-          baseMessage.status = 'skipped';
-          baseMessage.skipReason = contact.validationError ?? 'Contato inválido';
-        } else if (contact.recordStatus !== 'active') {
-          baseMessage.status = 'skipped';
-          baseMessage.skipReason = 'Contato inativo';
-        } else if (contact.isOptedOut) {
-          baseMessage.status = 'skipped';
-          baseMessage.skipReason = 'Contato com opt-out';
-        } else {
-          const flowToken = template?.hasFlowButton
-            ? `cmp_${campaign.id}_ctt_${contact.id}`
-            : null;
-          const payload = this.buildTemplatePayload(campaign, template, contact, flowToken);
-          baseMessage.payload = payload;
-          baseMessage.payloadHash = hash(JSON.stringify(payload));
-          baseMessage.flowToken = flowToken;
-        }
-
         draft.campaignMessages.push(baseMessage);
       }
+
+      const item = draft.campaigns.find((record) => record.id === campaignId);
+      if (!item) {
+        throw new NotFoundException('Campanha não encontrada');
+      }
+      item.audienceSnapshot = selection.snapshot;
+      item.updatedAt = nowIso();
     });
 
     await this.refreshCampaignSummary(campaignId);
@@ -359,7 +449,282 @@ export class CampaignsService {
       entityId: id,
     });
   }
+
+  private async loadListsByIds(listIds: string[]) {
+    const uniqueIds = [...new Set(listIds.filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return new Map<string, { id: string; name: string; description?: string | null; sourceType: string; sourceFilePath?: string | null; createdAt: string; updatedAt: string }>();
+    }
+
+    return this.database.execute((database) => {
+      const placeholders = uniqueIds.map(() => '?').join(', ');
+      const rows = database
+        .prepare(
+          `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
+           FROM lists
+           WHERE id IN (${placeholders})`,
+        )
+        .all(...uniqueIds) as Array<Record<string, unknown>>;
+
+      return new Map(
+        rows.map((row) => [
+          String(row.id),
+          {
+            id: String(row.id),
+            name: String(row.name),
+            description: normalizeOptionalText(row.description),
+            sourceType: String(row.source_type),
+            sourceFilePath: normalizeOptionalText(row.source_file_path),
+            createdAt: String(row.created_at),
+            updatedAt: String(row.updated_at),
+          },
+        ]),
+      );
+    });
+  }
+
+  private async loadContactsByIds(contactIds: string[]) {
+    const uniqueIds = [...new Set(contactIds.filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return new Map<string, ContactRecord>();
+    }
+
+    return this.database.execute((database) => {
+      const placeholders = uniqueIds.map(() => '?').join(', ');
+      const rows = database
+        .prepare(
+          `SELECT
+            id, external_ref, client_name, first_name, last_name, name, category, record_status,
+            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
+           FROM contacts
+           WHERE id IN (${placeholders})`,
+        )
+        .all(...uniqueIds) as Array<Record<string, unknown>>;
+
+      return new Map(rows.map((row) => [String(row.id), mapCampaignContactRow(row)]));
+    });
+  }
+
+  private async loadContactsForList(listId: string): Promise<ContactRecord[]> {
+    return this.database.execute((database) => {
+      const rows = database
+        .prepare(
+          `SELECT
+            c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+            c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+            c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
+           FROM list_members lm
+           JOIN contacts c ON c.id = lm.contact_id
+           WHERE lm.list_id = ?
+           ORDER BY c.updated_at DESC`,
+        )
+        .all(listId) as Array<Record<string, unknown>>;
+
+      return rows.map(mapCampaignContactRow);
+    });
+  }
 }
+
+const emptySummary = (): CampaignRecord['summary'] => ({
+  total: 0,
+  pending: 0,
+  accepted: 0,
+  sent: 0,
+  delivered: 0,
+  read: 0,
+  failed: 0,
+  skipped: 0,
+});
+
+const emptyAudienceSnapshot = (): CampaignRecord['audienceSnapshot'] => ({
+  listMembersTotal: 0,
+  eligibleCount: 0,
+  afterResendFilterCount: 0,
+  afterUniqueWhatsAppFilterCount: 0,
+  excludedByUniqueWhatsApp: 0,
+  excludedByResendPolicy: 0,
+  selectedCount: 0,
+});
+
+const normalizeAudienceConfig = (
+  input?: Partial<CampaignAudienceConfig>,
+): CampaignAudienceConfig => {
+  const mode = input?.mode ?? 'all';
+  const orderMode = input?.orderMode ?? 'field';
+
+  return {
+    mode,
+    fixedCount:
+      mode === 'fixed_count'
+        ? Math.max(1, Number(input?.fixedCount ?? 1))
+        : null,
+    percentage:
+      mode === 'percentage'
+        ? Math.max(1, Math.min(100, Number(input?.percentage ?? 100)))
+        : null,
+    orderMode,
+    orderField: orderMode === 'field' ? (input?.orderField ?? 'importedAt') : null,
+    orderDirection: input?.orderDirection === 'desc' ? 'desc' : 'asc',
+    resendPolicy: input?.resendPolicy ?? 'all',
+    uniqueWhatsAppOnly: Boolean(input?.uniqueWhatsAppOnly),
+  };
+};
+
+const selectCampaignContacts = (
+  campaign: CampaignRecord,
+  contacts: ContactRecord[],
+  campaignMessages: CampaignMessageRecord[],
+): { selectedContacts: ContactRecord[]; snapshot: CampaignRecord['audienceSnapshot'] } => {
+  const eligibleContacts = contacts.filter(isEligibleContactForCampaign);
+  const afterResendFilter = eligibleContacts.filter((contact) =>
+    passesResendPolicy(contact.id, campaign.id, campaign.audience.resendPolicy, campaignMessages),
+  );
+  const afterUniqueWhatsAppFilter = campaign.audience.uniqueWhatsAppOnly
+    ? afterResendFilter.filter((contact) =>
+        passesUniqueWhatsAppPolicy(contact.id, campaign.id, campaignMessages),
+      )
+    : afterResendFilter;
+  const orderedContacts = orderCampaignContacts(afterUniqueWhatsAppFilter, campaign.audience);
+  const selectedContacts = limitCampaignContacts(orderedContacts, campaign.audience);
+
+  return {
+    selectedContacts,
+    snapshot: {
+      listMembersTotal: contacts.length,
+      eligibleCount: eligibleContacts.length,
+      afterResendFilterCount: afterResendFilter.length,
+      afterUniqueWhatsAppFilterCount: afterUniqueWhatsAppFilter.length,
+      excludedByUniqueWhatsApp: afterResendFilter.length - afterUniqueWhatsAppFilter.length,
+      excludedByResendPolicy: eligibleContacts.length - afterResendFilter.length,
+      selectedCount: selectedContacts.length,
+    },
+  };
+};
+
+const isEligibleContactForCampaign = (contact: ContactRecord): boolean =>
+  contact.isValid && !contact.isOptedOut && contact.recordStatus === 'active';
+
+const passesResendPolicy = (
+  contactId: string,
+  campaignId: string,
+  resendPolicy: CampaignAudienceConfig['resendPolicy'],
+  campaignMessages: CampaignMessageRecord[],
+): boolean => {
+  if (resendPolicy === 'all') {
+    return true;
+  }
+
+  const previousMessages = campaignMessages.filter(
+    (message) => message.campaignId !== campaignId && message.contactId === contactId,
+  );
+
+  if (resendPolicy === 'not_delivered') {
+    return !previousMessages.some((message) => ['delivered', 'read'].includes(message.status));
+  }
+
+  if (resendPolicy === 'not_read') {
+    return !previousMessages.some((message) => message.status === 'read');
+  }
+
+  return true;
+};
+
+const passesUniqueWhatsAppPolicy = (
+  contactId: string,
+  campaignId: string,
+  campaignMessages: CampaignMessageRecord[],
+): boolean =>
+  !campaignMessages.some(
+    (message) =>
+      message.campaignId !== campaignId &&
+      message.contactId === contactId &&
+      !['cancelled', 'skipped'].includes(message.status),
+  );
+
+const orderCampaignContacts = (
+  contacts: ContactRecord[],
+  audience: CampaignAudienceConfig,
+): ContactRecord[] => {
+  const ordered = [...contacts];
+  if (audience.orderMode === 'random') {
+    for (let index = ordered.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [ordered[index], ordered[swapIndex]] = [ordered[swapIndex], ordered[index]];
+    }
+    return ordered;
+  }
+
+  const direction = audience.orderDirection === 'desc' ? -1 : 1;
+  const field = audience.orderField ?? 'importedAt';
+
+  return ordered.sort((left, right) => {
+    const comparison = compareContactField(left, right, field);
+    if (comparison !== 0) {
+      return comparison * direction;
+    }
+
+    return left.id.localeCompare(right.id) * direction;
+  });
+};
+
+const compareContactField = (
+  left: ContactRecord,
+  right: ContactRecord,
+  field: CampaignAudienceOrderField,
+): number => {
+  const leftValue = getContactFieldValue(left, field);
+  const rightValue = getContactFieldValue(right, field);
+
+  return leftValue.localeCompare(rightValue, 'pt-BR', {
+    sensitivity: 'base',
+    numeric: true,
+  });
+};
+
+const getContactFieldValue = (
+  contact: ContactRecord,
+  field: CampaignAudienceOrderField,
+): string => {
+  switch (field) {
+    case 'clientName':
+      return String(contact.clientName ?? '');
+    case 'firstName':
+      return String(contact.firstName ?? '');
+    case 'lastName':
+      return String(contact.lastName ?? '');
+    case 'name':
+      return String(contact.name ?? '');
+    case 'category':
+      return String(contact.category ?? '');
+    case 'phoneE164':
+      return String(contact.phoneE164 ?? '');
+    case 'createdAt':
+      return String(contact.createdAt ?? '');
+    case 'importedAt':
+    default:
+      return String(contact.importedAt ?? contact.createdAt ?? '');
+  }
+};
+
+const limitCampaignContacts = (
+  contacts: ContactRecord[],
+  audience: CampaignAudienceConfig,
+): ContactRecord[] => {
+  if (audience.mode === 'fixed_count') {
+    return contacts.slice(0, Math.max(0, Number(audience.fixedCount ?? 0)));
+  }
+
+  if (audience.mode === 'percentage') {
+    const percentage = Math.max(1, Math.min(100, Number(audience.percentage ?? 100)));
+    const limit = contacts.length
+      ? Math.max(1, Math.ceil((contacts.length * percentage) / 100))
+      : 0;
+    return contacts.slice(0, limit);
+  }
+
+  return contacts;
+};
 
 const findFlowForTemplate = (
   template: TemplateCacheRecord,
@@ -395,4 +760,56 @@ const buildFlowButtonComponent = (
       },
     ],
   };
+};
+
+const mapCampaignContactRow = (row: Record<string, unknown>): ContactRecord => ({
+  id: String(row.id),
+  externalRef: normalizeOptionalText(row.external_ref),
+  clientName: normalizeOptionalText(row.client_name),
+  firstName: String(row.first_name ?? 'Sem nome'),
+  lastName: normalizeOptionalText(row.last_name),
+  name: String(row.name ?? 'Sem nome'),
+  category: normalizeOptionalText(row.category),
+  recordStatus: String(row.record_status) === 'inactive' ? 'inactive' : 'active',
+  phoneRaw: String(row.phone_raw ?? ''),
+  phoneE164: String(row.phone_e164 ?? ''),
+  phoneHash: String(row.phone_hash ?? ''),
+  email: normalizeOptionalText(row.email),
+  attributes: parseCampaignAttributes(row.attributes_json),
+  isValid: Number(row.is_valid ?? 0) === 1,
+  validationError: normalizeOptionalText(row.validation_error),
+  isOptedOut: Number(row.is_opted_out ?? 0) === 1,
+  optedOutAt: normalizeOptionalText(row.opted_out_at),
+  optOutSource: normalizeOptionalText(row.opt_out_source),
+  importedAt: normalizeOptionalText(row.imported_at),
+  createdAt: String(row.created_at ?? nowIso()),
+  updatedAt: String(row.updated_at ?? nowIso()),
+});
+
+const parseCampaignAttributes = (value: unknown): Record<string, string> => {
+  if (typeof value !== 'string' || !value.trim()) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed ?? {}).flatMap(([key, rawValue]) => {
+        if (rawValue === undefined || rawValue === null) {
+          return [];
+        }
+        return [[key, String(rawValue)]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+};
+
+const normalizeOptionalText = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text ? text : null;
 };

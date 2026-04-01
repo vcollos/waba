@@ -22,6 +22,8 @@ export interface ContactRecord {
   id: string;
   externalRef?: string | null;
   clientName?: string | null;
+  firstName: string;
+  lastName?: string | null;
   name: string;
   category?: string | null;
   recordStatus: 'active' | 'inactive';
@@ -135,6 +137,40 @@ export type ParameterSource =
   | { type: 'contact_email' }
   | { type: 'contact_attribute'; key: string };
 
+export type CampaignAudienceMode = 'all' | 'fixed_count' | 'percentage';
+export type CampaignAudienceOrderMode = 'field' | 'random';
+export type CampaignAudienceOrderField =
+  | 'clientName'
+  | 'firstName'
+  | 'lastName'
+  | 'name'
+  | 'category'
+  | 'phoneE164'
+  | 'importedAt'
+  | 'createdAt';
+export type CampaignAudienceResendPolicy = 'all' | 'not_delivered' | 'not_read';
+
+export interface CampaignAudienceConfig {
+  mode: CampaignAudienceMode;
+  fixedCount?: number | null;
+  percentage?: number | null;
+  orderMode: CampaignAudienceOrderMode;
+  orderField?: CampaignAudienceOrderField | null;
+  orderDirection: 'asc' | 'desc';
+  resendPolicy: CampaignAudienceResendPolicy;
+  uniqueWhatsAppOnly?: boolean;
+}
+
+export interface CampaignAudienceSnapshot {
+  listMembersTotal: number;
+  eligibleCount: number;
+  afterResendFilterCount: number;
+  afterUniqueWhatsAppFilterCount?: number;
+  excludedByUniqueWhatsApp?: number;
+  excludedByResendPolicy: number;
+  selectedCount: number;
+}
+
 export interface CampaignRecord {
   id: string;
   integrationId: string;
@@ -144,6 +180,8 @@ export interface CampaignRecord {
   flowCacheId?: string | null;
   listId: string;
   parameterMapping: Record<string, ParameterSource>;
+  audience: CampaignAudienceConfig;
+  audienceSnapshot: CampaignAudienceSnapshot;
   sendRateMps: number;
   status:
     | 'draft'

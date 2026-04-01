@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseInterceptors,
@@ -19,7 +20,17 @@ export class ContactsController {
   constructor(private readonly contactsService: ContactsService) {}
 
   @Get('contacts')
-  contacts() {
+  contacts(
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    if (limit !== undefined || offset !== undefined) {
+      return this.contactsService.listContactsPage({
+        limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
+      });
+    }
+
     return this.contactsService.listContacts();
   }
 
@@ -28,7 +39,8 @@ export class ContactsController {
     @Body()
     body: {
       clientName?: string | null;
-      name?: string;
+      firstName?: string;
+      lastName?: string | null;
       phone?: string;
       category?: string | null;
       recordStatus?: string | null;
@@ -47,7 +59,8 @@ export class ContactsController {
     @Body()
     body: {
       clientName?: string | null;
-      name?: string;
+      firstName?: string;
+      lastName?: string | null;
       phone?: string;
       category?: string | null;
       recordStatus?: string | null;
@@ -139,7 +152,7 @@ export class ContactsController {
     },
     @Req() request: { user: UserSession },
   ) {
-    return this.contactsService.importCsv(
+    return this.contactsService.startCsvImport(
       {
         listName: body.listName ?? file.originalname.replace(/\.[^.]+$/, ''),
         fileName: file.originalname,
@@ -149,6 +162,11 @@ export class ContactsController {
       },
       request.user,
     );
+  }
+
+  @Get('contacts/imports/csv/jobs/:id')
+  getCsvImportJob(@Param('id') id: string) {
+    return this.contactsService.getCsvImportJob(id);
   }
 
   @Post('contacts/:id/opt-out')

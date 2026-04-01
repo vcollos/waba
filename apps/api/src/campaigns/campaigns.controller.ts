@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { CampaignsService, CreateCampaignInput } from './campaigns.service';
 import { UserSession } from '../database/types';
 
@@ -12,8 +12,15 @@ export class CampaignsController {
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.campaignsService.getCampaign(id);
+  get(
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.campaignsService.getCampaign(id, {
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
   }
 
   @Post()
@@ -39,5 +46,10 @@ export class CampaignsController {
   @Post(':id/retry-failed')
   retryFailed(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.campaignsService.retryFailed(id, request.user);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string, @Req() request: { user: UserSession }) {
+    return this.campaignsService.removeDraft(id, request.user);
   }
 }

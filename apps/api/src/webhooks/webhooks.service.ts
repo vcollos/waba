@@ -37,7 +37,7 @@ export class WebhooksService {
     const timestamp = String(status.timestamp ?? Math.floor(Date.now() / 1000));
     const dedupeKey = hash(`${providerMessageId}:${nextStatus}:${timestamp}`);
 
-    const state = await this.database.read();
+    const state = await this.database.readMeta();
     if (state.messageEvents.some((event) => event.dedupeKey === dedupeKey)) {
       return;
     }
@@ -97,8 +97,24 @@ export class WebhooksService {
       return;
     }
 
-    const state = await this.database.read();
-    const contact = state.contacts.find((item) => item.phoneHash === hash(waId));
+    const state = await this.database.readMeta();
+    const contact = await this.database.execute((database) => {
+      const row = database
+        .prepare(
+          `SELECT id, phone_hash
+           FROM contacts
+           WHERE phone_hash = ?
+           LIMIT 1`,
+        )
+        .get(hash(waId)) as Record<string, unknown> | undefined;
+
+      return row
+        ? {
+            id: String(row.id),
+            phoneHash: String(row.phone_hash),
+          }
+        : null;
+    });
     const providerMessageId = String(message.id ?? '');
     const contextMessageId = normalizeOptionalValue(asRecord(message.context)?.id);
     const dedupeKey = hash(`${providerMessageId || newId()}:inbound`);
@@ -177,23 +193,25 @@ export class WebhooksService {
     }
   }
 
-  private async markOptOut(contact: ContactRecord, keyword: string) {
-    await this.database.write((state) => {
-      const item = state.contacts.find((record) => record.id === contact.id);
-      if (!item) {
-        return;
-      }
-      item.isOptedOut = true;
-      item.optedOutAt = nowIso();
-      item.optOutSource = 'inbound_keyword';
-      item.updatedAt = nowIso();
+  private async markOptOut(contact: Pick<ContactRecord, 'id'>, keyword: string) {
+    const timestamp = nowIso();
+    await this.database.transaction((database) => {
+      database
+        .prepare(
+          `UPDATE contacts
+           SET is_opted_out = 1, opted_out_at = ?, opt_out_source = 'inbound_keyword', updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(timestamp, timestamp, contact.id);
+    });
 
+    await this.database.write((state) => {
       state.optOuts.push({
         id: newId(),
-        contactId: item.id,
+        contactId: contact.id,
         source: 'inbound_keyword',
         keyword,
-        createdAt: nowIso(),
+        createdAt: timestamp,
       });
     });
   }

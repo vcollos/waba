@@ -11,6 +11,7 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DispatchService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
+  private readonly inFlightByCampaign = new Map<string, Set<string>>();
 
   constructor(
     @Inject(DatabaseService)
@@ -42,13 +43,10 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
 
     try {
-      const state = await this.database.read();
-      const activeCampaigns = state.campaigns.filter((campaign) =>
-        ['queued', 'sending'].includes(campaign.status),
-      );
+      const { activeCampaigns, integrations } = await this.loadDispatchTargets();
 
       for (const campaign of activeCampaigns) {
-        await this.dispatchCampaign(campaign, state.integrations);
+        await this.dispatchCampaign(campaign, integrations);
       }
     } catch (error) {
       this.logger.error('Dispatch tick failed', error instanceof Error ? error.stack : String(error));
@@ -66,14 +64,18 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const state = await this.database.read();
-    const candidates = state.campaignMessages
-      .filter((message) => this.isDispatchable(message, campaign.id))
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .slice(0, campaign.sendRateMps);
+    const inFlightCount = this.getInFlightCount(campaign.id);
+    const availableSlots = Math.max(0, campaign.sendRateMps - inFlightCount);
+    if (availableSlots === 0) {
+      return;
+    }
+
+    const candidates = await this.claimDispatchBatch(campaign.id, availableSlots);
 
     if (candidates.length === 0) {
-      await this.campaignsService.refreshCampaignSummary(campaign.id);
+      if (inFlightCount === 0) {
+        await this.campaignsService.refreshCampaignSummary(campaign.id);
+      }
       return;
     }
 
@@ -86,10 +88,75 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     });
 
     for (const message of candidates) {
-      await this.sendMessage(message, integration);
+      this.launchSend(message, integration);
+    }
+  }
+
+  private async loadDispatchTargets(): Promise<{
+    activeCampaigns: CampaignRecord[];
+    integrations: IntegrationRecord[];
+  }> {
+    return this.database.readDispatchTargets();
+  }
+
+  private async claimDispatchBatch(
+    campaignId: string,
+    batchSize: number,
+  ): Promise<CampaignMessageRecord[]> {
+    const claimed: CampaignMessageRecord[] = [];
+    const leaseUntil = new Date(Date.now() + DISPATCH_CLAIM_LEASE_MS).toISOString();
+
+    await this.database.write((state) => {
+      const candidates = state.campaignMessages
+        .filter((message) => this.isDispatchable(message, campaignId))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .slice(0, batchSize);
+
+      for (const item of candidates) {
+        item.nextAttemptAt = leaseUntil;
+        item.updatedAt = nowIso();
+        claimed.push(structuredClone(item));
+      }
+    });
+
+    return claimed;
+  }
+
+  private launchSend(message: CampaignMessageRecord, integration: IntegrationRecord) {
+    this.addInFlight(message.campaignId, message.id);
+
+    void this.sendMessage(message, integration)
+      .catch((error) => {
+        this.logger.error(
+          `Dispatch send failed for message ${message.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      })
+      .finally(() => {
+        this.removeInFlight(message.campaignId, message.id);
+      });
+  }
+
+  private getInFlightCount(campaignId: string): number {
+    return this.inFlightByCampaign.get(campaignId)?.size ?? 0;
+  }
+
+  private addInFlight(campaignId: string, messageId: string) {
+    const entries = this.inFlightByCampaign.get(campaignId) ?? new Set<string>();
+    entries.add(messageId);
+    this.inFlightByCampaign.set(campaignId, entries);
+  }
+
+  private removeInFlight(campaignId: string, messageId: string) {
+    const entries = this.inFlightByCampaign.get(campaignId);
+    if (!entries) {
+      return;
     }
 
-    await this.campaignsService.refreshCampaignSummary(campaign.id);
+    entries.delete(messageId);
+    if (entries.size === 0) {
+      this.inFlightByCampaign.delete(campaignId);
+    }
   }
 
   private isDispatchable(message: CampaignMessageRecord, campaignId: string): boolean {
@@ -191,3 +258,5 @@ const classifyRetryDelay = (code?: number): number | null => {
 
   return null;
 };
+
+const DISPATCH_CLAIM_LEASE_MS = 120_000;

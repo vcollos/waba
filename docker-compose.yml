@@ -5,6 +5,7 @@ services:
       dockerfile: apps/api/Dockerfile
     env_file:
       - .env
+    restart: unless-stopped
     ports:
       - "4311:4311"
     volumes:
@@ -14,8 +15,11 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4311/api}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4311/api}
+    restart: unless-stopped
     ports:
       - "4310:4310"
     depends_on:
@@ -23,6 +27,7 @@ services:
 
   caddy:
     image: caddy:2
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
