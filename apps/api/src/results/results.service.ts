@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import type { FlowResponseRecord } from '../database/types';
 
 @Injectable()
 export class ResultsService {
@@ -10,41 +11,34 @@ export class ResultsService {
     flowCacheId?: string;
     contactId?: string;
   }) {
-    const state = await this.database.readMeta();
+    const state = await this.database.readMetaSnapshot();
+    const filteredResponses = state.flowResponses.filter((response) =>
+      matchesFlowResponseFilters(response, filters),
+    );
     const contactIds = [
-      ...new Set(
-        state.flowResponses
-          .map((response) => response.contactId)
-          .filter((value): value is string => Boolean(value)),
-      ),
+      ...new Set(filteredResponses.map((response) => response.contactId).filter(isDefined)),
     ];
     const contactsById = await this.loadResultContactsByIds(contactIds);
+    const campaignsById = new Map(state.campaigns.map((campaign) => [campaign.id, campaign]));
+    const flowsById = new Map(state.flows.map((flow) => [flow.id, flow]));
+    const flowsByMetaFlowId = new Map(
+      state.flows.filter((flow) => flow.metaFlowId).map((flow) => [flow.metaFlowId!, flow]),
+    );
+    const templatesById = new Map(state.templates.map((template) => [template.id, template]));
 
-    return state.flowResponses
-      .filter((response) => {
-        if (filters?.campaignId && response.campaignId !== filters.campaignId) {
-          return false;
-        }
-        if (filters?.flowCacheId && response.flowCacheId !== filters.flowCacheId) {
-          return false;
-        }
-        if (filters?.contactId && response.contactId !== filters.contactId) {
-          return false;
-        }
-        return true;
-      })
+    return filteredResponses
       .map((response) => {
         const campaign = response.campaignId
-          ? state.campaigns.find((item) => item.id === response.campaignId) ?? null
+          ? campaignsById.get(response.campaignId) ?? null
           : null;
         const contact = response.contactId ? contactsById.get(response.contactId) ?? null : null;
         const flow = response.flowCacheId
-          ? state.flows.find((item) => item.id === response.flowCacheId) ?? null
+          ? flowsById.get(response.flowCacheId) ?? null
           : response.metaFlowId
-            ? state.flows.find((item) => item.metaFlowId === response.metaFlowId) ?? null
+            ? flowsByMetaFlowId.get(response.metaFlowId) ?? null
             : null;
         const template = response.templateCacheId
-          ? state.templates.find((item) => item.id === response.templateCacheId) ?? null
+          ? templatesById.get(response.templateCacheId) ?? null
           : null;
 
         return {
@@ -61,9 +55,8 @@ export class ResultsService {
   }
 
   async summary() {
-    const state = await this.database.readMeta();
-    const responses = await this.listFlowResponses();
-    const totalResponses = responses.length;
+    const state = await this.database.readMetaSnapshot();
+    const totalResponses = state.flowResponses.length;
     const byFlow = new Map<string, number>();
     const byCampaign = new Map<string, number>();
     const byDay = new Map<string, number>();
@@ -76,12 +69,24 @@ export class ResultsService {
     >();
     const errorBreakdown = new Map<string, number>();
     const currentStatusCounts = new Map<string, number>();
+    const campaignsById = new Map(state.campaigns.map((campaign) => [campaign.id, campaign]));
+    const flowsById = new Map(state.flows.map((flow) => [flow.id, flow]));
+    const flowsByMetaFlowId = new Map(
+      state.flows.filter((flow) => flow.metaFlowId).map((flow) => [flow.metaFlowId!, flow]),
+    );
 
-    for (const response of responses) {
-      const flowKey = response.flowName ?? response.metaFlowId ?? 'Flow não identificado';
+    for (const response of state.flowResponses) {
+      const campaign = response.campaignId ? campaignsById.get(response.campaignId) ?? null : null;
+      const flow = response.flowCacheId
+        ? flowsById.get(response.flowCacheId) ?? null
+        : response.metaFlowId
+          ? flowsByMetaFlowId.get(response.metaFlowId) ?? null
+          : null;
+
+      const flowKey = flow?.name ?? response.metaFlowId ?? 'Flow não identificado';
       byFlow.set(flowKey, (byFlow.get(flowKey) ?? 0) + 1);
 
-      const campaignKey = response.campaignName ?? 'Sem campanha';
+      const campaignKey = campaign?.name ?? 'Sem campanha';
       byCampaign.set(campaignKey, (byCampaign.get(campaignKey) ?? 0) + 1);
 
       const dayKey = response.completedAt.slice(0, 10);
@@ -138,7 +143,7 @@ export class ResultsService {
     const totalProcessedMessages = totalTrackedMessages - totalPendingMessages;
 
     const statusDistribution = buildStatusDistribution(currentStatusCounts, totalTrackedMessages);
-    const topDeliveryCampaigns = state.campaigns
+    const topDeliveryCampaigns = [...state.campaigns]
       .map((campaign) => {
         const total = campaign.summary.total;
         const pending = campaign.summary.pending;
@@ -274,6 +279,28 @@ export class ResultsService {
     });
   }
 }
+
+const matchesFlowResponseFilters = (
+  response: FlowResponseRecord,
+  filters?: {
+    campaignId?: string;
+    flowCacheId?: string;
+    contactId?: string;
+  },
+) => {
+  if (filters?.campaignId && response.campaignId !== filters.campaignId) {
+    return false;
+  }
+  if (filters?.flowCacheId && response.flowCacheId !== filters.flowCacheId) {
+    return false;
+  }
+  if (filters?.contactId && response.contactId !== filters.contactId) {
+    return false;
+  }
+  return true;
+};
+
+const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
 
 const incrementTimeline = (
   timeline: Map<string, { accepted: number; sent: number; delivered: number; read: number; failed: number }>,

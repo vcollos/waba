@@ -42,6 +42,11 @@ export class DatabaseService implements OnModuleDestroy {
     return this.readMetaState();
   }
 
+  async readMetaSnapshot(): Promise<Readonly<AppState>> {
+    await this.ensureReady();
+    return this.metaStateCache;
+  }
+
   async readDispatchTargets(): Promise<{
     activeCampaigns: CampaignRecord[];
     integrations: AppState['integrations'];

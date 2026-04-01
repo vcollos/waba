@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '../../components/app-shell';
 import { SectionCard } from '../../components/section-card';
 import { apiRequest } from '../../lib/api';
@@ -111,30 +111,61 @@ export default function ResultsPage() {
   const [flowFilter, setFlowFilter] = useState('all');
   const [rowLimit, setRowLimit] = useState('100');
   const [error, setError] = useState<string | null>(null);
+  const summaryInFlightRef = useRef(false);
+  const responsesInFlightRef = useRef(false);
 
-  const loadData = async () => {
-    const [summaryPayload, responsesPayload] = await Promise.all([
-      apiRequest<ResultSummary>('/results/summary'),
-      apiRequest<FlowResponse[]>('/results/flow-responses'),
-    ]);
-    setSummary(summaryPayload);
-    setResponses(responsesPayload);
+  const loadSummary = async () => {
+    if (summaryInFlightRef.current) {
+      return;
+    }
+
+    summaryInFlightRef.current = true;
+    try {
+      const payload = await apiRequest<ResultSummary>('/results/summary');
+      setSummary(payload);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao carregar resultados');
+    } finally {
+      summaryInFlightRef.current = false;
+    }
+  };
+
+  const loadResponses = async () => {
+    if (responsesInFlightRef.current) {
+      return;
+    }
+
+    responsesInFlightRef.current = true;
+    try {
+      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses');
+      setResponses(payload);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao carregar respostas');
+    } finally {
+      responsesInFlightRef.current = false;
+    }
   };
 
   useEffect(() => {
-    void loadData().catch((err) =>
-      setError(err instanceof Error ? err.message : 'Falha ao carregar resultados'),
-    );
+    void loadSummary();
+    void loadResponses();
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void loadData().catch((err) =>
-        setError(err instanceof Error ? err.message : 'Falha ao atualizar resultados'),
-      );
-    }, 10000);
+    const summaryTimer = window.setInterval(() => {
+      void loadSummary();
+    }, 15000);
 
-    return () => window.clearInterval(timer);
+    const responsesTimer = window.setInterval(() => {
+      void loadResponses();
+    }, 60000);
+
+    return () => {
+      window.clearInterval(summaryTimer);
+      window.clearInterval(responsesTimer);
+    };
   }, []);
 
   const normalizedQuery = query.trim().toLowerCase();

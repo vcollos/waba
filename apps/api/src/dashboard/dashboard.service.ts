@@ -6,7 +6,7 @@ export class DashboardService {
   constructor(private readonly database: DatabaseService) {}
 
   async summary() {
-    const state = await this.database.readMeta();
+    const state = await this.database.readMetaSnapshot();
     const totalDelivered = state.campaignMessages.filter((item) => item.status === 'delivered').length;
     const totalRead = state.campaignMessages.filter((item) => item.status === 'read').length;
     const totalFailed = state.campaignMessages.filter((item) => item.status === 'failed').length;
@@ -40,7 +40,7 @@ export class DashboardService {
       delivered: totalDelivered,
       read: totalRead,
       failed: totalFailed,
-      recentCampaigns: state.campaigns
+      recentCampaigns: [...state.campaigns]
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, 5),
     };
