@@ -19,4 +19,4 @@ COPY --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
 COPY --from=deps /app/node_modules ./node_modules
-CMD ["npm", "--workspace", "@campaign-sender/web", "run", "start"]
+CMD ["node", "node_modules/next/dist/bin/next", "start", "apps/web", "-p", "4310"]
