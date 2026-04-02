@@ -154,6 +154,7 @@ export interface CampaignAudienceConfig {
   mode: CampaignAudienceMode;
   fixedCount?: number | null;
   percentage?: number | null;
+  category?: string | null;
   orderMode: CampaignAudienceOrderMode;
   orderField?: CampaignAudienceOrderField | null;
   orderDirection: 'asc' | 'desc';
@@ -164,8 +165,10 @@ export interface CampaignAudienceConfig {
 export interface CampaignAudienceSnapshot {
   listMembersTotal: number;
   eligibleCount: number;
+  afterCategoryFilterCount?: number;
   afterResendFilterCount: number;
   afterUniqueWhatsAppFilterCount?: number;
+  excludedByCategory?: number;
   excludedByUniqueWhatsApp?: number;
   excludedByResendPolicy: number;
   selectedCount: number;

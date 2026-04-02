@@ -7,10 +7,18 @@ import { apiRequest } from '../../lib/api';
 
 const MESSAGE_PAGE_SIZE = 100;
 const ACTIVE_CAMPAIGN_STATUSES = new Set(['queued', 'sending']);
+const ALL_CATEGORIES_VALUE = '__all_categories__';
 
 interface Integration {
   id: string;
   name: string;
+}
+
+interface ListCategoryOption {
+  value: string;
+  label: string;
+  eligibleMembers: number;
+  totalMembers: number;
 }
 
 interface ListItem {
@@ -18,6 +26,7 @@ interface ListItem {
   name: string;
   eligibleMembers: number;
   totalMembers: number;
+  categories?: ListCategoryOption[];
 }
 
 interface Template {
@@ -31,6 +40,7 @@ interface CampaignAudience {
   mode: 'all' | 'fixed_count' | 'percentage';
   fixedCount?: number | null;
   percentage?: number | null;
+  category?: string | null;
   orderMode: 'field' | 'random';
   orderField?:
     | 'clientName'
@@ -50,8 +60,10 @@ interface CampaignAudience {
 interface CampaignAudienceSnapshot {
   listMembersTotal: number;
   eligibleCount: number;
+  afterCategoryFilterCount?: number;
   afterResendFilterCount: number;
   afterUniqueWhatsAppFilterCount?: number;
+  excludedByCategory?: number;
   excludedByUniqueWhatsApp?: number;
   excludedByResendPolicy: number;
   selectedCount: number;
@@ -151,6 +163,7 @@ export default function CampaignsPage() {
     sendRateMps: '20',
     audienceMode: 'all' as CampaignAudience['mode'],
     audienceValue: '10',
+    audienceCategory: ALL_CATEGORIES_VALUE,
     orderMode: 'field' as CampaignAudience['orderMode'],
     orderField: 'importedAt' as NonNullable<CampaignAudience['orderField']>,
     orderDirection: 'asc' as CampaignAudience['orderDirection'],
@@ -166,6 +179,13 @@ export default function CampaignsPage() {
     () => lists.find((list) => list.id === form.listId) ?? null,
     [form.listId, lists],
   );
+  const selectedCategory = useMemo(
+    () =>
+      form.audienceCategory === ALL_CATEGORIES_VALUE
+        ? null
+        : selectedList?.categories?.find((category) => category.value === form.audienceCategory) ?? null,
+    [form.audienceCategory, selectedList],
+  );
   const hasActiveCampaign = useMemo(
     () => campaigns.some((campaign) => ACTIVE_CAMPAIGN_STATUSES.has(campaign.status)),
     [campaigns],
@@ -175,7 +195,7 @@ export default function CampaignsPage() {
       return 0;
     }
 
-    const base = selectedList.eligibleMembers;
+    const base = selectedCategory?.eligibleMembers ?? selectedList.eligibleMembers;
     if (form.audienceMode === 'fixed_count') {
       return Math.min(base, Math.max(0, Number(form.audienceValue || '0')));
     }
@@ -186,7 +206,7 @@ export default function CampaignsPage() {
     }
 
     return base;
-  }, [form.audienceMode, form.audienceValue, selectedList]);
+  }, [form.audienceMode, form.audienceValue, selectedCategory, selectedList]);
 
   const loadCampaignDetail = async (
     campaignId: string,
@@ -275,6 +295,22 @@ export default function CampaignsPage() {
   }, [selectedTemplate]);
 
   useEffect(() => {
+    if (form.audienceCategory === ALL_CATEGORIES_VALUE) {
+      return;
+    }
+
+    const categoryStillExists = selectedList?.categories?.some((category) => category.value === form.audienceCategory);
+    if (categoryStillExists) {
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      audienceCategory: ALL_CATEGORIES_VALUE,
+    }));
+  }, [form.audienceCategory, selectedList]);
+
+  useEffect(() => {
     if (!selectedCampaignId) {
       return;
     }
@@ -344,6 +380,7 @@ export default function CampaignsPage() {
 
     const audience: Partial<CampaignAudience> = {
       mode: form.audienceMode,
+      category: form.audienceCategory === ALL_CATEGORIES_VALUE ? null : form.audienceCategory,
       orderMode: form.orderMode,
       orderDirection: form.orderDirection,
       resendPolicy: form.resendPolicy,
@@ -533,12 +570,37 @@ export default function CampaignsPage() {
                       <input
                         type="number"
                         min={1}
-                        max={form.audienceMode === 'percentage' ? 100 : Math.max(selectedList?.eligibleMembers ?? 1, 1)}
-                        value={form.audienceMode === 'all' ? selectedList?.eligibleMembers ?? 0 : form.audienceValue}
+                        max={form.audienceMode === 'percentage' ? 100 : Math.max(selectedCategory?.eligibleMembers ?? selectedList?.eligibleMembers ?? 1, 1)}
+                        value={
+                          form.audienceMode === 'all'
+                            ? selectedCategory?.eligibleMembers ?? selectedList?.eligibleMembers ?? 0
+                            : form.audienceValue
+                        }
                         disabled={form.audienceMode === 'all'}
                         onChange={(event) => setForm({ ...form, audienceValue: event.target.value })}
                       />
                     </div>
+                  </div>
+
+                  <div className="field">
+                    <label>Categoria da lista</label>
+                    <select
+                      value={form.audienceCategory}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          audienceCategory: event.target.value,
+                        })
+                      }
+                    >
+                      <option value={ALL_CATEGORIES_VALUE}>Todas as categorias elegíveis</option>
+                      {(selectedList?.categories ?? []).map((category) => (
+                        <option key={category.value} value={category.value}>
+                          {category.label} ({category.eligibleMembers} elegíveis / {category.totalMembers} total)
+                        </option>
+                      ))}
+                    </select>
+                    <div className="muted">Aplica o filtro antes da regra de reenvio e do WhatsApp único.</div>
                   </div>
 
                   <div className="grid three">
@@ -617,8 +679,16 @@ export default function CampaignsPage() {
                   </label>
 
                   <div className="notice">
-                    Projeção inicial com base nos elegíveis da lista: <strong>{estimatedSelectionCount}</strong>{' '}
-                    contato(s). O total final pode cair após aplicar regra de reenvio e WhatsApp único.
+                    Projeção inicial com base nos elegíveis
+                    {selectedCategory ? (
+                      <>
+                        {' '}da categoria <strong>{selectedCategory.label}</strong>
+                      </>
+                    ) : (
+                      <> da lista</>
+                    )}
+                    : <strong>{estimatedSelectionCount}</strong> contato(s). O total final pode cair após aplicar regra
+                    de reenvio e WhatsApp único.
                   </div>
                 </div>
               </div>
@@ -718,8 +788,15 @@ export default function CampaignsPage() {
 
                     <div className="muted">
                       lista {campaign.audienceSnapshot.listMembersTotal} | elegíveis{' '}
-                      {campaign.audienceSnapshot.eligibleCount} | após regra de reenvio{' '}
-                      {campaign.audienceSnapshot.afterResendFilterCount}
+                      {campaign.audienceSnapshot.eligibleCount}
+                      {campaign.audience.category ? (
+                        <>
+                          {' '}| categoria <strong>{campaign.audience.category}</strong> | após categoria{' '}
+                          {campaign.audienceSnapshot.afterCategoryFilterCount ??
+                            campaign.audienceSnapshot.eligibleCount}
+                        </>
+                      ) : null}
+                      {' '}| após regra de reenvio {campaign.audienceSnapshot.afterResendFilterCount}
                       {campaign.audience.uniqueWhatsAppOnly ? (
                         <>
                           {' '}

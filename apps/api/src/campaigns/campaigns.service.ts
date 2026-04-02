@@ -523,7 +523,9 @@ const emptySummary = (): CampaignRecord['summary'] => ({
 const emptyAudienceSnapshot = (): CampaignRecord['audienceSnapshot'] => ({
   listMembersTotal: 0,
   eligibleCount: 0,
+  afterCategoryFilterCount: 0,
   afterResendFilterCount: 0,
+  excludedByCategory: 0,
   afterUniqueWhatsAppFilterCount: 0,
   excludedByUniqueWhatsApp: 0,
   excludedByResendPolicy: 0,
@@ -546,6 +548,7 @@ const normalizeAudienceConfig = (
       mode === 'percentage'
         ? Math.max(1, Math.min(100, Number(input?.percentage ?? 100)))
         : null,
+    category: cleanNullableCampaignText(input?.category),
     orderMode,
     orderField: orderMode === 'field' ? (input?.orderField ?? 'importedAt') : null,
     orderDirection: input?.orderDirection === 'desc' ? 'desc' : 'asc',
@@ -560,7 +563,10 @@ const selectCampaignContacts = (
   campaignMessages: CampaignMessageRecord[],
 ): { selectedContacts: ContactRecord[]; snapshot: CampaignRecord['audienceSnapshot'] } => {
   const eligibleContacts = contacts.filter(isEligibleContactForCampaign);
-  const afterResendFilter = eligibleContacts.filter((contact) =>
+  const afterCategoryFilter = eligibleContacts.filter((contact) =>
+    passesCategoryFilter(contact, campaign.audience.category),
+  );
+  const afterResendFilter = afterCategoryFilter.filter((contact) =>
     passesResendPolicy(contact.id, campaign.id, campaign.audience.resendPolicy, campaignMessages),
   );
   const afterUniqueWhatsAppFilter = campaign.audience.uniqueWhatsAppOnly
@@ -576,10 +582,12 @@ const selectCampaignContacts = (
     snapshot: {
       listMembersTotal: contacts.length,
       eligibleCount: eligibleContacts.length,
+      afterCategoryFilterCount: afterCategoryFilter.length,
       afterResendFilterCount: afterResendFilter.length,
+      excludedByCategory: eligibleContacts.length - afterCategoryFilter.length,
       afterUniqueWhatsAppFilterCount: afterUniqueWhatsAppFilter.length,
       excludedByUniqueWhatsApp: afterResendFilter.length - afterUniqueWhatsAppFilter.length,
-      excludedByResendPolicy: eligibleContacts.length - afterResendFilter.length,
+      excludedByResendPolicy: afterCategoryFilter.length - afterResendFilter.length,
       selectedCount: selectedContacts.length,
     },
   };
@@ -587,6 +595,15 @@ const selectCampaignContacts = (
 
 const isEligibleContactForCampaign = (contact: ContactRecord): boolean =>
   contact.isValid && !contact.isOptedOut && contact.recordStatus === 'active';
+
+const passesCategoryFilter = (contact: ContactRecord, category?: string | null): boolean => {
+  const normalizedCategory = cleanNullableCampaignText(category);
+  if (!normalizedCategory) {
+    return true;
+  }
+
+  return cleanNullableCampaignText(contact.category) === normalizedCategory;
+};
 
 const passesResendPolicy = (
   contactId: string,
@@ -793,6 +810,15 @@ const normalizeOptionalText = (value: unknown): string | null => {
   if (value === undefined || value === null) {
     return null;
   }
+  const text = String(value).trim();
+  return text ? text : null;
+};
+
+const cleanNullableCampaignText = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
   const text = String(value).trim();
   return text ? text : null;
 };

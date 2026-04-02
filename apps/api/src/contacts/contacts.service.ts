@@ -67,6 +67,13 @@ interface PaginatedContactsResult {
   offset: number;
 }
 
+interface ListCategorySummary {
+  value: string;
+  label: string;
+  eligibleMembers: number;
+  totalMembers: number;
+}
+
 interface CsvImportJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed';
@@ -181,7 +188,33 @@ export class ContactsService {
           WHERE c.is_valid = true
             AND c.is_opted_out = false
             AND c.record_status = 'active'
-        )::int AS eligible_members
+        )::int AS eligible_members,
+        COALESCE((
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'value', category_rows.category,
+              'label', category_rows.category,
+              'eligibleMembers', category_rows.eligible_members,
+              'totalMembers', category_rows.total_members
+            )
+            ORDER BY category_rows.category
+          )
+          FROM (
+            SELECT
+              NULLIF(BTRIM(c2.category), '') AS category,
+              COUNT(*)::int AS total_members,
+              COUNT(*) FILTER (
+                WHERE c2.is_valid = true
+                  AND c2.is_opted_out = false
+                  AND c2.record_status = 'active'
+              )::int AS eligible_members
+            FROM list_members lm2
+            JOIN contacts c2 ON c2.id = lm2.contact_id
+            WHERE lm2.list_id = l.id
+              AND NULLIF(BTRIM(c2.category), '') IS NOT NULL
+            GROUP BY NULLIF(BTRIM(c2.category), '')
+          ) AS category_rows
+        ), '[]'::jsonb) AS category_stats
        FROM lists l
        LEFT JOIN list_members lm ON lm.list_id = l.id
        LEFT JOIN contacts c ON c.id = lm.contact_id
@@ -193,6 +226,7 @@ export class ContactsService {
       ...mapListRow(row),
       totalMembers: Number(row.total_members ?? 0),
       eligibleMembers: Number(row.eligible_members ?? 0),
+      categories: parseListCategoryStats(row.category_stats),
     }));
   }
 
@@ -1320,6 +1354,43 @@ const toStringArray = (value: unknown): string[] =>
     ? [...new Set(value.map((item) => String(item)).filter(Boolean))].sort()
     : [];
 
+const parseListCategoryStats = (value: unknown): ListCategorySummary[] => {
+  const parsed =
+    typeof value === 'string'
+      ? safeParseJsonArray(value)
+      : Array.isArray(value)
+        ? value
+        : [];
+
+  return parsed
+    .flatMap((item) => {
+      if (!item || typeof item !== 'object') {
+        return [];
+      }
+
+      const record = item as Record<string, unknown>;
+      const categoryValue = cleanNullableText(toOptionalString(record.value));
+      if (!categoryValue) {
+        return [];
+      }
+
+      return [
+        {
+          value: categoryValue,
+          label: categoryValue,
+          eligibleMembers: Number(record.eligibleMembers ?? 0),
+          totalMembers: Number(record.totalMembers ?? 0),
+        } satisfies ListCategorySummary,
+      ];
+    })
+    .sort((left, right) =>
+      left.label.localeCompare(right.label, 'pt-BR', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    );
+};
+
 const parseAttributes = (value: unknown): Record<string, string> => {
   if (typeof value !== 'string' || !value.trim()) {
     return {};
@@ -1340,6 +1411,15 @@ const toOptionalString = (value: unknown): string | null => {
     return null;
   }
   return String(value);
+};
+
+const safeParseJsonArray = (value: string): unknown[] => {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 };
 
 const updateImportJob = (job: CsvImportJob, patch: Partial<CsvImportJob>) => {
