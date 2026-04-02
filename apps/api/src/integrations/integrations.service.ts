@@ -36,13 +36,13 @@ export class IntegrationsService {
   ) {}
 
   async list(): Promise<SanitizedIntegration[]> {
-    const state = await this.database.read();
-    return state.integrations.map((integration) => this.sanitize(integration));
+    const integrations = await this.database.listIntegrationsInDatabase();
+    return integrations.map((integration) => this.sanitize(integration));
   }
 
   async getById(id: string): Promise<IntegrationRecord> {
-    const state = await this.database.read();
-    const integration = state.integrations.find((item) => item.id === id);
+    const integrations = await this.database.listIntegrationsInDatabase();
+    const integration = integrations.find((item) => item.id === id);
     if (!integration) {
       throw new NotFoundException('Integração não encontrada');
     }
@@ -51,8 +51,8 @@ export class IntegrationsService {
   }
 
   async hasVerifyToken(token: string): Promise<boolean> {
-    const state = await this.database.read();
-    return state.integrations.some((integration) => {
+    const integrations = await this.database.listIntegrationsInDatabase();
+    return integrations.some((integration) => {
       try {
         return this.crypto.decrypt(integration.verifyTokenCiphertext) === token;
       } catch {
@@ -62,8 +62,8 @@ export class IntegrationsService {
   }
 
   async upsertFromEnv(input: EnvIntegrationInput): Promise<SanitizedIntegration> {
-    const state = await this.database.read();
-    const existing = state.integrations.find(
+    const integrations = await this.database.listIntegrationsInDatabase();
+    const existing = integrations.find(
       (integration) =>
         integration.wabaId === input.wabaId &&
         integration.phoneNumberId === input.phoneNumberId,
@@ -111,25 +111,20 @@ export class IntegrationsService {
       updatedAt: nowIso(),
     };
 
-    await this.database.write((state) => {
-      const index = state.integrations.findIndex((item) => item.id === integration.id);
-      if (index >= 0) {
-        state.integrations[index] = integration;
-      } else {
-        state.integrations.push(integration);
-      }
-    });
+    await this.database.saveIntegrationInDatabase(integration);
 
-    await this.audit.log({
-      actorUserId: actor.id,
-      action: current ? 'integration.updated' : 'integration.created',
-      entityType: 'integration',
+    void this.audit
+      .log({
+        actorUserId: actor.id,
+        action: current ? 'integration.updated' : 'integration.created',
+        entityType: 'integration',
       entityId: integration.id,
-      metadata: {
-        wabaId: integration.wabaId,
-        phoneNumberId: integration.phoneNumberId,
-      },
-    });
+        metadata: {
+          wabaId: integration.wabaId,
+          phoneNumberId: integration.phoneNumberId,
+        },
+      })
+      .catch(() => undefined);
 
     return this.sanitize(integration);
   }
@@ -137,12 +132,10 @@ export class IntegrationsService {
   async testConnection(id: string): Promise<Record<string, unknown>> {
     const integration = await this.getById(id);
     const result = await this.wrapMetaCall(() => this.metaGraph.testConnection(integration));
-
-    await this.database.write((state) => {
-      const item = state.integrations.find((record) => record.id === id);
-      if (item) {
-        item.lastHealthcheckAt = nowIso();
-      }
+    const updatedAt = nowIso();
+    await this.database.updateIntegrationTimestampsInDatabase(id, {
+      lastHealthcheckAt: updatedAt,
+      updatedAt,
     });
 
     return result;
@@ -151,23 +144,22 @@ export class IntegrationsService {
   async syncTemplates(id: string, actor: UserSession): Promise<TemplateCacheRecord[]> {
     const integration = await this.getById(id);
     const templates = await this.wrapMetaCall(() => this.metaGraph.syncTemplates(integration));
-
-    await this.database.write((state) => {
-      state.templates = state.templates.filter((template) => template.integrationId !== id);
-      state.templates.push(...templates);
-      const item = state.integrations.find((record) => record.id === id);
-      if (item) {
-        item.lastSyncAt = nowIso();
-      }
+    const updatedAt = nowIso();
+    await this.database.replaceTemplatesInDatabase(id, templates);
+    await this.database.updateIntegrationTimestampsInDatabase(id, {
+      lastSyncAt: updatedAt,
+      updatedAt,
     });
 
-    await this.audit.log({
-      actorUserId: actor.id,
-      action: 'templates.synced',
-      entityType: 'integration',
-      entityId: id,
-      metadata: { count: templates.length },
-    });
+    void this.audit
+      .log({
+        actorUserId: actor.id,
+        action: 'templates.synced',
+        entityType: 'integration',
+        entityId: id,
+        metadata: { count: templates.length },
+      })
+      .catch(() => undefined);
 
     return templates;
   }
@@ -175,23 +167,22 @@ export class IntegrationsService {
   async syncFlows(id: string, actor: UserSession): Promise<FlowCacheRecord[]> {
     const integration = await this.getById(id);
     const flows = await this.wrapMetaCall(() => this.metaGraph.syncFlows(integration));
-
-    await this.database.write((state) => {
-      state.flows = state.flows.filter((flow) => flow.integrationId !== id);
-      state.flows.push(...flows);
-      const item = state.integrations.find((record) => record.id === id);
-      if (item) {
-        item.lastSyncAt = nowIso();
-      }
+    const updatedAt = nowIso();
+    await this.database.replaceFlowsInDatabase(id, flows);
+    await this.database.updateIntegrationTimestampsInDatabase(id, {
+      lastSyncAt: updatedAt,
+      updatedAt,
     });
 
-    await this.audit.log({
-      actorUserId: actor.id,
-      action: 'flows.synced',
-      entityType: 'integration',
-      entityId: id,
-      metadata: { count: flows.length },
-    });
+    void this.audit
+      .log({
+        actorUserId: actor.id,
+        action: 'flows.synced',
+        entityType: 'integration',
+        entityId: id,
+        metadata: { count: flows.length },
+      })
+      .catch(() => undefined);
 
     return flows;
   }

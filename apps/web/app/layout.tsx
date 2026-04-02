@@ -1,6 +1,8 @@
 import './globals.css';
 import { AuthGuard } from '../components/auth-guard';
 
+export const dynamic = 'force-dynamic';
+
 export const metadata = {
   title: 'Campaign Sender Pilot',
   description: 'Pilot self-hosted para WhatsApp Business Platform',

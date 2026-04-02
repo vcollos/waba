@@ -11,6 +11,7 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DispatchService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
+  private readonly inFlightByCampaign = new Map<string, Set<string>>();
 
   constructor(
     @Inject(DatabaseService)
@@ -42,13 +43,10 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
 
     try {
-      const state = await this.database.read();
-      const activeCampaigns = state.campaigns.filter((campaign) =>
-        ['queued', 'sending'].includes(campaign.status),
-      );
+      const { activeCampaigns, integrations } = await this.loadDispatchTargets();
 
       for (const campaign of activeCampaigns) {
-        await this.dispatchCampaign(campaign, state.integrations);
+        await this.dispatchCampaign(campaign, integrations);
       }
     } catch (error) {
       this.logger.error('Dispatch tick failed', error instanceof Error ? error.stack : String(error));
@@ -66,14 +64,18 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const state = await this.database.read();
-    const candidates = state.campaignMessages
-      .filter((message) => this.isDispatchable(message, campaign.id))
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .slice(0, campaign.sendRateMps);
+    const inFlightCount = this.getInFlightCount(campaign.id);
+    const availableSlots = Math.max(0, campaign.sendRateMps - inFlightCount);
+    if (availableSlots === 0) {
+      return;
+    }
+
+    const candidates = await this.claimDispatchBatch(campaign.id, availableSlots);
 
     if (candidates.length === 0) {
-      await this.campaignsService.refreshCampaignSummary(campaign.id);
+      if (inFlightCount === 0) {
+        await this.campaignsService.refreshCampaignSummary(campaign.id);
+      }
       return;
     }
 
@@ -86,10 +88,60 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     });
 
     for (const message of candidates) {
-      await this.sendMessage(message, integration);
+      this.launchSend(message, integration);
+    }
+  }
+
+  private async loadDispatchTargets(): Promise<{
+    activeCampaigns: CampaignRecord[];
+    integrations: IntegrationRecord[];
+  }> {
+    return this.database.readDispatchTargets();
+  }
+
+  private async claimDispatchBatch(
+    campaignId: string,
+    batchSize: number,
+  ): Promise<CampaignMessageRecord[]> {
+    const leaseUntil = new Date(Date.now() + DISPATCH_CLAIM_LEASE_MS).toISOString();
+    return this.database.claimDispatchBatchInDatabase(campaignId, batchSize, leaseUntil);
+  }
+
+  private launchSend(message: CampaignMessageRecord, integration: IntegrationRecord) {
+    this.addInFlight(message.campaignId, message.id);
+
+    void this.sendMessage(message, integration)
+      .catch((error) => {
+        this.logger.error(
+          `Dispatch send failed for message ${message.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      })
+      .finally(() => {
+        this.removeInFlight(message.campaignId, message.id);
+      });
+  }
+
+  private getInFlightCount(campaignId: string): number {
+    return this.inFlightByCampaign.get(campaignId)?.size ?? 0;
+  }
+
+  private addInFlight(campaignId: string, messageId: string) {
+    const entries = this.inFlightByCampaign.get(campaignId) ?? new Set<string>();
+    entries.add(messageId);
+    this.inFlightByCampaign.set(campaignId, entries);
+  }
+
+  private removeInFlight(campaignId: string, messageId: string) {
+    const entries = this.inFlightByCampaign.get(campaignId);
+    if (!entries) {
+      return;
     }
 
-    await this.campaignsService.refreshCampaignSummary(campaign.id);
+    entries.delete(messageId);
+    if (entries.size === 0) {
+      this.inFlightByCampaign.delete(campaignId);
+    }
   }
 
   private isDispatchable(message: CampaignMessageRecord, campaignId: string): boolean {
@@ -118,55 +170,46 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
       const providerMessageId = Array.isArray(response.messages)
         ? String((response.messages[0] as Record<string, unknown>)?.id ?? '')
         : '';
-
-      await this.database.write((state) => {
-        const item = state.campaignMessages.find((record) => record.id === message.id);
-        if (!item) {
-          return;
-        }
-
-        item.status = 'accepted';
-        item.providerMessageId = providerMessageId;
-        item.attemptCount += 1;
-        item.lastAttemptAt = nowIso();
-        item.nextAttemptAt = null;
-        item.updatedAt = nowIso();
-
-        state.messageEvents.push({
-          id: newId(),
-          campaignMessageId: item.id,
-          providerMessageId,
-          eventType: 'send.accepted',
-          status: 'accepted',
-          payload: response,
-          occurredAt: nowIso(),
-          receivedAt: nowIso(),
-          dedupeKey: `accepted:${providerMessageId}`,
-        });
+      const updatedAt = nowIso();
+      await this.database.saveCampaignMessageInDatabase({
+        ...message,
+        status: 'accepted',
+        providerMessageId,
+        attemptCount: message.attemptCount + 1,
+        lastAttemptAt: updatedAt,
+        nextAttemptAt: null,
+        updatedAt,
+      });
+      await this.database.saveMessageEventInDatabase({
+        id: newId(),
+        campaignMessageId: message.id,
+        providerMessageId,
+        eventType: 'send.accepted',
+        status: 'accepted',
+        payload: response,
+        occurredAt: updatedAt,
+        receivedAt: updatedAt,
+        dedupeKey: `accepted:${providerMessageId}`,
       });
     } catch (error) {
       const metaError = error as MetaApiError;
       const retryDelayMs = classifyRetryDelay(metaError.code);
+      const updatedAt = nowIso();
+      const nextAttemptAt = retryDelayMs && message.attemptCount + 1 < 5
+        ? new Date(Date.now() + retryDelayMs).toISOString()
+        : null;
 
-      await this.database.write((state) => {
-        const item = state.campaignMessages.find((record) => record.id === message.id);
-        if (!item) {
-          return;
-        }
-
-        item.attemptCount += 1;
-        item.lastAttemptAt = nowIso();
-        item.providerErrorCode = metaError.code ? String(metaError.code) : null;
-        item.providerErrorTitle = metaError.message;
-        item.providerErrorMessage = JSON.stringify(metaError.payload ?? {});
-        item.updatedAt = nowIso();
-
-        if (retryDelayMs && item.attemptCount < 5) {
-          item.nextAttemptAt = new Date(Date.now() + retryDelayMs).toISOString();
-        } else {
-          item.status = 'failed';
-          item.failedAt = nowIso();
-        }
+      await this.database.saveCampaignMessageInDatabase({
+        ...message,
+        status: nextAttemptAt ? 'pending' : 'failed',
+        attemptCount: message.attemptCount + 1,
+        lastAttemptAt: updatedAt,
+        nextAttemptAt,
+        failedAt: nextAttemptAt ? null : updatedAt,
+        providerErrorCode: metaError.code ? String(metaError.code) : null,
+        providerErrorTitle: metaError.message,
+        providerErrorMessage: JSON.stringify(metaError.payload ?? {}),
+        updatedAt,
       });
     }
   }
@@ -191,3 +234,5 @@ const classifyRetryDelay = (code?: number): number | null => {
 
   return null;
 };
+
+const DISPATCH_CLAIM_LEASE_MS = 120_000;

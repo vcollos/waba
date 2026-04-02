@@ -13,16 +13,14 @@ export class AuditService {
     entityId: string;
     metadata?: Record<string, unknown>;
   }): Promise<void> {
-    await this.database.write((state) => {
-      state.auditLogs.push({
-        id: randomUUID(),
-        actorUserId: params.actorUserId ?? null,
-        action: params.action,
-        entityType: params.entityType,
-        entityId: params.entityId,
-        metadata: params.metadata ?? {},
-        createdAt: new Date().toISOString(),
-      });
+    await this.database.saveAuditLogInDatabase({
+      id: randomUUID(),
+      actorUserId: params.actorUserId ?? null,
+      action: params.action,
+      entityType: params.entityType,
+      entityId: params.entityId,
+      metadata: params.metadata ?? {},
+      createdAt: new Date().toISOString(),
     });
   }
 }

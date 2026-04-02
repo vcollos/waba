@@ -2,6 +2,32 @@
 
 Validação técnica baseada nos materiais oficiais da Meta consultados em 2026-03-24.
 
+## 0. Status implementado em produção
+
+Estado validado em `2026-04-02`:
+
+- frontend publicado em `https://waba.collos.com.br`
+- API publicada em `https://waba-api.collos.com.br/api`
+- deploy por `docker compose` em VPS Oracle no path `/opt/apps/waba`
+- `PostgreSQL` como persistência operacional principal para:
+  - integrações
+  - templates
+  - flows
+  - campanhas
+  - `campaign_messages`
+  - `message_events`
+  - `flow_responses`
+  - `audit_logs`
+  - `opt_outs`
+- `app_state` mantido apenas como estado agregado compacto
+- `SQLite` ainda presente no código como compatibilidade/legado, mas não deve ser usado como store primária de produção
+
+Incidente de produção corrigido em `2026-04-02`:
+
+- sintoma: `Failed to fetch` no frontend e erros aparentes de CORS
+- causa real: `502` upstream por pressão do backend ao regravar estado operacional muito grande
+- correção aplicada: mover hot paths operacionais para tabelas Postgres dedicadas e reduzir pressão de polling no frontend
+
 ## 1. Visão geral da solução
 
 Objetivo: operar campanhas de WhatsApp com `templates` e `flows` aprovados, sem Twilio/n8n/BSP intermediário, usando apenas Graph API + Webhooks oficiais da Meta.
@@ -47,6 +73,12 @@ Por que essa stack:
 - BullMQ resolve fila, reprocessamento, atraso e deduplicação com pouca complexidade
 - PostgreSQL cobre bem auditoria, relatórios simples e rastreabilidade
 
+Observação:
+
+- a produção atual ainda não usa `Redis/BullMQ`
+- o dispatcher segue inline e single-process
+- isso atende o hotfix atual, mas não é o estado final desejado para escala
+
 ### Componentes
 
 ```mermaid
@@ -86,6 +118,12 @@ flowchart LR
 - `dispatch`: fila, rate limiting, retries, idempotência
 - `webhooks`: verificação Meta, status, inbound, opt-out, auditoria
 - `reporting`: métricas, exportações, trilha de auditoria
+
+Desvio atual entre spec e produção:
+
+- `dispatch` ainda não está em fila externa
+- `webhooks` ainda precisam validar `X-Hub-Signature-256`
+- existe compatibilidade residual com `SQLite`
 
 ## 3. Fluxo de telas
 

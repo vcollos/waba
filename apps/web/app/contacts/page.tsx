@@ -10,6 +10,8 @@ type RecordStatus = 'active' | 'inactive';
 interface Contact {
   id: string;
   clientName?: string | null;
+  firstName: string;
+  lastName?: string | null;
   name: string;
   category?: string | null;
   recordStatus: RecordStatus;
@@ -46,9 +48,27 @@ interface ImportPreview {
   availableFields: ImportPreviewField[];
 }
 
+interface ImportJob {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  fileName: string;
+  listName: string;
+  totalRows: number;
+  processedRows: number;
+  error?: string | null;
+}
+
+interface PaginatedContactsResponse {
+  items: Contact[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 interface ContactFormState {
   clientName: string;
-  name: string;
+  firstName: string;
+  lastName: string;
   phone: string;
   category: string;
   recordStatus: RecordStatus;
@@ -74,7 +94,8 @@ interface BulkActionState {
 
 const emptyForm = (): ContactFormState => ({
   clientName: '',
-  name: '',
+  firstName: '',
+  lastName: '',
   phone: '',
   category: '',
   recordStatus: 'active',
@@ -91,8 +112,11 @@ const emptyBulkAction = (): BulkActionState => ({
 });
 
 export default function ContactsPage() {
+  const pageSize = 50;
   const fileRef = useRef<HTMLInputElement>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactsTotal, setContactsTotal] = useState(0);
+  const [contactsOffset, setContactsOffset] = useState(0);
   const [lists, setLists] = useState<ListItem[]>([]);
   const [editingContactId, setEditingContactId] = useState<string | null>(null);
   const [contactForm, setContactForm] = useState<ContactFormState>(emptyForm);
@@ -105,26 +129,62 @@ export default function ContactsPage() {
     status: 'active' as RecordStatus,
   });
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importJob, setImportJob] = useState<ImportJob | null>(null);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string | null>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (nextOffset = contactsOffset) => {
     const [contactsPayload, listsPayload] = await Promise.all([
-      apiRequest<Contact[]>('/contacts'),
+      apiRequest<PaginatedContactsResponse>(`/contacts?limit=${pageSize}&offset=${nextOffset}`),
       apiRequest<ListItem[]>('/lists'),
     ]);
-    setContacts(contactsPayload);
+    setContacts(contactsPayload.items);
+    setContactsTotal(contactsPayload.total);
+    setContactsOffset(contactsPayload.offset);
     setLists(listsPayload);
     setSelectedContactIds((current) =>
-      current.filter((contactId) => contactsPayload.some((contact) => contact.id === contactId)),
+      current.filter((contactId) => contactsPayload.items.some((contact) => contact.id === contactId)),
     );
   };
 
   useEffect(() => {
     void load().catch((err) => setError(err instanceof Error ? err.message : 'Falha ao carregar'));
   }, []);
+
+  useEffect(() => {
+    if (!importJob || !['queued', 'running'].includes(importJob.status)) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
+      void apiRequest<ImportJob>(`/contacts/imports/csv/jobs/${importJob.id}`)
+        .then(async (job) => {
+          setImportJob(job);
+
+          if (job.status === 'completed') {
+            fileRef.current!.value = '';
+            setImportPreview(null);
+            setFieldMapping({});
+            setContactsOffset(0);
+            await load(0);
+            setMessage(`Importação concluída: ${job.processedRows} linha(s) processada(s).`);
+          }
+
+          if (job.status === 'failed') {
+            setError(job.error ?? 'Falha ao importar CSV');
+          }
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : 'Falha ao consultar importação'));
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [importJob]);
 
   const runAction = async (label: string, action: () => Promise<void>) => {
     setBusy(label);
@@ -151,7 +211,8 @@ export default function ContactsPage() {
     await runAction(editingContactId ? 'Atualizando contato' : 'Criando contato', async () => {
       const payload = {
         clientName: emptyToNull(contactForm.clientName),
-        name: contactForm.name,
+        firstName: contactForm.firstName,
+        lastName: emptyToNull(contactForm.lastName),
         phone: contactForm.phone,
         category: emptyToNull(contactForm.category),
         recordStatus: contactForm.recordStatus,
@@ -175,8 +236,9 @@ export default function ContactsPage() {
     setEditingContactId(contact.id);
     setContactForm({
       clientName: contact.clientName ?? '',
-      name: contact.name,
-      phone: contact.phoneE164 || contact.phoneRaw,
+      firstName: contact.firstName ?? '',
+      lastName: contact.lastName ?? '',
+      phone: stripDefaultCountryCode(contact.phoneE164 || contact.phoneRaw),
       category: contact.category ?? '',
       recordStatus: contact.recordStatus ?? 'active',
       email: contact.email ?? '',
@@ -237,12 +299,9 @@ export default function ContactsPage() {
       formData.append('mapping', JSON.stringify(fieldMapping));
       formData.append('defaults', JSON.stringify(importDefaults));
 
-      await apiRequest('/contacts/imports/csv', { method: 'POST', body: formData });
-      fileRef.current!.value = '';
-      setImportPreview(null);
-      setFieldMapping({});
-      await load();
-      setMessage('CSV importado com sucesso.');
+      const job = await apiRequest<ImportJob>('/contacts/imports/csv', { method: 'POST', body: formData });
+      setImportJob(job);
+      setMessage(`Importação iniciada para ${job.totalRows} linha(s). Aguarde o processamento.`);
     });
   };
 
@@ -296,6 +355,9 @@ export default function ContactsPage() {
     );
   };
 
+  const currentPage = Math.floor(contactsOffset / pageSize) + 1;
+  const totalPages = Math.max(1, Math.ceil(contactsTotal / pageSize));
+
   return (
     <AppShell title="Contatos e listas">
       {error ? <div className="notice error">{error}</div> : null}
@@ -329,15 +391,26 @@ export default function ContactsPage() {
             </div>
             <div className="grid two">
               <div className="field">
-                <label>Contato</label>
+                <label>Nome</label>
                 <input
-                  value={contactForm.name}
+                  value={contactForm.firstName}
                   onChange={(event) =>
-                    setContactForm((current) => ({ ...current, name: event.target.value }))
+                    setContactForm((current) => ({ ...current, firstName: event.target.value }))
                   }
                   required
                 />
               </div>
+              <div className="field">
+                <label>Sobrenome</label>
+                <input
+                  value={contactForm.lastName}
+                  onChange={(event) =>
+                    setContactForm((current) => ({ ...current, lastName: event.target.value }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="grid two">
               <div className="field">
                 <label>Telefone</label>
                 <input
@@ -345,7 +418,7 @@ export default function ContactsPage() {
                   onChange={(event) =>
                     setContactForm((current) => ({ ...current, phone: event.target.value }))
                   }
-                  placeholder="+5511999999999"
+                  placeholder="11999999999"
                   required
                 />
               </div>
@@ -488,27 +561,51 @@ export default function ContactsPage() {
 
             <div className="form-actions">
               <button className="ghost-button" type="submit" disabled={Boolean(busy)}>
-                Ler colunas
+                {busy === 'Lendo CSV' ? 'Lendo CSV...' : 'Ler colunas'}
               </button>
               {importPreview ? (
                 <button
                   className="primary-button"
                   type="button"
                   onClick={() => void submitImport()}
-                  disabled={Boolean(busy)}
+                  disabled={Boolean(busy) || Boolean(importJob && ['queued', 'running'].includes(importJob.status))}
                 >
-                  Importar com mapeamento
+                  {busy === 'Importando CSV' || (importJob && ['queued', 'running'].includes(importJob.status))
+                    ? 'Importando...'
+                    : 'Importar com mapeamento'}
                 </button>
               ) : null}
             </div>
           </form>
 
+          {importJob ? (
+            <div className={`notice top-gap ${importJob.status === 'failed' ? 'error' : ''}`}>
+              <strong>
+                Importação {importJob.status === 'completed'
+                  ? 'concluída'
+                  : importJob.status === 'failed'
+                    ? 'falhou'
+                    : 'em processamento'}
+              </strong>
+              <div className="muted">
+                {importJob.processedRows} / {importJob.totalRows} linha(s) processada(s)
+                {importJob.error ? ` | ${importJob.error}` : ''}
+              </div>
+            </div>
+          ) : null}
+
           {importPreview ? (
             <div className="stack top-gap">
               <div className="notice">
                 <strong>{importPreview.totalRows} linhas detectadas.</strong>
-                <div className="muted">Mapeie as colunas obrigatórias antes de importar.</div>
+                <div className="muted">Mapeie telefone e nome ou nome completo antes de importar.</div>
               </div>
+
+              {importPreview.totalRows > 50000 ? (
+                <div className="notice">
+                  Lote grande detectado. A importação roda em segundo plano e pode levar alguns minutos.
+                </div>
+              ) : null}
 
               <div className="grid two">
                 {importPreview.availableFields.map((field) => (
@@ -674,6 +771,27 @@ export default function ContactsPage() {
             />
             <span>Selecionar todos</span>
           </label>
+          <div className="form-actions">
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={contactsOffset === 0 || Boolean(busy)}
+              onClick={() => void load(Math.max(0, contactsOffset - pageSize))}
+            >
+              Página anterior
+            </button>
+            <div className="notice">
+              Página {currentPage} de {totalPages} | {contactsTotal} contato(s)
+            </div>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={contactsOffset + pageSize >= contactsTotal || Boolean(busy)}
+              onClick={() => void load(contactsOffset + pageSize)}
+            >
+              Próxima página
+            </button>
+          </div>
         </div>
 
         <div className="table-wrap">
@@ -681,7 +799,9 @@ export default function ContactsPage() {
             <thead>
               <tr>
                 <th />
-                <th>Cliente / contato</th>
+                <th>Cliente</th>
+                <th>Nome</th>
+                <th>Sobrenome</th>
                 <th>Telefone</th>
                 <th>Categoria</th>
                 <th>Importação</th>
@@ -703,9 +823,12 @@ export default function ContactsPage() {
                     </td>
                     <td>
                       <strong>{contact.clientName ?? 'Sem cliente'}</strong>
-                      <div>{contact.name}</div>
+                    </td>
+                    <td>
+                      <div>{contact.firstName}</div>
                       <div className="subtle">{contact.email ?? 'Sem e-mail'}</div>
                     </td>
+                    <td>{contact.lastName ?? '—'}</td>
                     <td>{contact.phoneE164 || contact.phoneRaw || '—'}</td>
                     <td>{contact.category ?? '—'}</td>
                     <td>{formatDate(contact.importedAt ?? contact.createdAt)}</td>
@@ -748,7 +871,7 @@ export default function ContactsPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="muted">
+                  <td colSpan={10} className="muted">
                     Nenhum contato cadastrado.
                   </td>
                 </tr>
@@ -780,4 +903,13 @@ const formatDate = (value?: string | null) => {
 const emptyToNull = (value: string): string | null => {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+};
+
+const stripDefaultCountryCode = (value: string): string => {
+  const digits = value.replace(/\D+/g, '');
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    return digits.slice(2);
+  }
+
+  return digits || value;
 };

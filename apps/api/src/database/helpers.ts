@@ -9,12 +9,17 @@ export const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
 
 export const normalizePhone = (value: string): { phoneE164: string; error?: string } => {
-  const digits = value.replace(/\D+/g, '');
-  if (digits.length < 10 || digits.length > 15) {
-    return { phoneE164: digits, error: 'Telefone inválido para E.164' };
+  const digits = value.replace(/\D+/g, '').replace(/^0+/, '');
+  const normalizedDigits =
+    digits.length === 10 || digits.length === 11
+      ? `55${digits}`
+      : digits;
+
+  if (normalizedDigits.length < 12 || normalizedDigits.length > 15) {
+    return { phoneE164: normalizedDigits, error: 'Telefone inválido para E.164' };
   }
 
-  return { phoneE164: `+${digits}` };
+  return { phoneE164: `+${normalizedDigits}` };
 };
 
 export const normalizeKeyword = (value: string): string =>

@@ -37,54 +37,47 @@ export class WebhooksService {
     const timestamp = String(status.timestamp ?? Math.floor(Date.now() / 1000));
     const dedupeKey = hash(`${providerMessageId}:${nextStatus}:${timestamp}`);
 
-    const state = await this.database.read();
-    if (state.messageEvents.some((event) => event.dedupeKey === dedupeKey)) {
+    if (await this.database.hasMessageEventInDatabase(dedupeKey)) {
       return;
     }
 
-    const message = state.campaignMessages.find(
-      (item) => item.providerMessageId === providerMessageId,
-    );
+    const message = await this.database.findCampaignMessageByProviderMessageIdInDatabase(providerMessageId);
+    const receivedAt = nowIso();
+    const occurredAt = new Date(Number(timestamp) * 1000).toISOString();
 
-    await this.database.write((draft) => {
-      draft.messageEvents.push({
-        id: newId(),
-        campaignMessageId: message?.id ?? null,
-        providerMessageId,
-        eventType: 'meta.status',
-        status: nextStatus,
-        payload,
-        occurredAt: new Date(Number(timestamp) * 1000).toISOString(),
-        receivedAt: nowIso(),
-        dedupeKey,
-      });
-
-      if (message) {
-        const item = draft.campaignMessages.find((record) => record.id === message.id);
-        if (!item) {
-          return;
-        }
-
-        item.status = mapWebhookStatus(nextStatus);
-        item.updatedAt = nowIso();
-        if (nextStatus === 'sent') item.sentAt = nowIso();
-        if (nextStatus === 'delivered') item.deliveredAt = nowIso();
-        if (nextStatus === 'read') item.readAt = nowIso();
-        if (nextStatus === 'failed') {
-          item.failedAt = nowIso();
-          const errors = Array.isArray(status.errors) ? status.errors[0] : undefined;
-          item.providerErrorCode = errors ? String((errors as Record<string, unknown>).code ?? '') : null;
-          item.providerErrorTitle = errors
-            ? String((errors as Record<string, unknown>).title ?? 'Webhook failed')
-            : 'Webhook failed';
-          item.providerErrorMessage = errors ? JSON.stringify(errors) : 'Webhook failed';
-        }
-      }
+    const persisted = await this.database.saveMessageEventInDatabase({
+      id: newId(),
+      campaignMessageId: message?.id ?? null,
+      providerMessageId,
+      eventType: 'meta.status',
+      status: nextStatus,
+      payload,
+      occurredAt,
+      receivedAt,
+      dedupeKey,
     });
 
-    if (message) {
-      await this.campaignsService.refreshCampaignSummary(message.campaignId);
+    if (!persisted || !message) {
+      return;
     }
+
+    const nextMessage = { ...message, status: mapWebhookStatus(nextStatus), updatedAt: receivedAt };
+    if (nextStatus === 'sent') nextMessage.sentAt = receivedAt;
+    if (nextStatus === 'delivered') nextMessage.deliveredAt = receivedAt;
+    if (nextStatus === 'read') nextMessage.readAt = receivedAt;
+    if (nextStatus === 'failed') {
+      nextMessage.failedAt = receivedAt;
+      const errors = Array.isArray(status.errors) ? status.errors[0] : undefined;
+      nextMessage.providerErrorCode = errors ? String((errors as Record<string, unknown>).code ?? '') : null;
+      nextMessage.providerErrorTitle = errors
+        ? String((errors as Record<string, unknown>).title ?? 'Webhook failed')
+        : 'Webhook failed';
+      nextMessage.providerErrorMessage = errors ? JSON.stringify(errors) : 'Webhook failed';
+    }
+
+    await this.database.saveCampaignMessageInDatabase(nextMessage);
+
+    await this.campaignsService.refreshCampaignSummary(message.campaignId);
   }
 
   private async handleInbound(
@@ -97,13 +90,25 @@ export class WebhooksService {
       return;
     }
 
-    const state = await this.database.read();
-    const contact = state.contacts.find((item) => item.phoneHash === hash(waId));
+    const state = await this.database.readMetaSnapshot();
+    const [contactRow] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, phone_hash
+       FROM contacts
+       WHERE phone_hash = $1
+       LIMIT 1`,
+      [hash(waId)],
+    );
+    const contact = contactRow
+      ? {
+          id: String(contactRow.id),
+          phoneHash: String(contactRow.phone_hash),
+        }
+      : null;
     const providerMessageId = String(message.id ?? '');
     const contextMessageId = normalizeOptionalValue(asRecord(message.context)?.id);
     const dedupeKey = hash(`${providerMessageId || newId()}:inbound`);
 
-    if (state.messageEvents.some((event) => event.dedupeKey === dedupeKey)) {
+    if (await this.database.hasMessageEventInDatabase(dedupeKey)) {
       return;
     }
 
@@ -112,59 +117,61 @@ export class WebhooksService {
       String(message.type ?? '') === 'interactive' &&
       String(interactive?.type ?? '') === 'nfm_reply';
     const flowReply = isFlowReply ? extractFlowReply(interactive) : null;
-    const relatedMessage = this.findRelatedCampaignMessage(state.campaignMessages, message, flowReply);
+    const relatedMessage = await this.findRelatedCampaignMessage(message, flowReply);
     const relatedFlow = this.findRelatedFlow(state.flows, state, relatedMessage, flowReply);
-
-    await this.database.write((draft) => {
-      draft.messageEvents.push({
-        id: newId(),
-        campaignMessageId: relatedMessage?.id ?? null,
-        providerMessageId,
-        eventType: isFlowReply ? 'meta.flow_reply' : 'meta.inbound',
-        status: null,
-        payload,
-        occurredAt: nowIso(),
-        receivedAt: nowIso(),
-        dedupeKey,
-      });
-
-      if (flowReply) {
-        upsertFlowResponse(draft.flowResponses, {
-          id: newId(),
-          integrationId: relatedMessage?.campaignId
-            ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.integrationId ??
-              state.integrations[0]?.id ??
-              '')
-            : (state.integrations[0]?.id ?? ''),
-          campaignId: relatedMessage?.campaignId ?? null,
-          campaignMessageId: relatedMessage?.id ?? null,
-          contactId: contact?.id ?? null,
-          templateCacheId:
-            relatedMessage?.campaignId
-              ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.templateCacheId ??
-                null)
-              : null,
-          flowCacheId:
-            relatedMessage?.campaignId
-              ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.flowCacheId ??
-                relatedFlow?.id ??
-                null)
-              : (relatedFlow?.id ?? null),
-          metaFlowId: relatedFlow?.metaFlowId ?? null,
-          flowToken: flowReply.flowToken ?? relatedMessage?.flowToken ?? null,
-          providerMessageId,
-          providerContextMessageId: contextMessageId ?? flowReply.contextMessageId ?? null,
-          waId,
-          responsePayload: flowReply.responsePayload,
-          responsePayloadRaw: flowReply.responsePayloadRaw,
-          rawMessage: message,
-          rawWebhook: payload,
-          completedAt: nowIso(),
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        });
-      }
+    const receivedAt = nowIso();
+    const persisted = await this.database.saveMessageEventInDatabase({
+      id: newId(),
+      campaignMessageId: relatedMessage?.id ?? null,
+      providerMessageId,
+      eventType: isFlowReply ? 'meta.flow_reply' : 'meta.inbound',
+      status: null,
+      payload,
+      occurredAt: receivedAt,
+      receivedAt,
+      dedupeKey,
     });
+
+    if (!persisted) {
+      return;
+    }
+
+    if (flowReply) {
+      await this.database.saveFlowResponseInDatabase({
+        id: newId(),
+        integrationId: relatedMessage?.campaignId
+          ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.integrationId ??
+            state.integrations[0]?.id ??
+            '')
+          : (state.integrations[0]?.id ?? ''),
+        campaignId: relatedMessage?.campaignId ?? null,
+        campaignMessageId: relatedMessage?.id ?? null,
+        contactId: contact?.id ?? null,
+        templateCacheId:
+          relatedMessage?.campaignId
+            ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.templateCacheId ??
+              null)
+            : null,
+        flowCacheId:
+          relatedMessage?.campaignId
+            ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.flowCacheId ??
+              relatedFlow?.id ??
+              null)
+            : (relatedFlow?.id ?? null),
+        metaFlowId: relatedFlow?.metaFlowId ?? null,
+        flowToken: flowReply.flowToken ?? relatedMessage?.flowToken ?? null,
+        providerMessageId,
+        providerContextMessageId: contextMessageId ?? flowReply.contextMessageId ?? null,
+        waId,
+        responsePayload: flowReply.responsePayload,
+        responsePayloadRaw: flowReply.responsePayloadRaw,
+        rawMessage: message,
+        rawWebhook: payload,
+        completedAt: receivedAt,
+        createdAt: receivedAt,
+        updatedAt: receivedAt,
+      });
+    }
 
     if (!contact) {
       return;
@@ -177,44 +184,40 @@ export class WebhooksService {
     }
   }
 
-  private async markOptOut(contact: ContactRecord, keyword: string) {
-    await this.database.write((state) => {
-      const item = state.contacts.find((record) => record.id === contact.id);
-      if (!item) {
-        return;
-      }
-      item.isOptedOut = true;
-      item.optedOutAt = nowIso();
-      item.optOutSource = 'inbound_keyword';
-      item.updatedAt = nowIso();
+  private async markOptOut(contact: Pick<ContactRecord, 'id'>, keyword: string) {
+    const timestamp = nowIso();
+    await this.database.postgresQuery(
+      `UPDATE contacts
+       SET is_opted_out = true, opted_out_at = $1, opt_out_source = 'inbound_keyword', updated_at = $2
+       WHERE id = $3`,
+      [timestamp, timestamp, contact.id],
+    );
 
-      state.optOuts.push({
-        id: newId(),
-        contactId: item.id,
-        source: 'inbound_keyword',
-        keyword,
-        createdAt: nowIso(),
-      });
+    await this.database.saveOptOutInDatabase({
+      id: newId(),
+      contactId: contact.id,
+      source: 'inbound_keyword',
+      keyword,
+      createdAt: timestamp,
     });
   }
 
-  private findRelatedCampaignMessage(
-    messages: CampaignMessageRecord[],
+  private async findRelatedCampaignMessage(
     message: Record<string, unknown>,
     flowReply: ExtractedFlowReply | null,
-  ): CampaignMessageRecord | undefined {
+  ): Promise<CampaignMessageRecord | undefined> {
     const contextMessageId = String(
       (asRecord(message.context)?.id ?? flowReply?.contextMessageId ?? '') as string,
     );
     if (contextMessageId) {
-      const byContext = messages.find((item) => item.providerMessageId === contextMessageId);
+      const byContext = await this.database.findCampaignMessageByProviderMessageIdInDatabase(contextMessageId);
       if (byContext) {
         return byContext;
       }
     }
 
     if (flowReply?.flowToken) {
-      return messages.find((item) => item.flowToken === flowReply.flowToken);
+      return (await this.database.findCampaignMessageByFlowTokenInDatabase(flowReply.flowToken)) ?? undefined;
     }
 
     return undefined;

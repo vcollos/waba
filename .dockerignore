@@ -1,0 +1,12 @@
+node_modules
+.git
+.next
+dist
+coverage
+tmp
+data
+apps/**/dist
+apps/**/.next
+apps/**/node_modules
+npm-debug.log*
+*.tsbuildinfo

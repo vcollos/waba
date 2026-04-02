@@ -26,7 +26,7 @@ export function AppShell({
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div>
+        <div className="sidebar-brand">
           <p className="eyebrow">Campaign Sender</p>
           <h1>Piloto WhatsApp</h1>
         </div>
@@ -44,7 +44,7 @@ export function AppShell({
         </nav>
 
         <button
-          className="ghost-button"
+          className="ghost-button sidebar-logout"
           onClick={() => {
             clearToken();
             router.replace('/login');

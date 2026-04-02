@@ -1,10 +1,33 @@
 services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-campaign_sender}
+      POSTGRES_USER: ${POSTGRES_USER:-campaign_sender}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-campaign_sender}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-campaign_sender} -d ${POSTGRES_DB:-campaign_sender}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file:
       - .env
+    environment:
+      NODE_OPTIONS: ${API_NODE_OPTIONS:---max-old-space-size=8192}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "4311:4311"
     volumes:
@@ -14,8 +37,11 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4311/api}
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:4311/api}
+    restart: unless-stopped
     ports:
       - "4310:4310"
     depends_on:
@@ -23,6 +49,9 @@ services:
 
   caddy:
     image: caddy:2
+    profiles:
+      - edge
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
@@ -31,3 +60,6 @@ services:
     depends_on:
       - web
       - api
+
+volumes:
+  postgres-data:

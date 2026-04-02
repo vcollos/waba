@@ -20,6 +20,8 @@ export class MetaApiError extends Error {
 
 @Injectable()
 export class MetaGraphService {
+  private readonly requestTimeoutMs = 15_000;
+
   constructor(private readonly crypto: CryptoService) {}
 
   async testConnection(integration: IntegrationRecord): Promise<Record<string, unknown>> {
@@ -80,62 +82,62 @@ export class MetaGraphService {
   async syncFlows(integration: IntegrationRecord): Promise<FlowCacheRecord[]> {
     const flows = await this.paginate(integration, `/${integration.wabaId}/flows?limit=100`);
     const syncedAt = nowIso();
-    const detailed = await Promise.all(
-      flows.map(async (item) => {
-        const base = item as Record<string, unknown>;
-        const flowId = String(base.id);
-        const details = await this.request<Record<string, unknown>>(
+    const detailed: FlowCacheRecord[] = [];
+
+    for (const item of flows) {
+      const base = item as Record<string, unknown>;
+      const flowId = String(base.id);
+      const details = await this.request<Record<string, unknown>>(
+        integration,
+        'GET',
+        `/${flowId}?fields=id,name,categories,preview,status,validation_errors,json_version,data_api_version,data_channel_uri,health_status`,
+      );
+      let assets: Record<string, unknown>[] = [];
+      try {
+        const assetsPayload = await this.request<{ data?: Record<string, unknown>[] }>(
           integration,
           'GET',
-          `/${flowId}?fields=id,name,categories,preview,status,validation_errors,json_version,data_api_version,data_channel_uri,health_status`,
+          `/${flowId}/assets`,
         );
-        let assets: Record<string, unknown>[] = [];
-        try {
-          const assetsPayload = await this.request<{ data?: Record<string, unknown>[] }>(
-            integration,
-            'GET',
-            `/${flowId}/assets`,
-          );
-          assets = assetsPayload.data ?? [];
-        } catch {
-          assets = [];
-        }
-        const completionPayloadDefinitions = await this.readCompletionPayloadDefinitions(assets);
+        assets = assetsPayload.data ?? [];
+      } catch {
+        assets = [];
+      }
+      const completionPayloadDefinitions = await this.readCompletionPayloadDefinitions(assets);
 
-        return {
-          id: newId(),
-          integrationId: integration.id,
-          metaFlowId: flowId,
-          name: String(details.name ?? base.name ?? ''),
-          categories: Array.isArray(details.categories)
-            ? details.categories.map((value) => String(value))
-            : [],
-          status: String(details.status ?? base.status ?? 'UNKNOWN'),
-          jsonVersion: String(details.json_version ?? ''),
-          dataApiVersion: String(details.data_api_version ?? ''),
-          previewUrl:
-            typeof (details.preview as Record<string, unknown>)?.preview_url === 'string'
-              ? String((details.preview as Record<string, unknown>).preview_url)
-              : null,
-          previewExpiresAt:
-            typeof (details.preview as Record<string, unknown>)?.expires_at === 'string'
-              ? String((details.preview as Record<string, unknown>).expires_at)
-              : null,
-          healthStatus:
-            typeof details.health_status === 'object'
-              ? (details.health_status as Record<string, unknown>)
-              : null,
-          endpointUri:
-            typeof details.data_channel_uri === 'string'
-              ? details.data_channel_uri
-              : null,
-          assets,
-          completionPayloadDefinitions,
-          raw: details,
-          lastSyncedAt: syncedAt,
-        } satisfies FlowCacheRecord;
-      }),
-    );
+      detailed.push({
+        id: newId(),
+        integrationId: integration.id,
+        metaFlowId: flowId,
+        name: String(details.name ?? base.name ?? ''),
+        categories: Array.isArray(details.categories)
+          ? details.categories.map((value) => String(value))
+          : [],
+        status: String(details.status ?? base.status ?? 'UNKNOWN'),
+        jsonVersion: String(details.json_version ?? ''),
+        dataApiVersion: String(details.data_api_version ?? ''),
+        previewUrl:
+          typeof (details.preview as Record<string, unknown>)?.preview_url === 'string'
+            ? String((details.preview as Record<string, unknown>).preview_url)
+            : null,
+        previewExpiresAt:
+          typeof (details.preview as Record<string, unknown>)?.expires_at === 'string'
+            ? String((details.preview as Record<string, unknown>).expires_at)
+            : null,
+        healthStatus:
+          typeof details.health_status === 'object'
+            ? (details.health_status as Record<string, unknown>)
+            : null,
+        endpointUri:
+          typeof details.data_channel_uri === 'string'
+            ? details.data_channel_uri
+            : null,
+        assets,
+        completionPayloadDefinitions,
+        raw: details,
+        lastSyncedAt: syncedAt,
+      });
+    }
 
     return detailed;
   }
@@ -189,6 +191,8 @@ export class MetaGraphService {
       ? path
       : `${integration.graphApiBase}/${integration.graphApiVersion}${path}`;
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     try {
       response = await fetch(baseUrl, {
         method,
@@ -197,11 +201,18 @@ export class MetaGraphService {
           'Content-Type': 'application/json',
         },
         body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
     } catch (error) {
       const reason =
-        error instanceof Error ? error.message : 'Falha de rede ao chamar a Meta API';
+        error instanceof Error && error.name === 'AbortError'
+          ? `Timeout ao chamar a Meta API (${this.requestTimeoutMs} ms)`
+          : error instanceof Error
+            ? error.message
+            : 'Falha de rede ao chamar a Meta API';
       throw new MetaApiError(reason);
+    } finally {
+      clearTimeout(timeout);
     }
 
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -229,7 +240,11 @@ export class MetaGraphService {
     }
 
     try {
-      const response = await fetch(assetUrl);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+      const response = await fetch(assetUrl, { signal: controller.signal }).finally(() =>
+        clearTimeout(timeout),
+      );
       if (!response.ok) {
         return [];
       }
