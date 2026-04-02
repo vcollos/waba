@@ -59,6 +59,29 @@ cd /opt/apps/waba
 docker compose up -d --build api web
 ```
 
+## Deploy automatizado por GitHub
+
+Branch de produção:
+
+- `main`
+
+Workflow:
+
+- `.github/workflows/ci-deploy-main.yml`
+
+Comportamento do deploy automático:
+
+1. valida `lint` e `build`
+2. conecta por SSH na VPS Oracle
+3. força o checkout do repositório remoto para `origin/main`
+4. remove lixo `._*` e demais untracked do repo
+5. executa `docker compose up -d --build api web`
+
+Consequência operacional:
+
+- alterações manuais dentro de `/opt/apps/waba` serão descartadas no próximo deploy do `main`
+- `data/` e volumes Docker permanecem preservados
+
 Se também precisar do proxy local versionado:
 
 ```bash

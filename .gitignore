@@ -3,6 +3,9 @@ dist
 .next
 coverage
 .env
+.env.*
+!.env.example
+!.env.local.example
 apps/web/.env.local
 data/*.json
 data/*.sqlite
@@ -17,3 +20,5 @@ apps/**/.next
 apps/api/data/
 tmp/
 *.tsbuildinfo
+.DS_Store
+._*

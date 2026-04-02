@@ -160,6 +160,7 @@ Produção atual:
 - path do app: `/opt/apps/waba`
 - domínio web: `https://waba.collos.com.br`
 - domínio API: `https://waba-api.collos.com.br`
+- branch de produção desejada: `main`
 
 Sequência segura de deploy:
 
@@ -179,6 +180,38 @@ docker compose up -d --build api web
 docker inspect -f '{{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}}' waba-api-1
 docker stats --no-stream waba-api-1 waba-web-1 waba-postgres-1
 ```
+
+## GitHub Actions para produção
+
+Workflow versionado:
+
+- [ci-deploy-main.yml](/Volumes/SSD/Collos/WhatsAppBusinessAPI/.github/workflows/ci-deploy-main.yml)
+
+Comportamento:
+
+- `pull_request -> main`: roda `npm ci`, `npm run lint` e `npm run build`
+- `push -> main`: roda validação e depois faz deploy na VPS Oracle por SSH
+
+Deploy remoto:
+
+- faz `git fetch origin`
+- limpa alterações locais do repositório na VPS
+- troca para `main`
+- força `origin/main` com `git reset --hard`
+- roda `docker compose up -d --build api web`
+
+Importante:
+
+- esse fluxo sobrescreve alterações manuais feitas dentro do repositório em `/opt/apps/waba`
+- não remove `data/` nem volumes Docker porque eles estão ignorados pelo git
+
+Secrets esperados no GitHub:
+
+- `PROD_SSH_HOST`
+- `PROD_SSH_PORT`
+- `PROD_SSH_USER`
+- `PROD_SSH_KEY`
+- `PROD_SSH_KNOWN_HOSTS`
 
 ## Troubleshooting rápido
 
