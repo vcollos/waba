@@ -34,6 +34,8 @@ export default function IntegrationsPage() {
   const [form, setForm] = useState(emptyForm);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [cardMessage, setCardMessage] = useState<Record<string, { tone: 'success' | 'error'; text: string }>>({});
 
   const load = async () => {
     const payload = await apiRequest<Integration[]>('/integrations');
@@ -65,12 +67,29 @@ export default function IntegrationsPage() {
   const runAction = async (integrationId: string, path: string, success: string) => {
     setError(null);
     setMessage(null);
+    setCardMessage((current) => {
+      const next = { ...current };
+      delete next[integrationId];
+      return next;
+    });
+    setPendingAction(`${integrationId}:${path}`);
     try {
       await apiRequest(`/integrations/${integrationId}/${path}`, { method: 'POST' });
       setMessage(success);
+      setCardMessage((current) => ({
+        ...current,
+        [integrationId]: { tone: 'success', text: success },
+      }));
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha na ação');
+      const nextError = err instanceof Error ? err.message : 'Falha na ação';
+      setError(nextError);
+      setCardMessage((current) => ({
+        ...current,
+        [integrationId]: { tone: 'error', text: nextError },
+      }));
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -170,12 +189,16 @@ export default function IntegrationsPage() {
                     <div className="form-actions">
                       <button
                         className="ghost-button"
+                        type="button"
+                        disabled={pendingAction !== null}
                         onClick={() => void runAction(integration.id, 'test', 'Conexão validada.')}
                       >
-                        Testar conexão
+                        {pendingAction === `${integration.id}:test` ? 'Testando...' : 'Testar conexão'}
                       </button>
                       <button
                         className="ghost-button"
+                        type="button"
+                        disabled={pendingAction !== null}
                         onClick={() =>
                           void runAction(
                             integration.id,
@@ -184,17 +207,28 @@ export default function IntegrationsPage() {
                           )
                         }
                       >
-                        Sincronizar templates
+                        {pendingAction === `${integration.id}:sync/templates`
+                          ? 'Sincronizando templates...'
+                          : 'Sincronizar templates'}
                       </button>
                       <button
                         className="ghost-button"
+                        type="button"
+                        disabled={pendingAction !== null}
                         onClick={() =>
                           void runAction(integration.id, 'sync/flows', 'Flows sincronizados.')
                         }
                       >
-                        Sincronizar flows
+                        {pendingAction === `${integration.id}:sync/flows`
+                          ? 'Sincronizando flows...'
+                          : 'Sincronizar flows'}
                       </button>
                     </div>
+                    {cardMessage[integration.id] ? (
+                      <div className={`notice${cardMessage[integration.id].tone === 'error' ? ' error' : ''}`}>
+                        {cardMessage[integration.id].text}
+                      </div>
+                    ) : null}
                     <div className="muted">
                       Último sync: {integration.lastSyncAt ? new Date(integration.lastSyncAt).toLocaleString('pt-BR') : 'nunca'}
                     </div>

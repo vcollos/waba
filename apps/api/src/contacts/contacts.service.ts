@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { parse } from 'csv-parse/sync';
-import { DatabaseSync } from 'node:sqlite';
+import { PoolClient } from 'pg';
 import { AuditService } from '../common/audit.service';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, normalizePhone, nowIso } from '../database/helpers';
@@ -115,134 +115,114 @@ export class ContactsService {
   ) {}
 
   async listContacts() {
-    const state = await this.database.read();
-    return this.buildContactList(state);
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+        c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+        c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at,
+        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names
+       FROM contacts c
+       LEFT JOIN list_members lm ON lm.contact_id = c.id
+       LEFT JOIN lists l ON l.id = lm.list_id
+       GROUP BY c.id
+       ORDER BY c.updated_at DESC`,
+    );
+
+    return rows.map((row) => ({
+      ...mapContactRow(row),
+      listNames: toStringArray(row.list_names),
+    }));
   }
 
   async listContactsPage(params: ContactsListParams): Promise<PaginatedContactsResult> {
     const limit = Math.max(1, Math.min(250, Number(params.limit ?? 50)));
     const offset = Math.max(0, Number(params.offset ?? 0));
-    return this.database.execute((database) => {
-      const total = Number(
-        (
-          database.prepare('SELECT COUNT(*) as count FROM contacts').get() as {
-            count: number;
-          }
-        ).count ?? 0,
-      );
-      const rows = database
-        .prepare(
-          `SELECT
-            id, external_ref, client_name, first_name, last_name, name, category, record_status,
-            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
-            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-           FROM contacts
-           ORDER BY updated_at DESC
-           LIMIT ? OFFSET ?`,
-        )
-        .all(limit, offset) as Array<Record<string, unknown>>;
-      const contacts = rows.map(mapContactRow);
-      const listNamesByContactId = new Map<string, string[]>();
+    const [{ count }] = await this.database.postgresQuery<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM contacts',
+    );
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+        c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+        c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at,
+        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names
+       FROM contacts c
+       LEFT JOIN list_members lm ON lm.contact_id = c.id
+       LEFT JOIN lists l ON l.id = lm.list_id
+       GROUP BY c.id
+       ORDER BY c.updated_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
 
-      if (contacts.length > 0) {
-        const { placeholders, values } = buildInClause(contacts.map((contact) => contact.id));
-        const membershipRows = database
-          .prepare(
-            `SELECT lm.contact_id, l.name
-             FROM list_members lm
-             JOIN lists l ON l.id = lm.list_id
-             WHERE lm.contact_id IN (${placeholders})
-             ORDER BY l.name ASC`,
-          )
-          .all(...values) as Array<Record<string, unknown>>;
-
-        for (const row of membershipRows) {
-          const contactId = String(row.contact_id);
-          const listName = String(row.name);
-          const current = listNamesByContactId.get(contactId) ?? [];
-          current.push(listName);
-          listNamesByContactId.set(contactId, current);
-        }
-      }
-
-      return {
-        items: contacts.map((contact) => ({
-          ...contact,
-          listNames: [...new Set(listNamesByContactId.get(contact.id) ?? [])].sort(),
-        })),
-        total,
-        limit,
-        offset,
-      };
-    });
+    return {
+      items: rows.map((row) => ({
+        ...mapContactRow(row),
+        listNames: toStringArray(row.list_names),
+      })),
+      total: Number(count ?? 0),
+      limit,
+      offset,
+    };
   }
 
   async listLists() {
-    return this.database.execute((database) => {
-      const rows = database
-        .prepare(
-          `SELECT
-            l.id,
-            l.name,
-            l.description,
-            l.source_type,
-            l.source_file_path,
-            l.created_at,
-            l.updated_at,
-            COUNT(DISTINCT lm.contact_id) as total_members,
-            COUNT(
-              DISTINCT CASE
-                WHEN c.is_valid = 1 AND c.is_opted_out = 0 AND c.record_status = 'active'
-                THEN lm.contact_id
-              END
-            ) as eligible_members
-           FROM lists l
-           LEFT JOIN list_members lm ON lm.list_id = l.id
-           LEFT JOIN contacts c ON c.id = lm.contact_id
-           GROUP BY l.id
-           ORDER BY l.created_at DESC`,
-        )
-        .all() as Array<Record<string, unknown>>;
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        l.id,
+        l.name,
+        l.description,
+        l.source_type,
+        l.source_file_path,
+        l.created_at,
+        l.updated_at,
+        COUNT(lm.contact_id)::int AS total_members,
+        COUNT(*) FILTER (
+          WHERE c.is_valid = true
+            AND c.is_opted_out = false
+            AND c.record_status = 'active'
+        )::int AS eligible_members
+       FROM lists l
+       LEFT JOIN list_members lm ON lm.list_id = l.id
+       LEFT JOIN contacts c ON c.id = lm.contact_id
+       GROUP BY l.id
+       ORDER BY l.created_at DESC`,
+    );
 
-      return rows.map((row) => ({
-        ...mapListRow(row),
-        totalMembers: Number(row.total_members ?? 0),
-        eligibleMembers: Number(row.eligible_members ?? 0),
-      }));
-    });
+    return rows.map((row) => ({
+      ...mapListRow(row),
+      totalMembers: Number(row.total_members ?? 0),
+      eligibleMembers: Number(row.eligible_members ?? 0),
+    }));
   }
 
   async getList(id: string) {
-    return this.database.execute((database) => {
-      const row = database
-        .prepare(
-          `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
-           FROM lists
-           WHERE id = ?`,
-        )
-        .get(id) as Record<string, unknown> | undefined;
-      if (!row) {
-        throw new NotFoundException('Lista não encontrada');
-      }
+    const [row] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
+       FROM lists
+       WHERE id = $1`,
+      [id],
+    );
+    if (!row) {
+      throw new NotFoundException('Lista não encontrada');
+    }
 
-      const members = database
-        .prepare(
-          `SELECT
-            c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
-            c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
-            c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
-           FROM list_members lm
-           JOIN contacts c ON c.id = lm.contact_id
-           WHERE lm.list_id = ?
-           ORDER BY c.updated_at DESC`,
-        )
-        .all(id) as Array<Record<string, unknown>>;
+    const members = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+        c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+        c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
+       FROM list_members lm
+       JOIN contacts c ON c.id = lm.contact_id
+       WHERE lm.list_id = $1
+       ORDER BY c.updated_at DESC`,
+      [id],
+    );
 
-      return {
-        ...mapListRow(row),
-        members: members.map(mapContactRow),
-      };
-    });
+    return {
+      ...mapListRow(row),
+      members: members.map(mapContactRow),
+    };
   }
 
   async createList(input: { name: string; description?: string }, actor: UserSession): Promise<ListRecord> {
@@ -256,23 +236,20 @@ export class ContactsService {
       updatedAt: timestamp,
     };
 
-    await this.database.transaction((database) => {
-      database
-        .prepare(
-          `INSERT INTO lists (
-            id, name, description, source_type, source_file_path, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          list.id,
-          list.name,
-          list.description ?? null,
-          list.sourceType,
-          list.sourceFilePath ?? null,
-          list.createdAt,
-          list.updatedAt,
-        );
-    });
+    await this.database.postgresQuery(
+      `INSERT INTO lists (
+        id, name, description, source_type, source_file_path, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        list.id,
+        list.name,
+        list.description ?? null,
+        list.sourceType,
+        list.sourceFilePath ?? null,
+        list.createdAt,
+        list.updatedAt,
+      ],
+    );
 
     await this.audit.log({
       actorUserId: actor.id,
@@ -399,36 +376,30 @@ export class ContactsService {
     let invalidRows = 0;
     let duplicateRows = 0;
     try {
-      await this.database.transaction((database) => {
-        database
-          .prepare(
-            `INSERT INTO lists (
-              id, name, description, source_type, source_file_path, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            list.id,
-            list.name,
-            list.description ?? null,
-            list.sourceType,
-            list.sourceFilePath ?? null,
-            list.createdAt,
-            list.updatedAt,
-          );
-      });
+      await this.database.postgresQuery(
+        `INSERT INTO lists (
+          id, name, description, source_type, source_file_path, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          list.id,
+          list.name,
+          list.description ?? null,
+          list.sourceType,
+          list.sourceFilePath ?? null,
+          list.createdAt,
+          list.updatedAt,
+        ],
+      );
 
-      const existingContacts = await this.database.execute((database) => {
-        const rows = database
-          .prepare(
-            `SELECT
-              id, external_ref, client_name, first_name, last_name, name, category, record_status,
-              phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
-              is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-             FROM contacts`,
-          )
-          .all() as Array<Record<string, unknown>>;
-        return rows.map(mapContactRow);
-      });
+      const existingContacts = (
+        await this.database.postgresQuery<Record<string, unknown>>(
+          `SELECT
+            id, external_ref, client_name, first_name, last_name, name, category, record_status,
+            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
+           FROM contacts`,
+        )
+      ).map(mapContactRow);
 
       const contactsByPhoneHash = new Map(existingContacts.map((contact) => [contact.phoneHash, contact]));
       const batchContactsToInsert: ContactRecord[] = [];
@@ -448,42 +419,21 @@ export class ContactsService {
         const contactsToUpdate = batchContactsToUpdate.splice(0, batchContactsToUpdate.length);
         const membershipsToInsert = batchMemberships.splice(0, batchMemberships.length);
 
-        await this.database.transaction((database) => {
-          const insertContactStatement = database.prepare(
-            `INSERT INTO contacts (
-              id, external_ref, client_name, first_name, last_name, name, category, record_status,
-              phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
-              is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          );
-          const updateContactStatement = database.prepare(
-            `UPDATE contacts
-             SET external_ref = ?, client_name = ?, first_name = ?, last_name = ?, name = ?, category = ?,
-                 record_status = ?, phone_raw = ?, phone_e164 = ?, phone_hash = ?, email = ?,
-                 attributes_json = ?, is_valid = ?, validation_error = ?, is_opted_out = ?,
-                 opted_out_at = ?, opt_out_source = ?, imported_at = ?, updated_at = ?
-             WHERE id = ?`,
-          );
-          const insertMembershipStatement = database.prepare(
-            `INSERT OR IGNORE INTO list_members (
-              id, list_id, contact_id, created_at
-            ) VALUES (?, ?, ?, ?)`,
-          );
-
+        await this.database.postgresTransaction(async (client) => {
           for (const contact of contactsToInsert) {
-            insertContactRow(insertContactStatement, contact);
+            await insertContactPg(client, contact);
           }
 
           for (const contact of contactsToUpdate) {
-            updateContactRow(updateContactStatement, contact);
+            await updateContactPg(client, contact);
           }
 
           for (const membership of membershipsToInsert) {
-            insertMembershipStatement.run(
-              membership.id,
-              membership.listId,
-              membership.contactId,
-              membership.createdAt,
+            await client.query(
+              `INSERT INTO list_members (id, list_id, contact_id, created_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (list_id, contact_id) DO NOTHING`,
+              [membership.id, membership.listId, membership.contactId, membership.createdAt],
             );
           }
         });
@@ -584,45 +534,26 @@ export class ContactsService {
         createdAt: nowIso(),
       };
 
-      await this.database.transaction((database) => {
-        database
-          .prepare(
-            `INSERT INTO imports (
-              id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
-              field_mapping_json, defaults_json, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            importRecord.id,
-            importRecord.listId,
-            importRecord.fileName,
-            importRecord.fileSha256,
-            importRecord.totalRows,
-            importRecord.validRows,
-            importRecord.invalidRows,
-            importRecord.duplicateRows,
-            JSON.stringify(importRecord.fieldMapping ?? {}),
-            JSON.stringify(importRecord.defaults ?? {}),
-            importRecord.status,
-            importRecord.createdAt,
-          );
-      });
-
-      await this.audit.log({
-        actorUserId: actor.id,
-        action: 'contacts.imported_csv',
-        entityType: 'list',
-        entityId: list.id,
-        metadata: {
-          fileName: params.fileName,
-          totalRows: params.records.length,
-          validRows,
-          invalidRows,
-          duplicateRows,
-          mapping: params.mapping,
-          defaults: params.defaults,
-        },
-      });
+      await this.database.postgresQuery(
+        `INSERT INTO imports (
+          id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
+          field_mapping_json, defaults_json, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          importRecord.id,
+          importRecord.listId,
+          importRecord.fileName,
+          importRecord.fileSha256,
+          importRecord.totalRows,
+          importRecord.validRows,
+          importRecord.invalidRows,
+          importRecord.duplicateRows,
+          JSON.stringify(importRecord.fieldMapping ?? {}),
+          JSON.stringify(importRecord.defaults ?? {}),
+          importRecord.status,
+          importRecord.createdAt,
+        ],
+      );
 
       updateImportJob(job, {
         status: 'completed',
@@ -631,6 +562,26 @@ export class ContactsService {
         list,
         updatedAt: nowIso(),
       });
+
+      try {
+        await this.audit.log({
+          actorUserId: actor.id,
+          action: 'contacts.imported_csv',
+          entityType: 'list',
+          entityId: list.id,
+          metadata: {
+            fileName: params.fileName,
+            totalRows: params.records.length,
+            validRows,
+            invalidRows,
+            duplicateRows,
+            mapping: params.mapping,
+            defaults: params.defaults,
+          },
+        });
+      } catch {
+        // Import completion must not be blocked by meta-state audit persistence.
+      }
     } catch (error) {
       updateImportJob(job, {
         status: 'failed',
@@ -645,26 +596,17 @@ export class ContactsService {
     const normalized = normalizePhone(String(input.phone ?? ''));
     const contact = createNewContact(input, normalized, timestamp);
 
-    await this.database.transaction((database) => {
-      ensurePhoneIsUniqueInDatabase(database, contact.phoneHash);
-      ensureListIdsExistInDatabase(database, input.listIds);
-      insertContactRow(
-        database.prepare(
-          `INSERT INTO contacts (
-            id, external_ref, client_name, first_name, last_name, name, category, record_status,
-            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
-            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ),
-        contact,
-      );
-      const membershipStatement = database.prepare(
-        `INSERT OR IGNORE INTO list_members (
-          id, list_id, contact_id, created_at
-        ) VALUES (?, ?, ?, ?)`,
-      );
+    await this.database.postgresTransaction(async (client) => {
+      await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash);
+      await ensureListIdsExistInDatabase(client, input.listIds);
+      await insertContactPg(client, contact);
       for (const listId of input.listIds ?? []) {
-        membershipStatement.run(newId(), listId, contact.id, nowIso());
+        await client.query(
+          `INSERT INTO list_members (id, list_id, contact_id, created_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (list_id, contact_id) DO NOTHING`,
+          [newId(), listId, contact.id, nowIso()],
+        );
       }
     });
 
@@ -686,15 +628,15 @@ export class ContactsService {
   async updateContact(id: string, input: ContactInput, actor: UserSession) {
     let updatedContact: ContactRecord | undefined;
 
-    await this.database.transaction((database) => {
-      const existing = getContactByIdFromDatabase(database, id);
+    await this.database.postgresTransaction(async (client) => {
+      const existing = await getContactByIdFromDatabase(client, id);
       if (!existing) {
         throw new NotFoundException('Contato não encontrado');
       }
 
       const normalized = normalizePhone(String(input.phone ?? existing.phoneRaw));
       const nextPhoneHash = hash((normalized.phoneE164 || existing.phoneE164).replace(/^\+/, ''));
-      ensurePhoneIsUniqueInDatabase(database, nextPhoneHash, id);
+      await ensurePhoneIsUniqueInDatabase(client, nextPhoneHash, id);
 
       updatedContact = updateExistingContact(
         existing,
@@ -717,28 +659,18 @@ export class ContactsService {
         nowIso(),
       );
 
-      updateContactRow(
-        database.prepare(
-          `UPDATE contacts
-           SET external_ref = ?, client_name = ?, first_name = ?, last_name = ?, name = ?, category = ?,
-               record_status = ?, phone_raw = ?, phone_e164 = ?, phone_hash = ?, email = ?,
-               attributes_json = ?, is_valid = ?, validation_error = ?, is_opted_out = ?,
-               opted_out_at = ?, opt_out_source = ?, imported_at = ?, updated_at = ?
-           WHERE id = ?`,
-        ),
-        updatedContact,
-      );
+      await updateContactPg(client, updatedContact);
 
       if (input.listIds) {
-        ensureListIdsExistInDatabase(database, input.listIds);
-        database.prepare('DELETE FROM list_members WHERE contact_id = ?').run(id);
-        const membershipStatement = database.prepare(
-          `INSERT OR IGNORE INTO list_members (
-            id, list_id, contact_id, created_at
-          ) VALUES (?, ?, ?, ?)`,
-        );
+        await ensureListIdsExistInDatabase(client, input.listIds);
+        await client.query('DELETE FROM list_members WHERE contact_id = $1', [id]);
         for (const listId of input.listIds) {
-          membershipStatement.run(newId(), listId, id, nowIso());
+          await client.query(
+            `INSERT INTO list_members (id, list_id, contact_id, created_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (list_id, contact_id) DO NOTHING`,
+            [newId(), listId, id, nowIso()],
+          );
         }
       }
     });
@@ -759,18 +691,16 @@ export class ContactsService {
   }
 
   async deleteContact(id: string, actor: UserSession) {
-    await this.database.transaction((database) => {
-      const existing = getContactByIdFromDatabase(database, id);
+    await this.database.postgresTransaction(async (client) => {
+      const existing = await getContactByIdFromDatabase(client, id);
       if (!existing) {
         throw new NotFoundException('Contato não encontrado');
       }
-      database.prepare('DELETE FROM list_members WHERE contact_id = ?').run(id);
-      database.prepare('DELETE FROM contacts WHERE id = ?').run(id);
+      await client.query('DELETE FROM list_members WHERE contact_id = $1', [id]);
+      await client.query('DELETE FROM contacts WHERE id = $1', [id]);
     });
 
-    await this.database.write((state) => {
-      state.optOuts = state.optOuts.filter((item) => item.contactId !== id);
-    });
+    await this.database.deleteOptOutsInDatabaseByContactIds([id]);
 
     await this.audit.log({
       actorUserId: actor.id,
@@ -800,99 +730,98 @@ export class ContactsService {
     let affected = 0;
     let matchedContactIds: string[] = [];
 
-    await this.database.transaction((database) => {
-      const existingIds = selectExistingContactIds(database, contactIds);
+    await this.database.postgresTransaction(async (client) => {
+      const existingIds = await selectExistingContactIds(client, contactIds);
       if (existingIds.length === 0) {
         throw new NotFoundException('Nenhum contato encontrado');
       }
 
       matchedContactIds = existingIds;
       affected = existingIds.length;
-      const { placeholders, values } = buildInClause(existingIds);
       const timestamp = nowIso();
 
       if (input.action === 'assign_list') {
         if (!input.listId) {
           throw new BadRequestException('Informe a lista para vincular');
         }
-        ensureListIdsExistInDatabase(database, [input.listId]);
+        await ensureListIdsExistInDatabase(client, [input.listId]);
       }
 
       switch (input.action) {
         case 'activate':
-          database
-            .prepare(`UPDATE contacts SET record_status = 'active', updated_at = ? WHERE id IN (${placeholders})`)
-            .run(timestamp, ...values);
+          await client.query(
+            `UPDATE contacts SET record_status = 'active', updated_at = $1 WHERE id = ANY($2::text[])`,
+            [timestamp, existingIds],
+          );
           break;
         case 'deactivate':
-          database
-            .prepare(`UPDATE contacts SET record_status = 'inactive', updated_at = ? WHERE id IN (${placeholders})`)
-            .run(timestamp, ...values);
+          await client.query(
+            `UPDATE contacts SET record_status = 'inactive', updated_at = $1 WHERE id = ANY($2::text[])`,
+            [timestamp, existingIds],
+          );
           break;
         case 'opt_out':
-          database
-            .prepare(
-              `UPDATE contacts
-               SET is_opted_out = 1, opted_out_at = ?, opt_out_source = 'manual', updated_at = ?
-               WHERE id IN (${placeholders})`,
-            )
-            .run(timestamp, timestamp, ...values);
+          await client.query(
+            `UPDATE contacts
+             SET is_opted_out = true, opted_out_at = $1, opt_out_source = 'manual', updated_at = $2
+             WHERE id = ANY($3::text[])`,
+            [timestamp, timestamp, existingIds],
+          );
           break;
         case 'opt_in':
-          database
-            .prepare(
-              `UPDATE contacts
-               SET is_opted_out = 0, opted_out_at = NULL, opt_out_source = NULL, updated_at = ?
-               WHERE id IN (${placeholders})`,
-            )
-            .run(timestamp, ...values);
+          await client.query(
+            `UPDATE contacts
+             SET is_opted_out = false, opted_out_at = NULL, opt_out_source = NULL, updated_at = $1
+             WHERE id = ANY($2::text[])`,
+            [timestamp, existingIds],
+          );
           break;
         case 'assign_list': {
-          const insertMembershipStatement = database.prepare(
-            `INSERT OR IGNORE INTO list_members (
-              id, list_id, contact_id, created_at
-            ) VALUES (?, ?, ?, ?)`,
-          );
           for (const contactId of existingIds) {
-            insertMembershipStatement.run(newId(), input.listId!, contactId, timestamp);
+            await client.query(
+              `INSERT INTO list_members (id, list_id, contact_id, created_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (list_id, contact_id) DO NOTHING`,
+              [newId(), input.listId!, contactId, timestamp],
+            );
           }
           break;
         }
         case 'set_category':
-          database
-            .prepare(`UPDATE contacts SET category = ?, updated_at = ? WHERE id IN (${placeholders})`)
-            .run(cleanNullableText(input.category), timestamp, ...values);
+          await client.query(
+            `UPDATE contacts SET category = $1, updated_at = $2 WHERE id = ANY($3::text[])`,
+            [cleanNullableText(input.category), timestamp, existingIds],
+          );
           break;
         case 'set_client':
-          database
-            .prepare(`UPDATE contacts SET client_name = ?, updated_at = ? WHERE id IN (${placeholders})`)
-            .run(cleanNullableText(input.clientName), timestamp, ...values);
+          await client.query(
+            `UPDATE contacts SET client_name = $1, updated_at = $2 WHERE id = ANY($3::text[])`,
+            [cleanNullableText(input.clientName), timestamp, existingIds],
+          );
           break;
         case 'delete':
-          database.prepare(`DELETE FROM list_members WHERE contact_id IN (${placeholders})`).run(...values);
-          database.prepare(`DELETE FROM contacts WHERE id IN (${placeholders})`).run(...values);
+          await client.query(`DELETE FROM list_members WHERE contact_id = ANY($1::text[])`, [existingIds]);
+          await client.query(`DELETE FROM contacts WHERE id = ANY($1::text[])`, [existingIds]);
           break;
       }
     });
 
     if (input.action === 'opt_out') {
       const timestamp = nowIso();
-      await this.database.write((state) => {
-        for (const contactId of matchedContactIds) {
-          state.optOuts.push({
+      await Promise.all(
+        matchedContactIds.map((contactId) =>
+          this.database.saveOptOutInDatabase({
             id: newId(),
             contactId,
             source: 'manual',
             createdAt: timestamp,
-          });
-        }
-      });
+          }),
+        ),
+      );
     }
 
     if (input.action === 'delete') {
-      await this.database.write((state) => {
-        state.optOuts = state.optOuts.filter((item) => !matchedContactIds.includes(item.contactId));
-      });
+      await this.database.deleteOptOutsInDatabaseByContactIds(matchedContactIds);
     }
 
     await this.audit.log({
@@ -914,28 +843,25 @@ export class ContactsService {
 
   async setOptOut(contactId: string, actor: UserSession, source: OptOutRecord['source'] = 'manual') {
     const timestamp = nowIso();
-    await this.database.transaction((database) => {
-      const contact = getContactByIdFromDatabase(database, contactId);
+    await this.database.postgresTransaction(async (client) => {
+      const contact = await getContactByIdFromDatabase(client, contactId);
       if (!contact) {
         throw new NotFoundException('Contato não encontrado');
       }
 
-      database
-        .prepare(
-          `UPDATE contacts
-           SET is_opted_out = 1, opted_out_at = ?, opt_out_source = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(timestamp, source, timestamp, contactId);
+      await client.query(
+        `UPDATE contacts
+         SET is_opted_out = true, opted_out_at = $1, opt_out_source = $2, updated_at = $3
+         WHERE id = $4`,
+        [timestamp, source, timestamp, contactId],
+      );
     });
 
-    await this.database.write((state) => {
-      state.optOuts.push({
-        id: newId(),
-        contactId,
-        source,
-        createdAt: timestamp,
-      });
+    await this.database.saveOptOutInDatabase({
+      id: newId(),
+      contactId,
+      source,
+      createdAt: timestamp,
     });
 
     await this.audit.log({
@@ -947,19 +873,18 @@ export class ContactsService {
   }
 
   async clearOptOut(contactId: string, actor: UserSession) {
-    await this.database.transaction((database) => {
-      const contact = getContactByIdFromDatabase(database, contactId);
+    await this.database.postgresTransaction(async (client) => {
+      const contact = await getContactByIdFromDatabase(client, contactId);
       if (!contact) {
         throw new NotFoundException('Contato não encontrado');
       }
 
-      database
-        .prepare(
-          `UPDATE contacts
-           SET is_opted_out = 0, opted_out_at = NULL, opt_out_source = NULL, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(nowIso(), contactId);
+      await client.query(
+        `UPDATE contacts
+         SET is_opted_out = false, opted_out_at = NULL, opt_out_source = NULL, updated_at = $1
+         WHERE id = $2`,
+        [nowIso(), contactId],
+      );
     });
 
     await this.audit.log({
@@ -968,29 +893,6 @@ export class ContactsService {
       entityType: 'contact',
       entityId: contactId,
     });
-  }
-
-  private buildContactList(state: Awaited<ReturnType<DatabaseService['read']>>) {
-    const listNamesByContactId = new Map<string, string[]>();
-    const listNameById = new Map(state.lists.map((list) => [list.id, list.name]));
-
-    for (const member of state.listMembers) {
-      const listName = listNameById.get(member.listId);
-      if (!listName) {
-        continue;
-      }
-
-      const current = listNamesByContactId.get(member.contactId) ?? [];
-      current.push(listName);
-      listNamesByContactId.set(member.contactId, current);
-    }
-
-    return state.contacts
-      .map((contact) => ({
-        ...contact,
-        listNames: [...new Set(listNamesByContactId.get(contact.id) ?? [])].sort(),
-      }))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 }
 
@@ -1270,141 +1172,153 @@ const mapListRow = (row: Record<string, unknown>): ListRecord => ({
 });
 
 const getContactByIdFromDatabase = (
-  database: DatabaseSync,
+  database: Pick<PoolClient, 'query'>,
   contactId: string,
-): ContactRecord | null => {
-  const row = database
-    .prepare(
+): Promise<ContactRecord | null> =>
+  database
+    .query(
       `SELECT
         id, external_ref, client_name, first_name, last_name, name, category, record_status,
         phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
         is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
        FROM contacts
-       WHERE id = ?`,
+       WHERE id = $1`,
+      [contactId],
     )
-    .get(contactId) as Record<string, unknown> | undefined;
-
-  return row ? mapContactRow(row) : null;
-};
+    .then((result) => {
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      return row ? mapContactRow(row) : null;
+    });
 
 const ensurePhoneIsUniqueInDatabase = (
-  database: DatabaseSync,
+  database: Pick<PoolClient, 'query'>,
   phoneHash: string,
   excludeContactId?: string,
+) =>
+  database
+    .query(
+      excludeContactId
+        ? 'SELECT id FROM contacts WHERE phone_hash = $1 AND id != $2 LIMIT 1'
+        : 'SELECT id FROM contacts WHERE phone_hash = $1 LIMIT 1',
+      excludeContactId ? [phoneHash, excludeContactId] : [phoneHash],
+    )
+    .then((result) => {
+      const row = result.rows[0];
+
+      if (row) {
+        throw new BadRequestException('Já existe um contato com este telefone');
+      }
+    });
+
+const ensureListIdsExistInDatabase = async (
+  database: Pick<PoolClient, 'query'>,
+  listIds: string[] | undefined,
 ) => {
-  const row = excludeContactId
-    ? (database
-        .prepare('SELECT id FROM contacts WHERE phone_hash = ? AND id != ? LIMIT 1')
-        .get(phoneHash, excludeContactId) as Record<string, unknown> | undefined)
-    : (database
-        .prepare('SELECT id FROM contacts WHERE phone_hash = ? LIMIT 1')
-        .get(phoneHash) as Record<string, unknown> | undefined);
-
-  if (row) {
-    throw new BadRequestException('Já existe um contato com este telefone');
-  }
-};
-
-const ensureListIdsExistInDatabase = (database: DatabaseSync, listIds: string[] | undefined) => {
   const ids = [...new Set((listIds ?? []).filter(Boolean))];
   if (ids.length === 0) {
     return;
   }
 
-  const { placeholders, values } = buildInClause(ids);
-  const count = Number(
-    (
-      database
-        .prepare(`SELECT COUNT(*) as count FROM lists WHERE id IN (${placeholders})`)
-        .get(...values) as { count: number }
-    ).count ?? 0,
-  );
+  const result = await database.query('SELECT COUNT(*)::int AS count FROM lists WHERE id = ANY($1::text[])', [
+    ids,
+  ]);
+  const count = Number(result.rows[0]?.count ?? 0);
 
   if (count !== ids.length) {
     throw new NotFoundException('Uma ou mais listas não foram encontradas');
   }
 };
 
-const selectExistingContactIds = (database: DatabaseSync, contactIds: string[]): string[] => {
+const selectExistingContactIds = async (
+  database: Pick<PoolClient, 'query'>,
+  contactIds: string[],
+): Promise<string[]> => {
   const ids = [...new Set(contactIds.filter(Boolean))];
   if (ids.length === 0) {
     return [];
   }
 
-  const { placeholders, values } = buildInClause(ids);
-  const rows = database
-    .prepare(`SELECT id FROM contacts WHERE id IN (${placeholders})`)
-    .all(...values) as Array<Record<string, unknown>>;
+  const result = await database.query('SELECT id FROM contacts WHERE id = ANY($1::text[])', [ids]);
+  const rows = result.rows as Array<Record<string, unknown>>;
   return rows.map((row) => String(row.id));
 };
 
-const insertContactRow = (
-  statement: ReturnType<DatabaseSync['prepare']>,
+const insertContactPg = async (
+  database: Pick<PoolClient, 'query'>,
   contact: ContactRecord,
 ) => {
-  statement.run(
-    contact.id,
-    contact.externalRef ?? null,
-    contact.clientName ?? null,
-    contact.firstName,
-    contact.lastName ?? null,
-    contact.name,
-    contact.category ?? null,
-    contact.recordStatus,
-    contact.phoneRaw,
-    contact.phoneE164,
-    contact.phoneHash,
-    contact.email ?? null,
-    JSON.stringify(contact.attributes ?? {}),
-    contact.isValid ? 1 : 0,
-    contact.validationError ?? null,
-    contact.isOptedOut ? 1 : 0,
-    contact.optedOutAt ?? null,
-    contact.optOutSource ?? null,
-    contact.importedAt ?? null,
-    contact.createdAt,
-    contact.updatedAt,
+  await database.query(
+    `INSERT INTO contacts (
+      id, external_ref, client_name, first_name, last_name, name, category, record_status,
+      phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+      is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+    [
+      contact.id,
+      contact.externalRef ?? null,
+      contact.clientName ?? null,
+      contact.firstName,
+      contact.lastName ?? null,
+      contact.name,
+      contact.category ?? null,
+      contact.recordStatus,
+      contact.phoneRaw,
+      contact.phoneE164,
+      contact.phoneHash,
+      contact.email ?? null,
+      JSON.stringify(contact.attributes ?? {}),
+      contact.isValid,
+      contact.validationError ?? null,
+      contact.isOptedOut,
+      contact.optedOutAt ?? null,
+      contact.optOutSource ?? null,
+      contact.importedAt ?? null,
+      contact.createdAt,
+      contact.updatedAt,
+    ],
   );
 };
 
-const updateContactRow = (
-  statement: ReturnType<DatabaseSync['prepare']>,
+const updateContactPg = async (
+  database: Pick<PoolClient, 'query'>,
   contact: ContactRecord,
 ) => {
-  statement.run(
-    contact.externalRef ?? null,
-    contact.clientName ?? null,
-    contact.firstName,
-    contact.lastName ?? null,
-    contact.name,
-    contact.category ?? null,
-    contact.recordStatus,
-    contact.phoneRaw,
-    contact.phoneE164,
-    contact.phoneHash,
-    contact.email ?? null,
-    JSON.stringify(contact.attributes ?? {}),
-    contact.isValid ? 1 : 0,
-    contact.validationError ?? null,
-    contact.isOptedOut ? 1 : 0,
-    contact.optedOutAt ?? null,
-    contact.optOutSource ?? null,
-    contact.importedAt ?? null,
-    contact.updatedAt,
-    contact.id,
+  await database.query(
+    `UPDATE contacts
+     SET external_ref = $1, client_name = $2, first_name = $3, last_name = $4, name = $5, category = $6,
+         record_status = $7, phone_raw = $8, phone_e164 = $9, phone_hash = $10, email = $11,
+         attributes_json = $12, is_valid = $13, validation_error = $14, is_opted_out = $15,
+         opted_out_at = $16, opt_out_source = $17, imported_at = $18, updated_at = $19
+     WHERE id = $20`,
+    [
+      contact.externalRef ?? null,
+      contact.clientName ?? null,
+      contact.firstName,
+      contact.lastName ?? null,
+      contact.name,
+      contact.category ?? null,
+      contact.recordStatus,
+      contact.phoneRaw,
+      contact.phoneE164,
+      contact.phoneHash,
+      contact.email ?? null,
+      JSON.stringify(contact.attributes ?? {}),
+      contact.isValid,
+      contact.validationError ?? null,
+      contact.isOptedOut,
+      contact.optedOutAt ?? null,
+      contact.optOutSource ?? null,
+      contact.importedAt ?? null,
+      contact.updatedAt,
+      contact.id,
+    ],
   );
 };
 
-const buildInClause = (values: string[]): { placeholders: string; values: string[] } => {
-  if (values.length === 0) {
-    return { placeholders: "''", values: [] };
-  }
-
-  return {
-    placeholders: values.map(() => '?').join(', '),
-    values,
-  };
-};
+const toStringArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item)).filter(Boolean))].sort()
+    : [];
 
 const parseAttributes = (value: unknown): Record<string, string> => {
   if (typeof value !== 'string' || !value.trim()) {

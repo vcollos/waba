@@ -659,6 +659,109 @@ td {
   font-size: 26px;
 }
 
+.survey-gauge-card {
+  display: grid;
+  grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(221, 207, 185, 0.82);
+  background: rgba(255, 253, 248, 0.82);
+}
+
+.survey-gauge-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.survey-gauge-copy strong {
+  font-size: 42px;
+  line-height: 1;
+}
+
+.survey-gauge-visual {
+  display: grid;
+  gap: 10px;
+}
+
+.survey-gauge {
+  --gauge-angle: 0deg;
+  position: relative;
+  width: 100%;
+  max-width: 260px;
+  margin-left: auto;
+}
+
+.survey-gauge-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.survey-gauge-base {
+  opacity: 0.75;
+}
+
+.survey-gauge-needle {
+  position: absolute;
+  left: calc(50% - 3px);
+  bottom: 30px;
+  width: 6px;
+  height: 88px;
+  border-radius: 999px;
+  background: #2a211f;
+  transform-origin: center bottom;
+  transform: rotate(var(--gauge-angle));
+}
+
+.survey-gauge-center {
+  position: absolute;
+  left: calc(50% - 7px);
+  bottom: 24px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2a211f;
+  box-shadow: 0 0 0 6px rgba(255, 253, 248, 0.95);
+}
+
+.survey-gauge-ticks {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.survey-gauge-badges {
+  grid-column: 1 / -1;
+}
+
+.survey-gauge-badges .badge {
+  flex: 1 1 0;
+  justify-content: center;
+  background: rgba(255, 253, 248, 0.94);
+}
+
+.survey-gauge-badges-1 .badge,
+.survey-gauge-badges-2 .badge,
+.survey-gauge-badges-3 .badge,
+.survey-gauge-badges-4 .badge,
+.survey-gauge-badges-5 .badge {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .survey-gauge-card {
+    grid-template-columns: 1fr;
+  }
+
+  .survey-gauge {
+    margin: 0 auto;
+  }
+}
+
 .timeline-card {
   display: grid;
   gap: 12px;

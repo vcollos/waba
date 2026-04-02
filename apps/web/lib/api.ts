@@ -1,6 +1,7 @@
 'use client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4311/api';
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
 
 export const readToken = (): string | null =>
   typeof window === 'undefined' ? null : window.localStorage.getItem('campaign_sender_token');
@@ -18,8 +19,9 @@ export async function apiRequest<T>(
   options: RequestInit = {},
   authenticated = true,
 ): Promise<T> {
+  const method = (options.method ?? (options.body ? 'POST' : 'GET')).toUpperCase();
   const headers = new Headers(options.headers ?? {});
-  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+  if (options.body && !headers.has('Content-Type') && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -30,10 +32,29 @@ export async function apiRequest<T>(
     }
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  const request = () =>
+    fetch(`${API_BASE}${path}`, {
+      ...options,
+      method,
+      headers,
+    });
+
+  let response: Response;
+  try {
+    response = await request();
+  } catch (error) {
+    if (method === 'GET') {
+      await sleep(800);
+      response = await request();
+    } else {
+      throw error;
+    }
+  }
+
+  if (method === 'GET' && RETRYABLE_STATUS.has(response.status)) {
+    await sleep(1000);
+    response = await request();
+  }
 
   if (response.status === 401) {
     clearToken();
@@ -55,3 +76,5 @@ export async function apiRequest<T>(
 
   return (await response.json()) as T;
 }
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));

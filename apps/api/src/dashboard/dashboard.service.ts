@@ -7,25 +7,24 @@ export class DashboardService {
 
   async summary() {
     const state = await this.database.readMetaSnapshot();
-    const totalDelivered = state.campaignMessages.filter((item) => item.status === 'delivered').length;
-    const totalRead = state.campaignMessages.filter((item) => item.status === 'read').length;
-    const totalFailed = state.campaignMessages.filter((item) => item.status === 'failed').length;
-    const relationalCounts = await this.database.execute((database) => {
-      const contacts = Number(
-        (database.prepare('SELECT COUNT(*) as count FROM contacts').get() as { count: number }).count ?? 0,
-      );
-      const optedOutContacts = Number(
-        (
-          database
-            .prepare('SELECT COUNT(*) as count FROM contacts WHERE is_opted_out = 1')
-            .get() as { count: number }
-        ).count ?? 0,
-      );
-      const lists = Number(
-        (database.prepare('SELECT COUNT(*) as count FROM lists').get() as { count: number }).count ?? 0,
-      );
-      return { contacts, optedOutContacts, lists };
-    });
+    const [contactsRow, optedOutRow, listsRow, campaignMessages, flowResponses] = await Promise.all([
+      this.database.postgresQuery<{ count: string }>('SELECT COUNT(*)::text AS count FROM contacts'),
+      this.database.postgresQuery<{ count: string }>(
+        'SELECT COUNT(*)::text AS count FROM contacts WHERE is_opted_out = true',
+      ),
+      this.database.postgresQuery<{ count: string }>('SELECT COUNT(*)::text AS count FROM lists'),
+      this.database.listCampaignMessagesInDatabase(),
+      this.database.listFlowResponsesInDatabase(),
+    ]);
+
+    const relationalCounts = {
+      contacts: Number(contactsRow[0]?.count ?? 0),
+      optedOutContacts: Number(optedOutRow[0]?.count ?? 0),
+      lists: Number(listsRow[0]?.count ?? 0),
+    };
+    const totalDelivered = campaignMessages.filter((item) => item.status === 'delivered').length;
+    const totalRead = campaignMessages.filter((item) => item.status === 'read').length;
+    const totalFailed = campaignMessages.filter((item) => item.status === 'failed').length;
 
     return {
       contacts: relationalCounts.contacts,
@@ -35,8 +34,8 @@ export class DashboardService {
       templates: state.templates.length,
       flows: state.flows.length,
       campaigns: state.campaigns.length,
-      messages: state.campaignMessages.length,
-      flowResponses: state.flowResponses.length,
+      messages: campaignMessages.length,
+      flowResponses: flowResponses.length,
       delivered: totalDelivered,
       read: totalRead,
       failed: totalFailed,

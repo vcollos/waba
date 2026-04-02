@@ -13,9 +13,7 @@ export class ResultsService {
     limit?: number;
   }) {
     const state = await this.database.readMetaSnapshot();
-    const filteredResponses = state.flowResponses.filter((response) =>
-      matchesFlowResponseFilters(response, filters),
-    );
+    const filteredResponses = await this.database.listFlowResponsesInDatabase(filters);
     const contactIds = [
       ...new Set(filteredResponses.map((response) => response.contactId).filter(isDefined)),
     ];
@@ -59,8 +57,13 @@ export class ResultsService {
   }
 
   async summary() {
-    const state = await this.database.readMetaSnapshot();
-    const totalResponses = state.flowResponses.length;
+    const [state, flowResponses, campaignMessages, messageEvents] = await Promise.all([
+      this.database.readMetaSnapshot(),
+      this.database.listFlowResponsesInDatabase(),
+      this.database.listCampaignMessagesInDatabase(),
+      this.database.listMessageEventsInDatabase(),
+    ]);
+    const totalResponses = flowResponses.length;
     const byFlow = new Map<string, number>();
     const byCampaign = new Map<string, number>();
     const byDay = new Map<string, number>();
@@ -79,7 +82,7 @@ export class ResultsService {
       state.flows.filter((flow) => flow.metaFlowId).map((flow) => [flow.metaFlowId!, flow]),
     );
 
-    for (const response of state.flowResponses) {
+    for (const response of flowResponses) {
       const campaign = response.campaignId ? campaignsById.get(response.campaignId) ?? null : null;
       const flow = response.flowCacheId
         ? flowsById.get(response.flowCacheId) ?? null
@@ -115,7 +118,7 @@ export class ResultsService {
       }
     }
 
-    for (const message of state.campaignMessages) {
+    for (const message of campaignMessages) {
       currentStatusCounts.set(message.status, (currentStatusCounts.get(message.status) ?? 0) + 1);
 
       incrementTimeline(operationTimeline, message.sentAt, 'sent');
@@ -131,19 +134,19 @@ export class ResultsService {
       }
     }
 
-    for (const event of state.messageEvents) {
+    for (const event of messageEvents) {
       if (event.eventType === 'send.accepted') {
         incrementTimeline(operationTimeline, event.occurredAt, 'accepted');
       }
     }
 
-    const totalTrackedMessages = state.campaignMessages.length;
-    const totalAcceptedMessages = state.campaignMessages.filter((message) => Boolean(message.providerMessageId)).length;
-    const totalSentMessages = state.campaignMessages.filter((message) => Boolean(message.sentAt)).length;
-    const totalDeliveredMessages = state.campaignMessages.filter((message) => Boolean(message.deliveredAt)).length;
-    const totalReadMessages = state.campaignMessages.filter((message) => Boolean(message.readAt)).length;
-    const totalFailedMessages = state.campaignMessages.filter((message) => message.status === 'failed').length;
-    const totalPendingMessages = state.campaignMessages.filter((message) => message.status === 'pending').length;
+    const totalTrackedMessages = campaignMessages.length;
+    const totalAcceptedMessages = campaignMessages.filter((message) => Boolean(message.providerMessageId)).length;
+    const totalSentMessages = campaignMessages.filter((message) => Boolean(message.sentAt)).length;
+    const totalDeliveredMessages = campaignMessages.filter((message) => Boolean(message.deliveredAt)).length;
+    const totalReadMessages = campaignMessages.filter((message) => Boolean(message.readAt)).length;
+    const totalFailedMessages = campaignMessages.filter((message) => message.status === 'failed').length;
+    const totalPendingMessages = campaignMessages.filter((message) => message.status === 'pending').length;
     const totalProcessedMessages = totalTrackedMessages - totalPendingMessages;
 
     const statusDistribution = buildStatusDistribution(currentStatusCounts, totalTrackedMessages);
@@ -260,27 +263,23 @@ export class ResultsService {
       return new Map<string, { id: string; name: string; phoneE164: string }>();
     }
 
-    return this.database.execute((database) => {
-      const placeholders = uniqueIds.map(() => '?').join(', ');
-      const rows = database
-        .prepare(
-          `SELECT id, name, phone_e164
-           FROM contacts
-           WHERE id IN (${placeholders})`,
-        )
-        .all(...uniqueIds) as Array<Record<string, unknown>>;
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, name, phone_e164
+       FROM contacts
+       WHERE id = ANY($1::text[])`,
+      [uniqueIds],
+    );
 
-      return new Map(
-        rows.map((row) => [
-          String(row.id),
-          {
-            id: String(row.id),
-            name: String(row.name ?? ''),
-            phoneE164: String(row.phone_e164 ?? ''),
-          },
-        ]),
-      );
-    });
+    return new Map(
+      rows.map((row) => [
+        String(row.id),
+        {
+          id: String(row.id),
+          name: String(row.name ?? ''),
+          phoneE164: String(row.phone_e164 ?? ''),
+        },
+      ]),
+    );
   }
 }
 

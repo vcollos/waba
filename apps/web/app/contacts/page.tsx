@@ -159,6 +159,10 @@ export default function ContactsPage() {
     }
 
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
       void apiRequest<ImportJob>(`/contacts/imports/csv/jobs/${importJob.id}`)
         .then(async (job) => {
           setImportJob(job);
@@ -177,7 +181,7 @@ export default function ContactsPage() {
           }
         })
         .catch((err) => setError(err instanceof Error ? err.message : 'Falha ao consultar importação'));
-    }, 1500);
+    }, 5000);
 
     return () => window.clearInterval(timer);
   }, [importJob]);

@@ -297,6 +297,10 @@ export default function CampaignsPage() {
     }
 
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
       void (async () => {
         try {
           const campaignsPayload = await loadCampaignsOnly();
@@ -310,7 +314,7 @@ export default function CampaignsPage() {
           setError(err instanceof Error ? err.message : 'Falha ao atualizar campanhas');
         }
       })();
-    }, 5000);
+    }, 10000);
 
     return () => window.clearInterval(timer);
   }, [hasActiveCampaign, selectedCampaignId, messageOffset]);

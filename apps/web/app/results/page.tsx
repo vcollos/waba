@@ -1,5 +1,6 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '../../components/app-shell';
 import { SectionCard } from '../../components/section-card';
@@ -104,6 +105,44 @@ interface FlowResponse {
   }>;
 }
 
+interface GaugeBand {
+  label: string;
+  start: number;
+  end: number;
+  color: string;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+}
+
+interface GaugeConfig {
+  min: number;
+  max: number;
+  ticks: number[];
+  bands: GaugeBand[];
+}
+
+const SURVEY_GAUGE_CONFIG: Record<ResultSummary['surveyMetrics'][number]['metricType'], GaugeConfig> = {
+  nps: {
+    min: -100,
+    max: 100,
+    ticks: [-100, 0, 50, 100],
+    bands: [
+      { label: 'Crítico', start: -100, end: 0, color: '#d9415d', tone: 'danger' },
+      { label: 'Atenção', start: 0, end: 50, color: '#f59f0b', tone: 'warning' },
+      { label: 'Excelente', start: 50, end: 100, color: '#18b777', tone: 'success' },
+    ],
+  },
+  csat: {
+    min: 0,
+    max: 100,
+    ticks: [0, 60, 80, 100],
+    bands: [
+      { label: 'Ruim', start: 0, end: 60, color: '#d9415d', tone: 'danger' },
+      { label: 'Atenção', start: 60, end: 80, color: '#f59f0b', tone: 'warning' },
+      { label: 'Bom', start: 80, end: 100, color: '#18b777', tone: 'success' },
+    ],
+  },
+};
+
 export default function ResultsPage() {
   const [summary, setSummary] = useState<ResultSummary | null>(null);
   const [responses, setResponses] = useState<FlowResponse[]>([]);
@@ -155,8 +194,12 @@ export default function ResultsPage() {
 
   useEffect(() => {
     const summaryTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+
       void loadSummary();
-    }, 15000);
+    }, 30000);
 
     return () => {
       window.clearInterval(summaryTimer);
@@ -600,6 +643,8 @@ export default function ResultsPage() {
                     </div>
                   </div>
 
+                  <SurveyGauge metric={metric} />
+
                   <div className="grid three">
                     {metric.segments.map((segment) => (
                       <div key={`${metric.fieldKey}:${segment.label}`} className="chart-row">
@@ -753,6 +798,108 @@ export default function ResultsPage() {
       </SectionCard>
     </AppShell>
   );
+}
+
+function SurveyGauge({
+  metric,
+}: {
+  metric: ResultSummary['surveyMetrics'][number];
+}) {
+  const config = SURVEY_GAUGE_CONFIG[metric.metricType];
+  const normalizedValue = clamp(metric.score, config.min, config.max);
+  const angle = normalizeGaugeValue(normalizedValue, config.min, config.max) * 180 - 90;
+
+  return (
+    <div className="survey-gauge-card">
+      <div className="survey-gauge-copy">
+        <div className="muted">Acumulado do período</div>
+        <strong>{metric.metricType === 'nps' ? metric.score : `${metric.score}%`}</strong>
+        <p className="muted">{metric.label}</p>
+      </div>
+
+      <div className="survey-gauge-visual">
+        <div
+          className="survey-gauge"
+          style={
+            {
+              '--gauge-angle': `${angle}deg`,
+            } as CSSProperties
+          }
+        >
+          <svg viewBox="0 0 240 140" className="survey-gauge-svg" aria-hidden="true">
+            <path
+              d={describeArcPath(config.min, config.max, config.min, config.max)}
+              stroke="rgba(221, 207, 185, 0.35)"
+              strokeWidth="18"
+              strokeLinecap="butt"
+              fill="none"
+              className="survey-gauge-base"
+            />
+            {config.bands.map((band) => (
+              <path
+                key={`${metric.fieldKey}:${band.label}:${band.start}`}
+                d={describeArcPath(band.start, band.end, config.min, config.max)}
+                stroke={band.color}
+                strokeWidth="18"
+                strokeLinecap="butt"
+                fill="none"
+              />
+            ))}
+          </svg>
+          <div className="survey-gauge-needle" />
+          <div className="survey-gauge-center" />
+        </div>
+
+        <div className="survey-gauge-ticks">
+          {config.ticks.map((tick) => (
+            <span key={`${metric.fieldKey}:${tick}`}>{formatGaugeTick(tick, metric.metricType)}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className={`badge-row survey-gauge-badges survey-gauge-badges-${config.bands.length}`}>
+        {config.bands.map((band) => (
+          <div
+            key={`${metric.fieldKey}:${band.label}:badge`}
+            className={`badge ${toneClass(band.tone)}`}
+            style={{ borderColor: `${band.color}33`, color: band.color }}
+          >
+            {band.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function normalizeGaugeValue(value: number, min: number, max: number) {
+  return (value - min) / (max - min);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function polarToCartesian(cx: number, cy: number, radius: number, angleInDegrees: number) {
+  const angleInRadians = (angleInDegrees * Math.PI) / 180;
+  return {
+    x: cx + radius * Math.cos(angleInRadians),
+    y: cy + radius * Math.sin(angleInRadians),
+  };
+}
+
+function describeArcPath(start: number, end: number, min: number, max: number) {
+  const startAngle = normalizeGaugeValue(start, min, max) * 180 - 180;
+  const endAngle = normalizeGaugeValue(end, min, max) * 180 - 180;
+  const arcStart = polarToCartesian(120, 120, 72, endAngle);
+  const arcEnd = polarToCartesian(120, 120, 72, startAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+
+  return `M ${arcStart.x} ${arcStart.y} A 72 72 0 ${largeArcFlag} 0 ${arcEnd.x} ${arcEnd.y}`;
+}
+
+function formatGaugeTick(value: number, metricType: ResultSummary['surveyMetrics'][number]['metricType']) {
+  return metricType === 'nps' ? String(value) : `${value}%`;
 }
 
 const summarizePayload = (payload: Record<string, unknown>): string => {

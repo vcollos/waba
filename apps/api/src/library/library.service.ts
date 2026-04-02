@@ -6,16 +6,12 @@ export class LibraryService {
   constructor(private readonly database: DatabaseService) {}
 
   async templates(integrationId?: string) {
-    const state = await this.database.read();
-    return state.templates
-      .filter((template) => !integrationId || template.integrationId === integrationId)
-      .sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
+    const templates = await this.database.listTemplatesInDatabase(integrationId);
+    return templates.sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
   }
 
   async flows(integrationId?: string) {
-    const state = await this.database.read();
-    return state.flows
-      .filter((flow) => !integrationId || flow.integrationId === integrationId)
-      .sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
+    const flows = await this.database.listFlowsInDatabase(integrationId);
+    return flows.sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
   }
 }

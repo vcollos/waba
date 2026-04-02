@@ -103,23 +103,8 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     campaignId: string,
     batchSize: number,
   ): Promise<CampaignMessageRecord[]> {
-    const claimed: CampaignMessageRecord[] = [];
     const leaseUntil = new Date(Date.now() + DISPATCH_CLAIM_LEASE_MS).toISOString();
-
-    await this.database.write((state) => {
-      const candidates = state.campaignMessages
-        .filter((message) => this.isDispatchable(message, campaignId))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-        .slice(0, batchSize);
-
-      for (const item of candidates) {
-        item.nextAttemptAt = leaseUntil;
-        item.updatedAt = nowIso();
-        claimed.push(structuredClone(item));
-      }
-    });
-
-    return claimed;
+    return this.database.claimDispatchBatchInDatabase(campaignId, batchSize, leaseUntil);
   }
 
   private launchSend(message: CampaignMessageRecord, integration: IntegrationRecord) {
@@ -185,55 +170,46 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
       const providerMessageId = Array.isArray(response.messages)
         ? String((response.messages[0] as Record<string, unknown>)?.id ?? '')
         : '';
-
-      await this.database.write((state) => {
-        const item = state.campaignMessages.find((record) => record.id === message.id);
-        if (!item) {
-          return;
-        }
-
-        item.status = 'accepted';
-        item.providerMessageId = providerMessageId;
-        item.attemptCount += 1;
-        item.lastAttemptAt = nowIso();
-        item.nextAttemptAt = null;
-        item.updatedAt = nowIso();
-
-        state.messageEvents.push({
-          id: newId(),
-          campaignMessageId: item.id,
-          providerMessageId,
-          eventType: 'send.accepted',
-          status: 'accepted',
-          payload: response,
-          occurredAt: nowIso(),
-          receivedAt: nowIso(),
-          dedupeKey: `accepted:${providerMessageId}`,
-        });
+      const updatedAt = nowIso();
+      await this.database.saveCampaignMessageInDatabase({
+        ...message,
+        status: 'accepted',
+        providerMessageId,
+        attemptCount: message.attemptCount + 1,
+        lastAttemptAt: updatedAt,
+        nextAttemptAt: null,
+        updatedAt,
+      });
+      await this.database.saveMessageEventInDatabase({
+        id: newId(),
+        campaignMessageId: message.id,
+        providerMessageId,
+        eventType: 'send.accepted',
+        status: 'accepted',
+        payload: response,
+        occurredAt: updatedAt,
+        receivedAt: updatedAt,
+        dedupeKey: `accepted:${providerMessageId}`,
       });
     } catch (error) {
       const metaError = error as MetaApiError;
       const retryDelayMs = classifyRetryDelay(metaError.code);
+      const updatedAt = nowIso();
+      const nextAttemptAt = retryDelayMs && message.attemptCount + 1 < 5
+        ? new Date(Date.now() + retryDelayMs).toISOString()
+        : null;
 
-      await this.database.write((state) => {
-        const item = state.campaignMessages.find((record) => record.id === message.id);
-        if (!item) {
-          return;
-        }
-
-        item.attemptCount += 1;
-        item.lastAttemptAt = nowIso();
-        item.providerErrorCode = metaError.code ? String(metaError.code) : null;
-        item.providerErrorTitle = metaError.message;
-        item.providerErrorMessage = JSON.stringify(metaError.payload ?? {});
-        item.updatedAt = nowIso();
-
-        if (retryDelayMs && item.attemptCount < 5) {
-          item.nextAttemptAt = new Date(Date.now() + retryDelayMs).toISOString();
-        } else {
-          item.status = 'failed';
-          item.failedAt = nowIso();
-        }
+      await this.database.saveCampaignMessageInDatabase({
+        ...message,
+        status: nextAttemptAt ? 'pending' : 'failed',
+        attemptCount: message.attemptCount + 1,
+        lastAttemptAt: updatedAt,
+        nextAttemptAt,
+        failedAt: nextAttemptAt ? null : updatedAt,
+        providerErrorCode: metaError.code ? String(metaError.code) : null,
+        providerErrorTitle: metaError.message,
+        providerErrorMessage: JSON.stringify(metaError.payload ?? {}),
+        updatedAt,
       });
     }
   }

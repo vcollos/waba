@@ -64,10 +64,12 @@ export class CampaignsService {
       ? state.flows.find((item) => item.id === campaign.flowCacheId) ?? null
       : null;
     const list = (await this.loadListsByIds([campaign.listId])).get(campaign.listId) ?? null;
-    const allMessages = state.campaignMessages.filter((message) => message.campaignId === id);
     const limit = Math.max(1, Math.min(500, Number(options?.limit ?? 100)));
     const offset = Math.max(0, Number(options?.offset ?? 0));
-    const pagedMessages = allMessages.slice(offset, offset + limit);
+    const [messagesTotal, pagedMessages] = await Promise.all([
+      this.database.countCampaignMessagesInDatabase(id),
+      this.database.listCampaignMessagesInDatabase({ campaignId: id, limit, offset }),
+    ]);
     const contactsById = await this.loadContactsByIds(pagedMessages.map((message) => message.contactId));
 
     return {
@@ -75,10 +77,10 @@ export class CampaignsService {
       template,
       flow,
       list,
-      messagesTotal: allMessages.length,
+      messagesTotal,
       messagesLimit: limit,
       messagesOffset: offset,
-      messagesHasMore: offset + pagedMessages.length < allMessages.length,
+      messagesHasMore: offset + pagedMessages.length < messagesTotal,
       messages: pagedMessages
         .map((message) => {
           const contact = contactsById.get(message.contactId) ?? null;
@@ -171,8 +173,8 @@ export class CampaignsService {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    const existingMessages = state.campaignMessages.filter((item) => item.campaignId === id);
-    if (existingMessages.length === 0) {
+    const existingMessagesCount = await this.database.countCampaignMessagesInDatabase(id);
+    if (existingMessagesCount === 0) {
       await this.prepareMessages(campaign.id);
     }
 
@@ -221,20 +223,27 @@ export class CampaignsService {
   }
 
   async retryFailed(id: string, actor: UserSession) {
-    await this.database.write((state) => {
-      for (const message of state.campaignMessages.filter(
-        (item) => item.campaignId === id && item.status === 'failed',
-      )) {
-        message.status = 'pending';
-        message.nextAttemptAt = nowIso();
-        message.failedAt = null;
-        message.updatedAt = nowIso();
-      }
+    const retryAt = nowIso();
+    const failedMessages = (await this.database.listCampaignMessagesInDatabase({ campaignId: id })).filter(
+      (item) => item.status === 'failed',
+    );
+    await Promise.all(
+      failedMessages.map((message) =>
+        this.database.saveCampaignMessageInDatabase({
+          ...message,
+          status: 'pending',
+          nextAttemptAt: retryAt,
+          failedAt: null,
+          updatedAt: retryAt,
+        }),
+      ),
+    );
 
+    await this.database.write((state) => {
       const campaign = state.campaigns.find((item) => item.id === id);
       if (campaign) {
         campaign.status = 'queued';
-        campaign.updatedAt = nowIso();
+        campaign.updatedAt = retryAt;
       }
     });
 
@@ -261,22 +270,13 @@ export class CampaignsService {
     }
 
     const relatedMessageIds = new Set(
-      state.campaignMessages
-        .filter((message) => message.campaignId === id)
-        .map((message) => message.id),
+      (await this.database.listCampaignMessagesInDatabase({ campaignId: id })).map((message) => message.id),
     );
 
     await this.database.write((draft) => {
       draft.campaigns = draft.campaigns.filter((item) => item.id !== id);
-      draft.campaignMessages = draft.campaignMessages.filter((message) => message.campaignId !== id);
-      draft.messageEvents = draft.messageEvents.filter((event) => {
-        if (event.campaignMessageId && relatedMessageIds.has(event.campaignMessageId)) {
-          return false;
-        }
-        return true;
-      });
-      draft.flowResponses = draft.flowResponses.filter((response) => response.campaignId !== id);
     });
+    await this.database.deleteCampaignOperationalDataInDatabase(id);
 
     await this.audit.log({
       actorUserId: actor.id,
@@ -301,36 +301,39 @@ export class CampaignsService {
     const template = campaign.templateCacheId
       ? state.templates.find((item) => item.id === campaign.templateCacheId)
       : undefined;
-    const selection = selectCampaignContacts(campaign, await this.loadContactsForList(campaign.listId), state.campaignMessages);
+    const existingMessages = await this.database.listCampaignMessagesInDatabase();
+    const selection = selectCampaignContacts(
+      campaign,
+      await this.loadContactsForList(campaign.listId),
+      existingMessages,
+    );
+    const createdAt = nowIso();
+    const nextMessages = selection.selectedContacts.map((contact) => {
+      const flowToken = template?.hasFlowButton
+        ? `cmp_${campaign.id}_ctt_${contact.id}`
+        : null;
+      const payload = this.buildTemplatePayload(campaign, template, contact, flowToken);
+
+      return {
+        id: newId(),
+        campaignId,
+        contactId: contact.id,
+        phoneE164: contact.phoneE164,
+        status: 'pending',
+        payload,
+        payloadHash: hash(JSON.stringify(payload)),
+        flowToken,
+        attemptCount: 0,
+        nextAttemptAt: null,
+        lastAttemptAt: null,
+        createdAt,
+        updatedAt: createdAt,
+      } satisfies CampaignMessageRecord;
+    });
+
+    await this.database.replaceCampaignMessagesForCampaignInDatabase(campaignId, nextMessages);
 
     await this.database.write((draft) => {
-      draft.campaignMessages = draft.campaignMessages.filter((item) => item.campaignId !== campaignId);
-
-      for (const contact of selection.selectedContacts) {
-        const flowToken = template?.hasFlowButton
-          ? `cmp_${campaign.id}_ctt_${contact.id}`
-          : null;
-        const payload = this.buildTemplatePayload(campaign, template, contact, flowToken);
-
-        const baseMessage: CampaignMessageRecord = {
-          id: newId(),
-          campaignId,
-          contactId: contact.id,
-          phoneE164: contact.phoneE164,
-          status: 'pending',
-          payload,
-          payloadHash: hash(JSON.stringify(payload)),
-          flowToken,
-          attemptCount: 0,
-          nextAttemptAt: null,
-          lastAttemptAt: null,
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        };
-
-        draft.campaignMessages.push(baseMessage);
-      }
-
       const item = draft.campaigns.find((record) => record.id === campaignId);
       if (!item) {
         throw new NotFoundException('Campanha não encontrada');
@@ -399,25 +402,16 @@ export class CampaignsService {
   }
 
   async refreshCampaignSummary(campaignId: string) {
+    const summary = await this.database.getCampaignMessageSummaryInDatabase(campaignId);
     await this.database.write((state) => {
       const campaign = state.campaigns.find((item) => item.id === campaignId);
       if (!campaign) {
         throw new NotFoundException('Campanha não encontrada');
       }
 
-      const messages = state.campaignMessages.filter((item) => item.campaignId === campaignId);
-      campaign.summary = {
-        total: messages.length,
-        pending: messages.filter((item) => item.status === 'pending').length,
-        accepted: messages.filter((item) => item.status === 'accepted').length,
-        sent: messages.filter((item) => item.status === 'sent').length,
-        delivered: messages.filter((item) => item.status === 'delivered').length,
-        read: messages.filter((item) => item.status === 'read').length,
-        failed: messages.filter((item) => item.status === 'failed').length,
-        skipped: messages.filter((item) => item.status === 'skipped').length,
-      };
+      campaign.summary = summary;
 
-      const dispatchableLeft = messages.some((item) => item.status === 'pending');
+      const dispatchableLeft = summary.pending > 0;
       if (!dispatchableLeft && ['queued', 'sending'].includes(campaign.status)) {
         campaign.status = 'completed';
         campaign.finishedAt = nowIso();
@@ -456,31 +450,27 @@ export class CampaignsService {
       return new Map<string, { id: string; name: string; description?: string | null; sourceType: string; sourceFilePath?: string | null; createdAt: string; updatedAt: string }>();
     }
 
-    return this.database.execute((database) => {
-      const placeholders = uniqueIds.map(() => '?').join(', ');
-      const rows = database
-        .prepare(
-          `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
-           FROM lists
-           WHERE id IN (${placeholders})`,
-        )
-        .all(...uniqueIds) as Array<Record<string, unknown>>;
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
+       FROM lists
+       WHERE id = ANY($1::text[])`,
+      [uniqueIds],
+    );
 
-      return new Map(
-        rows.map((row) => [
-          String(row.id),
-          {
-            id: String(row.id),
-            name: String(row.name),
-            description: normalizeOptionalText(row.description),
-            sourceType: String(row.source_type),
-            sourceFilePath: normalizeOptionalText(row.source_file_path),
-            createdAt: String(row.created_at),
-            updatedAt: String(row.updated_at),
-          },
-        ]),
-      );
-    });
+    return new Map(
+      rows.map((row) => [
+        String(row.id),
+        {
+          id: String(row.id),
+          name: String(row.name),
+          description: normalizeOptionalText(row.description),
+          sourceType: String(row.source_type),
+          sourceFilePath: normalizeOptionalText(row.source_file_path),
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        },
+      ]),
+    );
   }
 
   private async loadContactsByIds(contactIds: string[]) {
@@ -489,40 +479,33 @@ export class CampaignsService {
       return new Map<string, ContactRecord>();
     }
 
-    return this.database.execute((database) => {
-      const placeholders = uniqueIds.map(() => '?').join(', ');
-      const rows = database
-        .prepare(
-          `SELECT
-            id, external_ref, client_name, first_name, last_name, name, category, record_status,
-            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
-            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-           FROM contacts
-           WHERE id IN (${placeholders})`,
-        )
-        .all(...uniqueIds) as Array<Record<string, unknown>>;
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        id, external_ref, client_name, first_name, last_name, name, category, record_status,
+        phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+        is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
+       FROM contacts
+       WHERE id = ANY($1::text[])`,
+      [uniqueIds],
+    );
 
-      return new Map(rows.map((row) => [String(row.id), mapCampaignContactRow(row)]));
-    });
+    return new Map(rows.map((row) => [String(row.id), mapCampaignContactRow(row)]));
   }
 
   private async loadContactsForList(listId: string): Promise<ContactRecord[]> {
-    return this.database.execute((database) => {
-      const rows = database
-        .prepare(
-          `SELECT
-            c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
-            c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
-            c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
-           FROM list_members lm
-           JOIN contacts c ON c.id = lm.contact_id
-           WHERE lm.list_id = ?
-           ORDER BY c.updated_at DESC`,
-        )
-        .all(listId) as Array<Record<string, unknown>>;
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+        c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+        c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
+       FROM list_members lm
+       JOIN contacts c ON c.id = lm.contact_id
+       WHERE lm.list_id = $1
+       ORDER BY c.updated_at DESC`,
+      [listId],
+    );
 
-      return rows.map(mapCampaignContactRow);
-    });
+    return rows.map(mapCampaignContactRow);
   }
 }
 
