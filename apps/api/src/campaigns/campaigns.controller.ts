@@ -48,6 +48,11 @@ export class CampaignsController {
     return this.campaignsService.retryFailed(id, request.user);
   }
 
+  @Post(':id/retry-unanswered-flow')
+  retryUnansweredFlow(@Param('id') id: string, @Req() request: { user: UserSession }) {
+    return this.campaignsService.retryUnansweredFlow(id, request.user);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.campaignsService.removeDraft(id, request.user);

@@ -85,6 +85,7 @@ interface Campaign {
   name: string;
   status: string;
   mode: string;
+  flowCacheId?: string | null;
   sendRateMps: number;
   audience: CampaignAudience;
   audienceSnapshot: CampaignAudienceSnapshot;
@@ -448,8 +449,17 @@ export default function CampaignsPage() {
     }
   };
 
-  const transition = async (campaignId: string, action: 'pause' | 'resume' | 'retry-failed') => {
-    if (action !== 'pause' && !confirmSendingAction()) {
+  const transition = async (
+    campaignId: string,
+    action: 'pause' | 'resume' | 'retry-failed' | 'retry-unanswered-flow',
+  ) => {
+    const needsConfirmation = action !== 'pause';
+    const confirmationMessage =
+      action === 'retry-unanswered-flow'
+        ? 'Reenviar a campanha só para contatos que não responderam ao flow?'
+        : 'Confirma envio?';
+
+    if (needsConfirmation && typeof window !== 'undefined' && !window.confirm(confirmationMessage)) {
       return;
     }
 
@@ -460,7 +470,9 @@ export default function CampaignsPage() {
           ? 'Campanha pausada.'
           : action === 'resume'
             ? 'Envio retomado.'
-            : 'Reprocessamento confirmado.',
+            : action === 'retry-failed'
+              ? 'Reprocessamento de falhas confirmado.'
+              : 'Reenvio para quem não respondeu ao flow confirmado.',
       );
       await load(campaignId, messageOffset);
     } catch (err) {
@@ -834,6 +846,15 @@ export default function CampaignsPage() {
                       {campaign.status === 'paused' ? (
                         <button className="ghost-button" type="button" onClick={() => void transition(campaign.id, 'resume')}>
                           Retomar
+                        </button>
+                      ) : null}
+                      {campaign.flowCacheId && !['draft', 'queued', 'sending'].includes(campaign.status) ? (
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => void transition(campaign.id, 'retry-unanswered-flow')}
+                        >
+                          Reenviar sem resposta do flow
                         </button>
                       ) : null}
                       {campaign.summary.failed > 0 ? (

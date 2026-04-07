@@ -258,6 +258,89 @@ export class CampaignsService {
     return this.getCampaign(id);
   }
 
+  async retryUnansweredFlow(id: string, actor: UserSession) {
+    const retryAt = nowIso();
+    const state = await this.database.readMeta();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (!campaign) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+    if (['queued', 'sending'].includes(campaign.status)) {
+      throw new BadRequestException('Pause a campanha antes de reenviar quem não respondeu ao flow');
+    }
+
+    const [messages, flowResponses] = await Promise.all([
+      this.database.listCampaignMessagesInDatabase({ campaignId: id }),
+      this.database.listFlowResponsesInDatabase({ campaignId: id }),
+    ]);
+
+    const flowMessages = messages.filter((item) => item.flowToken);
+    if (flowMessages.length === 0) {
+      throw new BadRequestException('Campanha não possui flow para reenvio');
+    }
+
+    const respondedMessageIds = new Set(
+      flowResponses.map((item) => item.campaignMessageId).filter((item): item is string => Boolean(item)),
+    );
+    const respondedContactIds = new Set(
+      flowResponses.map((item) => item.contactId).filter((item): item is string => Boolean(item)),
+    );
+    const retryableStatuses = new Set<CampaignMessageRecord['status']>(['accepted', 'sent', 'delivered', 'read']);
+    const unansweredMessages = flowMessages.filter(
+      (message) =>
+        retryableStatuses.has(message.status) &&
+        !respondedMessageIds.has(message.id) &&
+        !respondedContactIds.has(message.contactId),
+    );
+
+    if (unansweredMessages.length === 0) {
+      throw new BadRequestException('Campanha não possui contatos sem resposta do flow');
+    }
+
+    await Promise.all(
+      unansweredMessages.map((message) =>
+        this.database.saveCampaignMessageInDatabase({
+          ...message,
+          status: 'pending',
+          providerMessageId: null,
+          providerConversationId: null,
+          providerErrorCode: null,
+          providerErrorTitle: null,
+          providerErrorMessage: null,
+          nextAttemptAt: retryAt,
+          sentAt: null,
+          deliveredAt: null,
+          readAt: null,
+          failedAt: null,
+          updatedAt: retryAt,
+        }),
+      ),
+    );
+
+    await this.database.write((draft) => {
+      const item = draft.campaigns.find((record) => record.id === id);
+      if (!item) {
+        throw new NotFoundException('Campanha não encontrada');
+      }
+      item.status = 'queued';
+      item.finishedAt = null;
+      item.updatedAt = retryAt;
+    });
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'campaign.retry_unanswered_flow',
+      entityType: 'campaign',
+      entityId: id,
+      metadata: {
+        retriedCount: unansweredMessages.length,
+      },
+    });
+
+    await this.refreshCampaignSummary(id);
+    return this.getCampaign(id);
+  }
+
   async removeDraft(id: string, actor: UserSession) {
     const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
