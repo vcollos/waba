@@ -257,6 +257,38 @@ export class ResultsService {
     };
   }
 
+  async exportFlowResponsesCsv(filters?: {
+    campaignId?: string;
+    flowCacheId?: string;
+    contactId?: string;
+    limit?: number;
+  }) {
+    const rows = await this.listFlowResponses(filters);
+    const header = [
+      'id',
+      'completedAt',
+      'campaignName',
+      'flowName',
+      'templateName',
+      'contactName',
+      'contactPhone',
+      'responsePayload',
+    ];
+
+    const lines = rows.map((row) => [
+      row.id,
+      row.completedAt,
+      row.campaignName ?? '',
+      row.flowName ?? '',
+      row.templateName ?? '',
+      row.contactName ?? '',
+      row.contactPhone ?? '',
+      JSON.stringify(row.responsePayload ?? {}),
+    ]);
+
+    return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+  }
+
   private async loadResultContactsByIds(contactIds: string[]) {
     const uniqueIds = [...new Set(contactIds.filter(Boolean))];
     if (uniqueIds.length === 0) {
@@ -305,6 +337,8 @@ const matchesFlowResponseFilters = (
 };
 
 const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
+
+const escapeCsvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const incrementTimeline = (
   timeline: Map<string, { accepted: number; sent: number; delivered: number; read: number; failed: number }>,
