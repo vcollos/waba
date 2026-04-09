@@ -4,7 +4,7 @@ import type { CSSProperties } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '../../components/app-shell';
 import { SectionCard } from '../../components/section-card';
-import { apiRequest } from '../../lib/api';
+import { apiRequest, readToken } from '../../lib/api';
 
 interface ResultSummary {
   totalFlowResponses: number;
@@ -149,6 +149,7 @@ export default function ResultsPage() {
   const [query, setQuery] = useState('');
   const [flowFilter, setFlowFilter] = useState('all');
   const [rowLimit, setRowLimit] = useState('100');
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summaryInFlightRef = useRef(false);
   const responsesInFlightRef = useRef(false);
@@ -191,6 +192,40 @@ export default function ResultsPage() {
     void loadSummary();
     void loadResponses();
   }, []);
+
+  const exportResponsesCsv = async () => {
+    if (exporting) {
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const token = readToken();
+      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4311/api';
+      const params = new URLSearchParams();
+      params.set('limit', rowLimit);
+      const url = `${baseUrl}/results/flow-responses/export.csv?${params.toString()}`;
+      const response = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) {
+        throw new Error(`Erro ${response.status}`);
+      }
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = 'flow-responses.csv';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao exportar CSV');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     const summaryTimer = window.setInterval(() => {
@@ -692,6 +727,11 @@ export default function ResultsPage() {
         title="Respostas recebidas"
         description="Tabela operacional para grandes volumes, com filtro por texto, Flow e limite visível."
       >
+        <div className="form-actions">
+          <button className="primary-button" type="button" onClick={() => void exportResponsesCsv()} disabled={exporting}>
+            {exporting ? 'Exportando...' : 'Exportar CSV'}
+          </button>
+        </div>
         <div className="grid three">
           <div className="field">
             <label>Buscar</label>
