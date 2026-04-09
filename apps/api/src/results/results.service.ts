@@ -9,9 +9,88 @@ export class ResultsService {
   async listFlowResponses(filters?: {
     campaignId?: string;
     flowCacheId?: string;
+    flowName?: string;
     contactId?: string;
     limit?: number;
   }) {
+    return this.loadFlowResponses(filters, 500);
+  }
+
+  async exportFlowResponsesCsv(filters?: {
+    campaignId?: string;
+    flowCacheId?: string;
+    flowName?: string;
+    contactId?: string;
+    limit?: number;
+  }) {
+    const rows = await this.loadFlowResponses(filters);
+    const flattenPayload = Boolean(filters?.flowCacheId || filters?.flowName);
+
+    if (!flattenPayload) {
+      const header = [
+        'id',
+        'completedAt',
+        'campaignName',
+        'flowName',
+        'templateName',
+        'contactName',
+        'contactPhone',
+        'responsePayload',
+      ];
+
+      const lines = rows.map((row) => [
+        row.id,
+        row.completedAt,
+        row.campaignName ?? '',
+        row.flowName ?? '',
+        row.templateName ?? '',
+        row.contactName ?? '',
+        row.contactPhone ?? '',
+        JSON.stringify(row.responsePayload ?? {}),
+      ]);
+
+      return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+    }
+
+    const payloadColumns = [...new Set(rows.flatMap((row) => Object.keys(row.responsePayload ?? {})))].sort();
+    const header = [
+      'id',
+      'completedAt',
+      'campaignName',
+      'flowName',
+      'templateName',
+      'contactName',
+      'contactPhone',
+      ...payloadColumns,
+    ];
+
+    const lines = rows.map((row) => {
+      const payload = row.responsePayload ?? {};
+      return [
+        row.id,
+        row.completedAt,
+        row.campaignName ?? '',
+        row.flowName ?? '',
+        row.templateName ?? '',
+        row.contactName ?? '',
+        row.contactPhone ?? '',
+        ...payloadColumns.map((column) => stringifyPayloadValue(payload[column])),
+      ];
+    });
+
+    return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+  }
+
+  private async loadFlowResponses(
+    filters?: {
+      campaignId?: string;
+      flowCacheId?: string;
+      flowName?: string;
+      contactId?: string;
+      limit?: number;
+    },
+    defaultLimit?: number,
+  ) {
     const state = await this.database.readMetaSnapshot();
     const filteredResponses = await this.database.listFlowResponsesInDatabase(filters);
     const contactIds = [
@@ -25,7 +104,7 @@ export class ResultsService {
     );
     const templatesById = new Map(state.templates.map((template) => [template.id, template]));
 
-    return filteredResponses
+    const mappedResponses = filteredResponses
       .map((response) => {
         const campaign = response.campaignId
           ? campaignsById.get(response.campaignId) ?? null
@@ -42,6 +121,7 @@ export class ResultsService {
 
         return {
           id: response.id,
+          flowCacheId: response.flowCacheId ?? null,
           completedAt: response.completedAt,
           responsePayload: response.responsePayload,
           campaignName: campaign?.name ?? null,
@@ -52,8 +132,18 @@ export class ResultsService {
           detectedPayloadDefinitions: flow?.completionPayloadDefinitions ?? [],
         };
       })
-      .sort((left, right) => right.completedAt.localeCompare(left.completedAt))
-      .slice(0, filters?.limit ?? 500);
+      .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+
+    const flowNameFiltered = filters?.flowName
+      ? mappedResponses.filter((response) => (response.flowName ?? 'Flow não identificado') === filters.flowName)
+      : mappedResponses;
+
+    const finalLimit = filters?.limit ?? defaultLimit;
+    if (!finalLimit) {
+      return flowNameFiltered;
+    }
+
+    return flowNameFiltered.slice(0, finalLimit);
   }
 
   async summary() {
@@ -257,38 +347,6 @@ export class ResultsService {
     };
   }
 
-  async exportFlowResponsesCsv(filters?: {
-    campaignId?: string;
-    flowCacheId?: string;
-    contactId?: string;
-    limit?: number;
-  }) {
-    const rows = await this.listFlowResponses(filters);
-    const header = [
-      'id',
-      'completedAt',
-      'campaignName',
-      'flowName',
-      'templateName',
-      'contactName',
-      'contactPhone',
-      'responsePayload',
-    ];
-
-    const lines = rows.map((row) => [
-      row.id,
-      row.completedAt,
-      row.campaignName ?? '',
-      row.flowName ?? '',
-      row.templateName ?? '',
-      row.contactName ?? '',
-      row.contactPhone ?? '',
-      JSON.stringify(row.responsePayload ?? {}),
-    ]);
-
-    return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
-  }
-
   private async loadResultContactsByIds(contactIds: string[]) {
     const uniqueIds = [...new Set(contactIds.filter(Boolean))];
     if (uniqueIds.length === 0) {
@@ -339,6 +397,16 @@ const matchesFlowResponseFilters = (
 const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
 
 const escapeCsvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+const stringifyPayloadValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return JSON.stringify(value);
+};
 
 const incrementTimeline = (
   timeline: Map<string, { accepted: number; sent: number; delivered: number; read: number; failed: number }>,

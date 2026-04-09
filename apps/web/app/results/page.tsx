@@ -84,6 +84,7 @@ interface ResultSummary {
 
 interface FlowResponse {
   id: string;
+  flowCacheId?: string | null;
   campaignName?: string | null;
   contactName?: string | null;
   contactPhone?: string | null;
@@ -203,7 +204,12 @@ export default function ResultsPage() {
       const token = readToken();
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4311/api';
       const params = new URLSearchParams();
-      params.set('limit', rowLimit);
+      if (flowFilter !== 'all') {
+        params.set('flowName', flowFilter);
+      }
+      if (rowLimit !== 'all') {
+        params.set('limit', rowLimit);
+      }
       const url = `${baseUrl}/results/flow-responses/export.csv?${params.toString()}`;
       const response = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -265,7 +271,7 @@ export default function ResultsPage() {
     return searchable.includes(normalizedQuery);
   });
 
-  const visibleResponses = filteredResponses.slice(0, Number(rowLimit));
+  const visibleResponses = rowLimit === 'all' ? filteredResponses : filteredResponses.slice(0, Number(rowLimit));
   const flowOptions = summary?.byFlow.map((item) => item.flowName) ?? [];
 
   return (
@@ -755,6 +761,7 @@ export default function ResultsPage() {
           <div className="field">
             <label>Linhas visíveis</label>
             <select value={rowLimit} onChange={(event) => setRowLimit(event.target.value)}>
+              <option value="all">Todos</option>
               <option value="50">50</option>
               <option value="100">100</option>
               <option value="250">250</option>

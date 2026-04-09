@@ -10,12 +10,14 @@ export class ResultsController {
   flowResponses(
     @Query('campaignId') campaignId?: string,
     @Query('flowCacheId') flowCacheId?: string,
+    @Query('flowName') flowName?: string,
     @Query('contactId') contactId?: string,
     @Query('limit') limit?: string,
   ) {
     return this.resultsService.listFlowResponses({
       campaignId,
       flowCacheId,
+      flowName,
       contactId,
       limit: normalizeLimit(limit),
     });
@@ -31,12 +33,14 @@ export class ResultsController {
     @Res() response: Response,
     @Query('campaignId') campaignId?: string,
     @Query('flowCacheId') flowCacheId?: string,
+    @Query('flowName') flowName?: string,
     @Query('contactId') contactId?: string,
     @Query('limit') limit?: string,
   ) {
     const csv = await this.resultsService.exportFlowResponsesCsv({
       campaignId,
       flowCacheId,
+      flowName,
       contactId,
       limit: normalizeLimit(limit),
     });
