@@ -13,7 +13,7 @@ export class ResultsService {
     contactId?: string;
     limit?: number;
   }) {
-    return this.loadFlowResponses(filters, 500);
+    return this.loadFlowResponses(filters);
   }
 
   async exportFlowResponsesCsv(filters?: {

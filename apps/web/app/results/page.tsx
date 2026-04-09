@@ -179,7 +179,7 @@ export default function ResultsPage() {
 
     responsesInFlightRef.current = true;
     try {
-      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses?limit=500');
+      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses');
       setResponses(payload);
       setError(null);
     } catch (err) {
