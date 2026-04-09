@@ -1,4 +1,5 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ResultsService } from './results.service';
 
 @Controller('results')
@@ -23,6 +24,25 @@ export class ResultsController {
   @Get('summary')
   summary() {
     return this.resultsService.summary();
+  }
+
+  @Get('flow-responses/export.csv')
+  async exportFlowResponsesCsv(
+    @Res() response: Response,
+    @Query('campaignId') campaignId?: string,
+    @Query('flowCacheId') flowCacheId?: string,
+    @Query('contactId') contactId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const csv = await this.resultsService.exportFlowResponsesCsv({
+      campaignId,
+      flowCacheId,
+      contactId,
+      limit: normalizeLimit(limit),
+    });
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', 'attachment; filename="flow-responses.csv"');
+    response.send(csv);
   }
 }
 
