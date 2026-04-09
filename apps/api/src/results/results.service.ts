@@ -127,7 +127,7 @@ export class ResultsService {
           campaignName: campaign?.name ?? null,
           contactName: contact?.name ?? null,
           contactPhone: contact?.phoneE164 ?? null,
-          flowName: flow?.name ?? null,
+          flowName: flow?.name ?? response.metaFlowId ?? 'Flow não identificado',
           templateName: template?.name ?? null,
           detectedPayloadDefinitions: flow?.completionPayloadDefinitions ?? [],
         };
