@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { AppBootstrapService } from './app-bootstrap.service';
+import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './common/auth.guard';
 import { CampaignsModule } from './campaigns/campaigns.module';
@@ -17,6 +18,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 @Module({
   imports: [
     CoreModule,
+    AuditModule,
     AuthModule,
     CampaignsModule,
     ClientsModule,

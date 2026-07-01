@@ -129,6 +129,7 @@ export class CampaignsService {
 
     const campaign: CampaignRecord = {
       id: newId(),
+      clientId: state.integrations.find((item) => item.id === input.integrationId)?.clientId ?? null,
       integrationId: input.integrationId,
       name: input.name,
       mode: input.mode,
