@@ -17,6 +17,8 @@ export interface SaveIntegrationInput {
   verifyToken: string;
   appSecret?: string;
   webhookCallbackUrl?: string;
+  clientId?: string | null;
+  status?: 'active' | 'inactive';
 }
 
 export interface EnvIntegrationInput extends SaveIntegrationInput {}
@@ -77,7 +79,9 @@ export class IntegrationsService {
       {
         id: 'system-env',
         email: 'system@local',
+        name: 'Sistema',
         role: 'admin',
+        clientId: null,
       },
     );
   }
@@ -104,7 +108,8 @@ export class IntegrationsService {
           ? this.crypto.encrypt(input.appSecret)
           : (current?.appSecretCiphertext ?? null),
       webhookCallbackUrl: input.webhookCallbackUrl ?? current?.webhookCallbackUrl ?? null,
-      status: 'active',
+      clientId: input.clientId !== undefined ? input.clientId : (current?.clientId ?? null),
+      status: input.status ?? current?.status ?? 'active',
       lastSyncAt: current?.lastSyncAt ?? null,
       lastHealthcheckAt: current?.lastHealthcheckAt ?? null,
       createdAt: current?.createdAt ?? nowIso(),

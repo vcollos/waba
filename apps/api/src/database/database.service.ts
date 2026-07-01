@@ -16,14 +16,18 @@ import {
   FlowResponseRecord,
   ImportRecord,
   IntegrationRecord,
+  ClientRecord,
   ListMemberRecord,
   ListRecord,
   MessageEventRecord,
   OptOutRecord,
   TemplateCacheRecord,
+  UserRecord,
   emptyState,
 } from './types';
+import { nowIso } from './helpers';
 import { getEnv } from '../common/env';
+import { hashPassword } from '../common/password';
 
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
@@ -95,6 +99,69 @@ export class DatabaseService implements OnModuleDestroy {
     });
     this.queue = task.then(() => undefined, () => undefined);
     return task;
+  }
+
+  async listClients(): Promise<ClientRecord[]> {
+    await this.ensureReady();
+    return structuredClone(this.metaStateCache.clients);
+  }
+
+  async listUsers(): Promise<UserRecord[]> {
+    await this.ensureReady();
+    return structuredClone(this.metaStateCache.users);
+  }
+
+  async getClient(id: string): Promise<ClientRecord | undefined> {
+    await this.ensureReady();
+    const found = this.metaStateCache.clients.find((client) => client.id === id);
+    return found ? structuredClone(found) : undefined;
+  }
+
+  async saveClient(client: ClientRecord): Promise<void> {
+    await this.write((state) => {
+      const index = state.clients.findIndex((item) => item.id === client.id);
+      if (index >= 0) {
+        state.clients[index] = client;
+      } else {
+        state.clients.push(client);
+      }
+    });
+  }
+
+  async getUser(id: string): Promise<UserRecord | undefined> {
+    await this.ensureReady();
+    const found = this.metaStateCache.users.find((user) => user.id === id);
+    return found ? structuredClone(found) : undefined;
+  }
+
+  async saveUser(user: UserRecord): Promise<void> {
+    await this.write((state) => {
+      const index = state.users.findIndex((item) => item.id === user.id);
+      if (index >= 0) {
+        state.users[index] = user;
+      } else {
+        state.users.push(user);
+      }
+    });
+  }
+
+  async findUserByEmail(email: string): Promise<UserRecord | undefined> {
+    await this.ensureReady();
+    const normalized = email.trim().toLowerCase();
+    const found = this.metaStateCache.users.find(
+      (user) => user.email.trim().toLowerCase() === normalized,
+    );
+    return found ? structuredClone(found) : undefined;
+  }
+
+  async touchUserLogin(id: string, at: string): Promise<void> {
+    await this.write((state) => {
+      const user = state.users.find((item) => item.id === id);
+      if (user) {
+        user.lastLoginAt = at;
+        user.updatedAt = at;
+      }
+    });
   }
 
   async execute<T>(callback: (database: DatabaseSync) => T): Promise<T> {
@@ -170,6 +237,7 @@ export class DatabaseService implements OnModuleDestroy {
         access_token_ciphertext,
         verify_token_ciphertext,
         app_secret_ciphertext,
+        client_id,
         webhook_callback_url,
         status,
         last_sync_at,
@@ -208,6 +276,7 @@ export class DatabaseService implements OnModuleDestroy {
         access_token_ciphertext,
         verify_token_ciphertext,
         app_secret_ciphertext,
+        client_id,
         webhook_callback_url,
         status,
         last_sync_at,
@@ -215,8 +284,8 @@ export class DatabaseService implements OnModuleDestroy {
         created_at,
         updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::timestamptz,
-        $13::timestamptz, $14::timestamptz, $15::timestamptz
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::timestamptz,
+        $14::timestamptz, $15::timestamptz, $16::timestamptz
       )
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
@@ -227,6 +296,7 @@ export class DatabaseService implements OnModuleDestroy {
         access_token_ciphertext = EXCLUDED.access_token_ciphertext,
         verify_token_ciphertext = EXCLUDED.verify_token_ciphertext,
         app_secret_ciphertext = EXCLUDED.app_secret_ciphertext,
+        client_id = EXCLUDED.client_id,
         webhook_callback_url = EXCLUDED.webhook_callback_url,
         status = EXCLUDED.status,
         last_sync_at = EXCLUDED.last_sync_at,
@@ -243,6 +313,7 @@ export class DatabaseService implements OnModuleDestroy {
         integration.accessTokenCiphertext,
         integration.verifyTokenCiphertext,
         integration.appSecretCiphertext ?? null,
+        integration.clientId ?? null,
         integration.webhookCallbackUrl ?? null,
         integration.status,
         integration.lastSyncAt ?? null,
@@ -809,6 +880,8 @@ export class DatabaseService implements OnModuleDestroy {
       `);
     }
 
+    await this.migrateTenantSchema();
+
     const metaRow = await this.readMetaStateRow();
     const sqliteRow = metaRow
       ? undefined
@@ -825,6 +898,7 @@ export class DatabaseService implements OnModuleDestroy {
       const compactedState = this.prepareStateForStorage(initialState);
       this.metaStateCache = structuredClone(compactedState);
       await this.persistMetaState(compactedState);
+      await this.ensureTenantSeed();
       return;
     }
 
@@ -855,6 +929,80 @@ export class DatabaseService implements OnModuleDestroy {
       await this.bootstrapPostgresMetaCollections();
       await this.persistMetaState(this.metaStateCache);
     }
+
+    await this.ensureTenantSeed();
+  }
+
+  /**
+   * Migração idempotente e não-destrutiva do modelo multi-tenant:
+   * adiciona `client_id` às tabelas relacionais grandes (contacts, lists,
+   * integrations) sem remover dados existentes. Linhas legadas ficam com
+   * `client_id` nulo (escopo Collos) até serem atribuídas a um tenant.
+   */
+  private async migrateTenantSchema(): Promise<void> {
+    const sqliteTargets = ['contacts', 'lists'];
+    for (const table of sqliteTargets) {
+      this.sqliteAddColumnIfMissing(table, 'client_id', 'TEXT');
+    }
+    this.database!.exec(`
+      CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
+      CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
+    `);
+
+    if (this.metaClient) {
+      await this.metaClient.query(`
+        ALTER TABLE contacts ADD COLUMN IF NOT EXISTS client_id TEXT;
+        ALTER TABLE lists ADD COLUMN IF NOT EXISTS client_id TEXT;
+        ALTER TABLE integrations ADD COLUMN IF NOT EXISTS client_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
+        CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
+        CREATE INDEX IF NOT EXISTS idx_integrations_client_id ON integrations(client_id);
+      `);
+    }
+  }
+
+  private sqliteAddColumnIfMissing(table: string, column: string, definition: string): void {
+    const columns = this.database!.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    if (columns.some((entry) => entry.name === column)) {
+      return;
+    }
+    this.database!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+
+  /**
+   * Garante que exista ao menos um usuário super_admin para login,
+   * derivado de ADMIN_EMAIL/ADMIN_PASSWORD. Mantém compatibilidade com o
+   * fluxo de login anterior (single-admin via env). Não sobrescreve usuários
+   * já existentes.
+   */
+  private async ensureTenantSeed(): Promise<void> {
+    if (this.metaStateCache.users.length > 0) {
+      return;
+    }
+
+    const timestamp = nowIso();
+    const seedUser: UserRecord = {
+      id: 'usr-superadmin-seed',
+      clientId: null,
+      name: 'Administrador Collos',
+      email: this.env.adminEmail.trim().toLowerCase(),
+      passwordHash: hashPassword(this.env.adminPassword),
+      role: 'super_admin',
+      status: 'active',
+      lastLoginAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    const seededState: AppState = {
+      ...structuredClone(this.metaStateCache),
+      users: [seedUser],
+    };
+    const compactedState = this.prepareStateForStorage(seededState);
+    this.metaStateCache = structuredClone(compactedState);
+    await this.persistMetaState(compactedState);
   }
 
   private async readLegacyState(): Promise<AppState> {
@@ -2195,6 +2343,7 @@ export class DatabaseService implements OnModuleDestroy {
           access_token_ciphertext,
           verify_token_ciphertext,
           app_secret_ciphertext,
+          client_id,
           webhook_callback_url,
           status,
           last_sync_at,
@@ -2264,6 +2413,7 @@ type IntegrationRow = {
   access_token_ciphertext: string;
   verify_token_ciphertext: string;
   app_secret_ciphertext: string | null;
+  client_id: string | null;
   webhook_callback_url: string | null;
   status: string;
   last_sync_at: string | Date | null;
@@ -2524,6 +2674,7 @@ const mapIntegrationRow = (row: IntegrationRow): IntegrationRecord => ({
   accessTokenCiphertext: row.access_token_ciphertext,
   verifyTokenCiphertext: row.verify_token_ciphertext,
   appSecretCiphertext: row.app_secret_ciphertext,
+  clientId: row.client_id ?? null,
   webhookCallbackUrl: row.webhook_callback_url,
   status: row.status === 'inactive' ? 'inactive' : 'active',
   lastSyncAt: toIsoString(row.last_sync_at),

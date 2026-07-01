@@ -1,4 +1,39 @@
-export type Role = 'admin' | 'operator' | 'viewer';
+export type Role = 'super_admin' | 'admin' | 'client_admin' | 'operator' | 'viewer';
+
+/** Papéis da operação Collos (visão "todos os clientes" + telas administrativas). */
+export const COLLOS_ROLES: Role[] = ['super_admin', 'admin'];
+/** Papéis vinculados a um tenant (Uniodonto). Exigem clientId. */
+export const CLIENT_ROLES: Role[] = ['client_admin', 'operator', 'viewer'];
+
+export const isCollosRole = (role: Role): boolean => COLLOS_ROLES.includes(role);
+
+export type EntityStatus = 'active' | 'inactive';
+
+/** Tenant (Uniodonto) operado pela Collos. */
+export interface ClientRecord {
+  id: string;
+  name: string;
+  legalName?: string | null;
+  cnpj?: string | null;
+  billingEmail?: string | null;
+  status: EntityStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Usuário da plataforma. clientId é nulo para papéis Collos. */
+export interface UserRecord {
+  id: string;
+  clientId?: string | null;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: Role;
+  status: EntityStatus;
+  lastLoginAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface IntegrationRecord {
   id: string;
@@ -12,6 +47,8 @@ export interface IntegrationRecord {
   appSecretCiphertext?: string | null;
   webhookCallbackUrl?: string | null;
   status: 'active' | 'inactive';
+  /** Tenant proprietário da integração. Nulo = pool Collos compartilhado. */
+  clientId?: string | null;
   lastSyncAt?: string | null;
   lastHealthcheckAt?: string | null;
   createdAt: string;
@@ -21,6 +58,8 @@ export interface IntegrationRecord {
 export interface ContactRecord {
   id: string;
   externalRef?: string | null;
+  /** Tenant proprietário do contato. Nulo = não atribuído (visível só à Collos). */
+  clientId?: string | null;
   clientName?: string | null;
   firstName: string;
   lastName?: string | null;
@@ -44,6 +83,8 @@ export interface ContactRecord {
 
 export interface ListRecord {
   id: string;
+  /** Tenant proprietário da lista. Nulo = não atribuído (visível só à Collos). */
+  clientId?: string | null;
   name: string;
   description?: string | null;
   sourceType: 'csv' | 'manual' | 'api';
@@ -176,6 +217,8 @@ export interface CampaignAudienceSnapshot {
 
 export interface CampaignRecord {
   id: string;
+  /** Tenant proprietário da campanha. Nulo = campanha Collos sem tenant. */
+  clientId?: string | null;
   integrationId: string;
   name: string;
   mode: 'template' | 'template_flow' | 'session_flow';
@@ -301,10 +344,14 @@ export interface AuditLogRecord {
 export interface UserSession {
   id: string;
   email: string;
+  name: string;
   role: Role;
+  clientId?: string | null;
 }
 
 export interface AppState {
+  clients: ClientRecord[];
+  users: UserRecord[];
   integrations: IntegrationRecord[];
   contacts: ContactRecord[];
   lists: ListRecord[];
@@ -321,6 +368,8 @@ export interface AppState {
 }
 
 export const emptyState = (): AppState => ({
+  clients: [],
+  users: [],
   integrations: [],
   contacts: [],
   lists: [],

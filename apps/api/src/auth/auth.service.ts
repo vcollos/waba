@@ -1,25 +1,35 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { sign } from 'jsonwebtoken';
 import { getEnv } from '../common/env';
-import { Role, UserSession } from '../database/types';
+import { verifyPassword } from '../common/password';
+import { DatabaseService } from '../database/database.service';
+import { UserSession } from '../database/types';
 
 @Injectable()
 export class AuthService {
-  login(email: string, password: string): { token: string; user: UserSession } {
+  constructor(private readonly database: DatabaseService) {}
+
+  async login(email: string, password: string): Promise<{ token: string; user: UserSession }> {
     const env = getEnv();
-    if (email !== env.adminEmail || password !== env.adminPassword) {
+    const user = await this.database.findUserByEmail(email);
+
+    if (!user || user.status !== 'active' || !verifyPassword(password, user.passwordHash)) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
-    const user: UserSession = {
-      id: 'pilot-admin',
-      email,
-      role: 'admin' satisfies Role,
+    const session: UserSession = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      clientId: user.clientId ?? null,
     };
 
+    await this.database.touchUserLogin(user.id, new Date().toISOString());
+
     return {
-      token: sign(user, env.jwtSecret, { expiresIn: '12h' }),
-      user,
+      token: sign(session, env.jwtSecret, { expiresIn: '12h' }),
+      user: session,
     };
   }
 }
