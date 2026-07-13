@@ -123,7 +123,16 @@ export interface TemplateVariableDescriptor {
   placeholderIndex: number;
   /** Nome da variável em templates de formato NAMED (ex.: "link"); null p/ POSITIONAL. */
   paramName?: string | null;
+  /** Valor de exemplo aprovado na Meta (usado como sugestão/pré-preenchimento). */
+  example?: string | null;
   label: string;
+}
+
+/** Header de mídia (IMAGE/VIDEO/DOCUMENT) que exige uma URL no envio. */
+export interface TemplateMediaHeader {
+  format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+  /** URL de exemplo (header_handle) aprovada na Meta. */
+  example?: string | null;
 }
 
 export interface TemplateCacheRecord {

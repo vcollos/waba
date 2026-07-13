@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { extractTemplateMediaHeader } from '../database/helpers';
 import { isWithinScope, resolveClientScope } from '../common/scope';
 import { UserSession } from '../database/types';
 
@@ -27,6 +28,7 @@ export class LibraryService {
     const templates = await this.database.listTemplatesInDatabase(integrationId);
     return templates
       .filter((t) => allowed === null || allowed.has(t.integrationId))
+      .map((t) => ({ ...t, mediaHeader: extractTemplateMediaHeader(t.components) }))
       .sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
   }
 

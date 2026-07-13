@@ -65,12 +65,25 @@ interface ListItem {
   id: string;
   name: string;
 }
+const MEDIA_LABEL: Record<'IMAGE' | 'VIDEO' | 'DOCUMENT', string> = {
+  IMAGE: 'Imagem',
+  VIDEO: 'Vídeo',
+  DOCUMENT: 'Documento',
+};
+
 interface Template {
   id: string;
   name: string;
   integrationId: string;
   hasFlowButton: boolean;
-  variableDescriptors: Array<{ componentType: string; placeholderIndex: number; label: string }>;
+  variableDescriptors: Array<{
+    componentType: string;
+    placeholderIndex: number;
+    label: string;
+    paramName?: string | null;
+    example?: string | null;
+  }>;
+  mediaHeader?: { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: string | null } | null;
 }
 
 export default function CampaignsPage() {
@@ -517,6 +530,26 @@ function CampaignWizard({
   );
   const template = templates.find((t) => t.id === templateId) ?? null;
 
+  // Ao escolher o template, pré-preenche cada campo com o exemplo aprovado na Meta
+  // (para o usuário só ajustar, não adivinhar o que inserir).
+  useEffect(() => {
+    if (!template) return;
+    setMapping((current) => {
+      const next = { ...current };
+      for (const d of template.variableDescriptors) {
+        const key = `${d.componentType}:${d.placeholderIndex}`;
+        if (!next[key]) {
+          next[key] = d.example ? { type: 'static', value: d.example } : { type: 'contact_name' };
+        }
+      }
+      if (template.mediaHeader && !next['header:media']) {
+        next['header:media'] = { type: 'static', value: template.mediaHeader.example ?? '' };
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateId]);
+
   const setVar = (key: string, source: ParamSource) => setMapping((c) => ({ ...c, [key]: source }));
 
   const submit = async () => {
@@ -738,46 +771,79 @@ function CampaignWizard({
 
       {step === 3 ? (
         <div className="stack">
-          {!template || template.variableDescriptors.length === 0 ? (
-            <div className="cell-sub">Este template não possui variáveis para mapear.</div>
-          ) : (
-            template.variableDescriptors.map((descriptor) => {
-              const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
-              const source = mapping[key];
-              return (
-                <div key={key} className="form-grid" style={{ alignItems: 'end' }}>
-                  <div className="field">
-                    <label>
-                      {`{{${descriptor.placeholderIndex}}}`} · {descriptor.label}
-                    </label>
-                    <select
-                      className="input"
-                      value={source?.type ?? 'contact_name'}
-                      onChange={(e) => {
-                        const type = e.target.value as ParamSource['type'];
-                        setVar(key, type === 'static' ? { type: 'static', value: '' } : ({ type } as ParamSource));
-                      }}
-                    >
-                      <option value="static">Valor fixo</option>
-                      <option value="contact_name">Nome do contato</option>
-                      <option value="contact_phone">Telefone</option>
-                      <option value="contact_email">E-mail</option>
-                    </select>
-                  </div>
-                  {source?.type === 'static' ? (
+          {template?.mediaHeader ? (
+            <div className="panel panel--inset" style={{ padding: 14 }}>
+              <div className="field">
+                <label>
+                  Mídia do cabeçalho · {MEDIA_LABEL[template.mediaHeader.format]}{' '}
+                  <span className="req">*</span>
+                </label>
+                <input
+                  className="input"
+                  placeholder="URL pública da mídia"
+                  value={mapping['header:media']?.type === 'static' ? mapping['header:media'].value : ''}
+                  onChange={(e) => setVar('header:media', { type: 'static', value: e.target.value })}
+                />
+                <span className="hint">
+                  Este template exige uma {MEDIA_LABEL[template.mediaHeader.format].toLowerCase()} no
+                  topo. Informe uma URL pública
+                  {template.mediaHeader.example ? ' (pré-preenchemos o exemplo aprovado)' : ''}.
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {template && template.variableDescriptors.length > 0
+            ? template.variableDescriptors.map((descriptor) => {
+                const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
+                const source = mapping[key];
+                const varName = descriptor.paramName
+                  ? `{{${descriptor.paramName}}}`
+                  : `{{${descriptor.placeholderIndex}}}`;
+                return (
+                  <div key={key} className="form-grid" style={{ alignItems: 'end' }}>
                     <div className="field">
-                      <label>Valor</label>
-                      <input
+                      <label>
+                        {descriptor.componentType === 'header' ? 'Cabeçalho' : 'Corpo'} · {varName}
+                      </label>
+                      <select
                         className="input"
-                        value={source.value}
-                        onChange={(e) => setVar(key, { type: 'static', value: e.target.value })}
-                      />
+                        value={source?.type ?? 'static'}
+                        onChange={(e) => {
+                          const type = e.target.value as ParamSource['type'];
+                          setVar(
+                            key,
+                            type === 'static'
+                              ? { type: 'static', value: descriptor.example ?? '' }
+                              : ({ type } as ParamSource),
+                          );
+                        }}
+                      >
+                        <option value="static">Valor fixo</option>
+                        <option value="contact_name">Nome do contato</option>
+                        <option value="contact_phone">Telefone</option>
+                        <option value="contact_email">E-mail</option>
+                      </select>
                     </div>
-                  ) : null}
-                </div>
-              );
-            })
-          )}
+                    {source?.type === 'static' ? (
+                      <div className="field">
+                        <label>Valor</label>
+                        <input
+                          className="input"
+                          placeholder={descriptor.example ?? ''}
+                          value={source.value}
+                          onChange={(e) => setVar(key, { type: 'static', value: e.target.value })}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            : null}
+
+          {!template?.mediaHeader && (!template || template.variableDescriptors.length === 0) ? (
+            <div className="cell-sub">Este template não possui variáveis para preencher.</div>
+          ) : null}
         </div>
       ) : null}
 

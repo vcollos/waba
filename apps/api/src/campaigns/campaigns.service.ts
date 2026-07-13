@@ -1,7 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { DatabaseService } from '../database/database.service';
-import { hash, newId, nowIso, resolveParameterValue } from '../database/helpers';
+import {
+  extractTemplateMediaHeader,
+  hash,
+  newId,
+  nowIso,
+  resolveParameterValue,
+} from '../database/helpers';
 import { isWithinScope, resolveClientScope } from '../common/scope';
 import {
   CampaignAudienceConfig,
@@ -138,8 +144,16 @@ export class CampaignsService {
       for (const descriptor of template.variableDescriptors) {
         const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
         if (!mapping[key]) {
-          mapping[key] = { type: 'contact_name' };
+          // Padrão inteligente: usa o exemplo aprovado na Meta quando existe
+          // (ex.: {{link}} -> URL do vídeo); senão o nome do contato.
+          mapping[key] = descriptor.example
+            ? { type: 'static', value: descriptor.example }
+            : { type: 'contact_name' };
         }
+      }
+      const mediaHeader = extractTemplateMediaHeader(template.components);
+      if (mediaHeader && !mapping['header:media']) {
+        mapping['header:media'] = { type: 'static', value: mediaHeader.example ?? '' };
       }
     }
 
@@ -482,7 +496,18 @@ export class CampaignsService {
       .map(toParameter);
 
     const components: Record<string, unknown>[] = [];
-    if (headerParameters.length > 0) {
+    // HEADER: mídia (IMAGE/VIDEO/DOCUMENT) tem prioridade sobre header de texto.
+    const mediaHeader = extractTemplateMediaHeader(template.components);
+    if (mediaHeader) {
+      const mediaType = mediaHeader.format.toLowerCase(); // image | video | document
+      const url = resolveParameterValue(campaign.parameterMapping['header:media'], contact);
+      if (url) {
+        components.push({
+          type: 'header',
+          parameters: [{ type: mediaType, [mediaType]: { link: url } }],
+        });
+      }
+    } else if (headerParameters.length > 0) {
       components.push({ type: 'header', parameters: headerParameters });
     }
     if (bodyParameters.length > 0) {
