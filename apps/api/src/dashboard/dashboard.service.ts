@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { resolveClientScope } from '../common/scope';
 import { CampaignRecord, UserSession, isCollosRole } from '../database/types';
 
 export interface DashboardQuery {
@@ -16,9 +17,8 @@ export class DashboardService {
     const state = await this.database.readMetaSnapshot();
     const collos = isCollosRole(session.role);
 
-    // Papéis de cliente são sempre forçados ao próprio tenant; Collos pode
-    // filtrar por um cliente específico ou ver todos (clientId nulo).
-    const scopeClientId = collos ? query.clientId ?? null : session.clientId ?? null;
+    // Cliente é forçado a um dos seus tenants; Collos filtra por um cliente ou vê todos.
+    const scopeClientId = resolveClientScope(session, query.clientId);
 
     const clientName = (clientId?: string | null): string | null => {
       if (!clientId) {

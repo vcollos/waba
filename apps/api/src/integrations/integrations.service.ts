@@ -81,7 +81,7 @@ export class IntegrationsService {
         email: 'system@local',
         name: 'Sistema',
         role: 'admin',
-        clientId: null,
+        clientIds: [],
       },
     );
   }

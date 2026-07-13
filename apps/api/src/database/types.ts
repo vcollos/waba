@@ -21,10 +21,13 @@ export interface ClientRecord {
   updatedAt: string;
 }
 
-/** Usuário da plataforma. clientId é nulo para papéis Collos. */
+/**
+ * Usuário da plataforma. Papéis de cliente têm 1+ tenants em `clientIds`
+ * (operam um por vez, via seletor). Papéis Collos têm `clientIds` vazio (veem tudo).
+ */
 export interface UserRecord {
   id: string;
-  clientId?: string | null;
+  clientIds: string[];
   name: string;
   email: string;
   passwordHash: string;
@@ -346,7 +349,8 @@ export interface UserSession {
   email: string;
   name: string;
   role: Role;
-  clientId?: string | null;
+  /** Tenants que o usuário pode acessar. Vazio = Collos (todos). */
+  clientIds: string[];
 }
 
 export interface AppState {

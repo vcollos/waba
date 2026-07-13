@@ -40,7 +40,7 @@ export class ClientsService {
 
     const visible = isCollosRole(session.role)
       ? clients
-      : clients.filter((client) => client.id === session.clientId);
+      : clients.filter((client) => (session.clientIds ?? []).includes(client.id));
 
     return visible
       .map((client) => ({ ...client, integrationsCount: countByClient.get(client.id) ?? 0 }))

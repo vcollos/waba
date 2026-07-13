@@ -7,7 +7,8 @@ export interface UserSession {
   email: string;
   name: string;
   role: Role;
-  clientId?: string | null;
+  /** Tenants que o usuário pode acessar. Vazio = Collos (todos). */
+  clientIds: string[];
 }
 
 export interface ClientRecord {

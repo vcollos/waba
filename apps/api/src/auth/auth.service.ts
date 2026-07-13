@@ -22,7 +22,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       role: user.role,
-      clientId: user.clientId ?? null,
+      clientIds: user.clientIds ?? [],
     };
 
     await this.database.touchUserLogin(user.id, new Date().toISOString());
