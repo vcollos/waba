@@ -47,10 +47,8 @@ export const resolveParameterValue = (
   }
 };
 
-const countPlaceholders = (text: string): number => {
-  const matches = Array.from(text.matchAll(/{{\s*(\d+)\s*}}/g));
-  return matches.length;
-};
+// Detecta variáveis posicionais ({{1}}) e nomeadas ({{link}}, {{customer_name}}).
+const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 
 export const extractVariableDescriptors = (
   components: unknown[],
@@ -59,17 +57,27 @@ export const extractVariableDescriptors = (
 
   for (const component of components as Array<Record<string, unknown>>) {
     const type = String(component.type ?? '').toLowerCase();
+    if (type !== 'body' && type !== 'header') {
+      continue;
+    }
     const text = typeof component.text === 'string' ? component.text : '';
-    const count = countPlaceholders(text);
+    const seen = new Set<string>();
+    let ordinal = 0;
 
-    if ((type === 'body' || type === 'header') && count > 0) {
-      for (let index = 1; index <= count; index += 1) {
-        descriptors.push({
-          componentType: type as 'body' | 'header',
-          placeholderIndex: index,
-          label: `${type.toUpperCase()} {{${index}}}`,
-        });
+    for (const match of text.matchAll(PLACEHOLDER_RE)) {
+      const token = match[1];
+      if (seen.has(token)) {
+        continue;
       }
+      seen.add(token);
+      ordinal += 1;
+      const positional = /^\d+$/.test(token);
+      descriptors.push({
+        componentType: type as 'body' | 'header',
+        placeholderIndex: positional ? Number(token) : ordinal,
+        paramName: positional ? null : token,
+        label: `${type.toUpperCase()} {{${token}}}`,
+      });
     }
   }
 

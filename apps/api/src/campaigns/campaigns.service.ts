@@ -461,27 +461,25 @@ export class CampaignsService {
       throw new Error('Template é obrigatório no piloto');
     }
 
+    const toParameter = (descriptor: (typeof template.variableDescriptors)[number]) => {
+      const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
+      return {
+        type: 'text',
+        // Templates NAMED exigem parameter_name em cada parâmetro.
+        ...(descriptor.paramName ? { parameter_name: descriptor.paramName } : {}),
+        text: resolveParameterValue(campaign.parameterMapping[key], contact),
+      };
+    };
+
     const bodyParameters = template.variableDescriptors
       .filter((descriptor) => descriptor.componentType === 'body')
       .sort((left, right) => left.placeholderIndex - right.placeholderIndex)
-      .map((descriptor) => {
-        const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
-        return {
-          type: 'text',
-          text: resolveParameterValue(campaign.parameterMapping[key], contact),
-        };
-      });
+      .map(toParameter);
 
     const headerParameters = template.variableDescriptors
       .filter((descriptor) => descriptor.componentType === 'header')
       .sort((left, right) => left.placeholderIndex - right.placeholderIndex)
-      .map((descriptor) => {
-        const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
-        return {
-          type: 'text',
-          text: resolveParameterValue(campaign.parameterMapping[key], contact),
-        };
-      });
+      .map(toParameter);
 
     const components: Record<string, unknown>[] = [];
     if (headerParameters.length > 0) {
