@@ -75,19 +75,19 @@ export class IntegrationsService {
         integration.phoneNumberId === input.phoneNumberId,
     );
 
-    return this.save(
-      {
-        ...input,
-        id: existing?.id,
-      },
-      {
-        id: 'system-env',
-        email: 'system@local',
-        name: 'Sistema',
-        role: 'admin',
-        clientIds: [],
-      },
-    );
+    // Env é apenas bootstrap inicial. Se a integração já existe, a UI é a fonte
+    // de verdade — não sobrescrever nome, tokens, cliente ou status a cada boot.
+    if (existing) {
+      return this.sanitize(existing);
+    }
+
+    return this.save(input, {
+      id: 'system-env',
+      email: 'system@local',
+      name: 'Sistema',
+      role: 'admin',
+      clientIds: [],
+    });
   }
 
   async save(input: SaveIntegrationInput, actor: UserSession): Promise<SanitizedIntegration> {
