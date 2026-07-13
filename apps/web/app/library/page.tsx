@@ -61,7 +61,7 @@ export default function LibraryPage() {
 }
 
 function ModelsContent() {
-  const { session } = useShell();
+  const { session, scopeClientId } = useShell();
   const collos = isCollosRole(session.role);
   const { toasts, push } = useToasts();
   const [tab, setTab] = useState<'synced' | 'requests'>('synced');
@@ -81,7 +81,9 @@ function ModelsContent() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    void apiRequest<Template[]>('/library/templates')
+    void apiRequest<Template[]>(
+      `/library/templates${scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : ''}`,
+    )
       .then((data) => {
         setTemplates(data);
         setLoading(false);
@@ -95,7 +97,7 @@ function ModelsContent() {
         .then(setIntegrations)
         .catch(() => undefined);
     }
-  }, [collos]);
+  }, [collos, scopeClientId]);
 
   useEffect(() => {
     load();

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppShell } from '../../components/app-shell';
+import { AppShell, useShell } from '../../components/app-shell';
 import {
   Badge,
   BadgeText,
@@ -101,6 +101,7 @@ export default function ContactsPage() {
 }
 
 function ContactsContent() {
+  const { scopeClientId } = useShell();
   const { toasts, push } = useToasts();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [total, setTotal] = useState(0);
@@ -126,9 +127,12 @@ function ContactsContent() {
     (nextOffset = 0) => {
       setLoading(true);
       setError(null);
+      const q = scopeClientId ? `&clientId=${encodeURIComponent(scopeClientId)}` : '';
       Promise.all([
-        apiRequest<PaginatedContactsResponse>(`/contacts?limit=${PAGE_SIZE}&offset=${nextOffset}`),
-        apiRequest<ListItem[]>('/lists'),
+        apiRequest<PaginatedContactsResponse>(
+          `/contacts?limit=${PAGE_SIZE}&offset=${nextOffset}${q}`,
+        ),
+        apiRequest<ListItem[]>(`/lists${scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : ''}`),
       ])
         .then(([page, listsPayload]) => {
           setContacts(page.items);
@@ -143,7 +147,7 @@ function ContactsContent() {
           setLoading(false);
         });
     },
-    [],
+    [scopeClientId],
   );
 
   useEffect(() => {

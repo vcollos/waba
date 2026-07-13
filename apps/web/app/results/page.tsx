@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppShell } from '../../components/app-shell';
+import { AppShell, useShell } from '../../components/app-shell';
 import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
 import { fmtDateTime, fmtInt } from '../../lib/format';
@@ -109,6 +109,7 @@ function ResultsContent() {
 }
 
 function SummaryTab() {
+  const { scopeClientId } = useShell();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +117,7 @@ function SummaryTab() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    void apiRequest<Summary>('/results/summary')
+    void apiRequest<Summary>(`/results/summary${scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : ''}`)
       .then((data) => {
         setSummary(data);
         setLoading(false);
@@ -125,7 +126,7 @@ function SummaryTab() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar resultados.');
         setLoading(false);
       });
-  }, []);
+  }, [scopeClientId]);
 
   useEffect(() => {
     load();
@@ -279,6 +280,7 @@ function SummaryTab() {
 }
 
 function FlowTab() {
+  const { scopeClientId } = useShell();
   const [responses, setResponses] = useState<FlowResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -288,7 +290,9 @@ function FlowTab() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    void apiRequest<FlowResponse[]>('/results/flow-responses?limit=500')
+    void apiRequest<FlowResponse[]>(
+      `/results/flow-responses?limit=500${scopeClientId ? `&clientId=${encodeURIComponent(scopeClientId)}` : ''}`,
+    )
       .then((data) => {
         setResponses(data);
         setLoading(false);
@@ -297,7 +301,7 @@ function FlowTab() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar respostas.');
         setLoading(false);
       });
-  }, []);
+  }, [scopeClientId]);
 
   useEffect(() => {
     load();
