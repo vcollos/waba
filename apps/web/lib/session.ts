@@ -76,8 +76,8 @@ export const writeActiveClientId = (clientId: string | null): void => {
   }
 };
 
-export const initials = (name: string): string => {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+export const initials = (name?: string | null): string => {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
     return '?';
   }
