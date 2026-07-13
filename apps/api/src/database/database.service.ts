@@ -985,7 +985,7 @@ export class DatabaseService implements OnModuleDestroy {
     const timestamp = nowIso();
     const seedUser: UserRecord = {
       id: 'usr-superadmin-seed',
-      clientId: null,
+      clientIds: [],
       name: 'Administrador Collos',
       email: this.env.adminEmail.trim().toLowerCase(),
       passwordHash: hashPassword(this.env.adminPassword),
@@ -2544,9 +2544,22 @@ const compactFlowResponse = (response: FlowResponseRecord): FlowResponseRecord =
 const hydrateState = (state: Partial<AppState>): AppState => ({
   ...emptyState(),
   ...state,
+  users: (state.users ?? []).map(hydrateUser),
   contacts: (state.contacts ?? []).map(hydrateContact),
   campaigns: (state.campaigns ?? []).map(hydrateCampaign),
 });
+
+/** Migra usuários legados de `clientId` único para `clientIds` (lista). */
+const hydrateUser = (user: UserRecord): UserRecord => {
+  const legacy = (user as UserRecord & { clientId?: string | null }).clientId;
+  const clientIds =
+    Array.isArray(user.clientIds) && user.clientIds.length > 0
+      ? user.clientIds
+      : legacy
+        ? [legacy]
+        : [];
+  return { ...user, clientIds };
+};
 
 const hydrateContact = (contact: ContactRecord): ContactRecord => ({
   ...contact,

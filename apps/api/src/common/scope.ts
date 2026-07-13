@@ -1,30 +1,34 @@
 import { UserSession, isCollosRole } from '../database/types';
 
 /**
- * Resolve o escopo de tenant efetivo para uma requisição.
+ * Resolve o tenant efetivo (ativo) de uma requisição.
  *
- * - Papéis de cliente (client_admin/operator/viewer) são SEMPRE forçados ao
- *   próprio clientId. Nunca conseguem ler/escrever dados de outro tenant, nem
- *   passando um clientId na query.
- * - Papéis Collos (super_admin/admin) veem tudo; o clientId informado (ex.: o
- *   seletor da topbar) vira um filtro opcional.
+ * - Papéis Collos (super_admin/admin): veem tudo. `requestedClientId` (ex.: o
+ *   seletor da topbar) vira filtro opcional → retorna esse clientId ou `null`.
+ * - Papéis de cliente: operam UM tenant por vez, sempre dentro dos seus
+ *   `clientIds`. O `requestedClientId` só é aceito se pertencer ao conjunto do
+ *   usuário; caso contrário cai no primeiro tenant dele. Nunca acessa fora do
+ *   próprio conjunto (não dá para burlar via ?clientId=).
  *
  * Retorno:
  * - `null`  => sem filtro (todos os tenants). Só ocorre para Collos.
  * - string  => filtrar estritamente por esse clientId.
  *
- * Fail-closed: um usuário de cliente sem clientId recebe um escopo impossível
- * (`__none__`), então não enxerga nada.
+ * Fail-closed: cliente sem nenhum tenant recebe escopo impossível (`__none__`).
  */
 export const resolveClientScope = (
   session: UserSession,
   requestedClientId?: string | null,
 ): string | null => {
+  const requested = (requestedClientId ?? '').trim() || null;
   if (isCollosRole(session.role)) {
-    const requested = (requestedClientId ?? '').trim();
-    return requested ? requested : null;
+    return requested;
   }
-  return session.clientId ?? '__none__';
+  const allowed = session.clientIds ?? [];
+  if (requested && allowed.includes(requested)) {
+    return requested;
+  }
+  return allowed[0] ?? '__none__';
 };
 
 /** True se o registro (com seu clientId) é visível dentro do escopo. */
@@ -35,16 +39,20 @@ export const isWithinScope = (
 
 /**
  * clientId a gravar ao criar um registro:
- * - papel de cliente => sempre o próprio clientId (ignora o que vier no corpo);
- * - Collos => o clientId solicitado (ex.: seletor da topbar) ou null.
+ * - Collos => o tenant solicitado (seletor) ou null;
+ * - cliente => o tenant ativo (solicitado se for dele, senão o primeiro).
  */
 export const writeClientId = (
   session: UserSession,
   requestedClientId?: string | null,
 ): string | null => {
+  const requested = (requestedClientId ?? '').trim() || null;
   if (isCollosRole(session.role)) {
-    const requested = (requestedClientId ?? '').trim();
-    return requested ? requested : null;
+    return requested;
   }
-  return session.clientId ?? null;
+  const allowed = session.clientIds ?? [];
+  if (requested && allowed.includes(requested)) {
+    return requested;
+  }
+  return allowed[0] ?? null;
 };

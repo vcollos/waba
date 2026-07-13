@@ -49,12 +49,19 @@ export function AppShell({ title, children }: { title: string; children: React.R
         const me = await apiRequest<UserSession>('/auth/me');
         if (!active) return;
         setSession(me);
+        // Todos os papéis carregam seus clientes (a API já devolve escopado).
+        const clientList = await apiRequest<ClientRecord[]>('/clients');
+        if (!active) return;
+        setClients(clientList);
+        const stored = readActiveClientId();
         if (isCollosRole(me.role)) {
-          const clientList = await apiRequest<ClientRecord[]>('/clients');
-          if (!active) return;
-          setClients(clientList);
-          const stored = readActiveClientId();
           setSelectedClientId(stored && clientList.some((c) => c.id === stored) ? stored : null);
+        } else {
+          // Cliente opera um tenant por vez: o salvo (se for dele) ou o primeiro.
+          const tenants = me.clientIds ?? [];
+          setSelectedClientId(
+            stored && tenants.includes(stored) ? stored : tenants[0] ?? null,
+          );
         }
       } catch (err) {
         if (active) {
@@ -79,11 +86,11 @@ export function AppShell({ title, children }: { title: string; children: React.R
 
   const contextValue = useMemo<ShellContextValue | null>(() => {
     if (!session) return null;
-    const collos = isCollosRole(session.role);
     return {
       session,
       clients,
-      scopeClientId: collos ? selectedClientId : session.clientId ?? null,
+      // Collos: seletor ou null (todos). Cliente: o tenant ativo (um dos seus).
+      scopeClientId: selectedClientId,
       setScopeClientId,
     };
   }, [session, clients, selectedClientId]);
@@ -107,9 +114,8 @@ export function AppShell({ title, children }: { title: string; children: React.R
 
   const collos = isCollosRole(session.role);
   const items = navForRole(session.role);
-  const activeClientName = collos
-    ? clients.find((c) => c.id === selectedClientId)?.name ?? null
-    : clients.find((c) => c.id === session.clientId)?.name ?? null;
+  // Nome do tenant fixo quando o cliente tem exatamente um.
+  const activeClientName = clients.find((c) => c.id === selectedClientId)?.name ?? clients[0]?.name ?? null;
 
   return (
     <ShellContext.Provider value={contextValue}>
@@ -156,6 +162,21 @@ export function AppShell({ title, children }: { title: string; children: React.R
                     aria-label="Cliente em foco"
                   >
                     <option value="">Todos os clientes</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : clients.length > 1 ? (
+                <div className="tb-client">
+                  <ClientIcon />
+                  <select
+                    value={selectedClientId ?? clients[0]?.id ?? ''}
+                    onChange={(event) => setScopeClientId(event.target.value || null)}
+                    aria-label="Tenant ativo"
+                  >
                     {clients.map((client) => (
                       <option key={client.id} value={client.id}>
                         {client.name}

@@ -129,15 +129,14 @@ function CampaignsContent() {
     id ? clients.find((c) => c.id === id)?.name ?? '—' : 'Pool Collos';
 
   const filtered = useMemo(() => {
-    const effectiveClient = collos ? scopeClientId : session.clientId ?? null;
     return campaigns.filter((c) => {
-      if (effectiveClient && c.clientId !== effectiveClient) return false;
+      if (scopeClientId && c.clientId !== scopeClientId) return false;
       if (statusFilter && c.status !== statusFilter) return false;
       if (templateFilter && c.templateCacheId !== templateFilter) return false;
       if (listFilter && c.listId !== listFilter) return false;
       return true;
     });
-  }, [campaigns, collos, scopeClientId, session.clientId, statusFilter, templateFilter, listFilter]);
+  }, [campaigns, scopeClientId, statusFilter, templateFilter, listFilter]);
 
   const runAction = async (id: string, path: string, method: string, success: string) => {
     setBusy(`${id}:${path}`);

@@ -77,16 +77,15 @@ function BillingContent() {
     id ? clients.find((c) => c.id === id)?.name ?? '—' : 'Pool Collos';
 
   const filtered = useMemo(() => {
-    const effectiveClient = collos ? scopeClientId : session.clientId ?? null;
     return campaigns.filter((c) => {
-      if (effectiveClient && c.clientId !== effectiveClient) return false;
+      if (scopeClientId && c.clientId !== scopeClientId) return false;
       if (integrationFilter && c.integrationId !== integrationFilter) return false;
       const day = c.createdAt.slice(0, 10);
       if (from && day < from) return false;
       if (to && day > to) return false;
       return true;
     });
-  }, [campaigns, collos, scopeClientId, session.clientId, integrationFilter, from, to]);
+  }, [campaigns, scopeClientId, integrationFilter, from, to]);
 
   const kpis = useMemo(() => {
     const acc = zero();

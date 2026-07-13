@@ -21,8 +21,8 @@ interface UserView {
   name: string;
   email: string;
   role: Role;
-  clientId: string | null;
-  clientName: string | null;
+  clientIds: string[];
+  clients: Array<{ id: string; name: string }>;
   status: 'active' | 'inactive';
   lastLoginAt: string | null;
   createdAt: string;
@@ -35,7 +35,7 @@ type Draft = {
   name: string;
   email: string;
   role: Role;
-  clientId: string;
+  clientIds: string[];
   password: string;
   status: 'active' | 'inactive';
 };
@@ -44,7 +44,7 @@ const emptyDraft = (): Draft => ({
   name: '',
   email: '',
   role: 'operator',
-  clientId: '',
+  clientIds: [],
   password: '',
   status: 'active',
 });
@@ -173,7 +173,9 @@ function UsersContent() {
                   <tr key={user.id}>
                     <td className="cell-strong">{user.name}</td>
                     <td className="cell-mono">{user.email}</td>
-                    <td className="cell-sub">{user.clientName ?? '—'}</td>
+                    <td className="cell-sub">
+                      {user.clients.length ? user.clients.map((c) => c.name).join(', ') : '—'}
+                    </td>
                     <td>
                       <BadgeText label={ROLE_LABELS[user.role]} cls="brand-soft" />
                     </td>
@@ -229,7 +231,7 @@ function UserModal({
           name: user.name,
           email: user.email,
           role: user.role,
-          clientId: user.clientId ?? '',
+          clientIds: user.clientIds ?? [],
           password: '',
           status: user.status,
         }
@@ -249,7 +251,7 @@ function UserModal({
         name: draft.name,
         email: draft.email,
         role: draft.role,
-        clientId: clientDisabled ? null : draft.clientId || null,
+        clientIds: clientDisabled ? [] : draft.clientIds,
         status: draft.status,
       };
       if (draft.password) {
@@ -320,23 +322,44 @@ function UserModal({
             ))}
           </select>
         </div>
-        <div className="field">
+        <div className="field col-2">
           <label>
-            Cliente {clientDisabled ? null : <span className="req">*</span>}
+            Clientes {clientDisabled ? null : <span className="req">*</span>}
           </label>
-          <select
-            className="input"
-            value={clientDisabled ? '' : draft.clientId}
-            disabled={clientDisabled}
-            onChange={(e) => set({ clientId: e.target.value })}
-          >
-            <option value="">{clientDisabled ? 'Não se aplica (Collos)' : 'Selecione um cliente'}</option>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </select>
+          {clientDisabled ? (
+            <span className="hint">Não se aplica a papéis Collos (veem todos os clientes).</span>
+          ) : (
+            <>
+              <div className="row" style={{ gap: 6 }}>
+                {clients.length === 0 ? (
+                  <span className="cell-sub">Nenhum cliente cadastrado ainda.</span>
+                ) : (
+                  clients.map((client) => {
+                    const checked = draft.clientIds.includes(client.id);
+                    return (
+                      <label key={client.id} className="check-row" style={{ padding: '4px 8px' }}>
+                        <span className={`cbox${checked ? ' on' : ''}`} />
+                        <input
+                          type="checkbox"
+                          style={{ display: 'none' }}
+                          checked={checked}
+                          onChange={() =>
+                            set({
+                              clientIds: checked
+                                ? draft.clientIds.filter((x) => x !== client.id)
+                                : [...draft.clientIds, client.id],
+                            })
+                          }
+                        />
+                        {client.name}
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              <span className="hint">Selecione 1 ou mais. O usuário alterna entre eles no topo.</span>
+            </>
+          )}
         </div>
         <div className="field">
           <label>
