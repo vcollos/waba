@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { ContactRecord, ParameterSource, TemplateVariableDescriptor } from './types';
+import {
+  ContactRecord,
+  ParameterSource,
+  TemplateMediaHeader,
+  TemplateVariableDescriptor,
+} from './types';
 
 export const nowIso = (): string => new Date().toISOString();
 
@@ -50,6 +55,29 @@ export const resolveParameterValue = (
 // Detecta variáveis posicionais ({{1}}) e nomeadas ({{link}}, {{customer_name}}).
 const PLACEHOLDER_RE = /{{\s*([\w.-]+)\s*}}/g;
 
+/** Extrai o mapa de exemplos (por token/índice) de um componente body/header da Meta. */
+const componentExamples = (
+  component: Record<string, unknown>,
+  type: 'body' | 'header',
+): { named: Record<string, string>; positional: string[] } => {
+  const example = (component.example ?? {}) as Record<string, unknown>;
+  const named: Record<string, string> = {};
+  for (const entry of (example.body_text_named_params as Array<Record<string, unknown>>) ?? []) {
+    if (entry?.param_name) {
+      named[String(entry.param_name)] = String(entry.example ?? '');
+    }
+  }
+  let positional: string[] = [];
+  if (type === 'body') {
+    const bt = example.body_text as unknown;
+    positional = Array.isArray(bt) && Array.isArray(bt[0]) ? (bt[0] as unknown[]).map(String) : [];
+  } else {
+    const ht = example.header_text as unknown;
+    positional = Array.isArray(ht) ? (ht as unknown[]).map(String) : [];
+  }
+  return { named, positional };
+};
+
 export const extractVariableDescriptors = (
   components: unknown[],
 ): TemplateVariableDescriptor[] => {
@@ -61,6 +89,7 @@ export const extractVariableDescriptors = (
       continue;
     }
     const text = typeof component.text === 'string' ? component.text : '';
+    const examples = componentExamples(component, type);
     const seen = new Set<string>();
     let ordinal = 0;
 
@@ -72,14 +101,36 @@ export const extractVariableDescriptors = (
       seen.add(token);
       ordinal += 1;
       const positional = /^\d+$/.test(token);
+      const example = positional
+        ? examples.positional[Number(token) - 1] ?? null
+        : examples.named[token] ?? null;
       descriptors.push({
         componentType: type as 'body' | 'header',
         placeholderIndex: positional ? Number(token) : ordinal,
         paramName: positional ? null : token,
+        example: example || null,
         label: `${type.toUpperCase()} {{${token}}}`,
       });
     }
   }
 
   return descriptors;
+};
+
+/** Detecta um header de mídia (IMAGE/VIDEO/DOCUMENT) e sua URL de exemplo. */
+export const extractTemplateMediaHeader = (
+  components: unknown[],
+): TemplateMediaHeader | null => {
+  for (const component of (components as Array<Record<string, unknown>>) ?? []) {
+    if (String(component.type ?? '').toUpperCase() !== 'HEADER') {
+      continue;
+    }
+    const format = String(component.format ?? '').toUpperCase();
+    if (format === 'IMAGE' || format === 'VIDEO' || format === 'DOCUMENT') {
+      const example = (component.example ?? {}) as Record<string, unknown>;
+      const handle = Array.isArray(example.header_handle) ? example.header_handle[0] : undefined;
+      return { format, example: handle ? String(handle) : null };
+    }
+  }
+  return null;
 };
