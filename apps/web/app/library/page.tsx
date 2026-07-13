@@ -15,7 +15,7 @@ import {
 import { apiRequest } from '../../lib/api';
 import { TEMPLATE_STATUS, badgeFor } from '../../lib/badges';
 import { fmtDateTime } from '../../lib/format';
-import { isCollosRole } from '../../lib/session';
+import { canWrite, isCollosRole } from '../../lib/session';
 
 interface TemplateComponent {
   type?: string;
@@ -92,12 +92,11 @@ function ModelsContent() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar modelos.');
         setLoading(false);
       });
-    if (collos) {
-      void apiRequest<Integration[]>('/integrations')
-        .then(setIntegrations)
-        .catch(() => undefined);
-    }
-  }, [collos, scopeClientId]);
+    // Todas as funções carregam as integrações do próprio escopo (a API filtra).
+    void apiRequest<Integration[]>('/integrations')
+      .then(setIntegrations)
+      .catch(() => undefined);
+  }, [scopeClientId]);
 
   useEffect(() => {
     load();
@@ -159,7 +158,7 @@ function ModelsContent() {
           <h1 className="op-title">Modelos</h1>
           <p className="op-sub">Templates de mensagem sincronizados com a Meta.</p>
         </div>
-        {collos && tab === 'synced' ? (
+        {canWrite(session.role) && tab === 'synced' ? (
           <div className="op-actions">
             <button className="btn primary md" onClick={syncAll} disabled={syncing}>
               {syncing ? 'Sincronizando…' : 'Sincronizar modelos'}

@@ -16,7 +16,7 @@ import {
 import { apiRequest } from '../../lib/api';
 import { CAMPAIGN_STATUS, MESSAGE_STATUS, badgeFor } from '../../lib/badges';
 import { fmtDateTime, fmtInt } from '../../lib/format';
-import { isCollosRole } from '../../lib/session';
+import { canWrite, isCollosRole } from '../../lib/session';
 
 type CampaignMode = 'template' | 'template_flow' | 'session_flow';
 type CampaignStatus =
@@ -84,6 +84,7 @@ export default function CampaignsPage() {
 function CampaignsContent() {
   const { session, clients, scopeClientId } = useShell();
   const collos = isCollosRole(session.role);
+  const writable = canWrite(session.role);
   const { toasts, push } = useToasts();
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [integrations, setIntegrations] = useState<Integration[]>([]);
@@ -158,11 +159,13 @@ function CampaignsContent() {
           <h1 className="op-title">Campanhas</h1>
           <p className="op-sub">Disparos de template e flow via WhatsApp Business.</p>
         </div>
-        <div className="op-actions">
-          <button className="btn primary md" onClick={() => setWizard(true)}>
-            Nova campanha
-          </button>
-        </div>
+        {writable ? (
+          <div className="op-actions">
+            <button className="btn primary md" onClick={() => setWizard(true)}>
+              Nova campanha
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {error ? <ErrorBanner message={error} onRetry={load} /> : null}
@@ -245,7 +248,7 @@ function CampaignsContent() {
                         <button className="btn tertiary sm" onClick={() => setDetailId(c.id)}>
                           Detalhes
                         </button>
-                        <CampaignActions campaign={c} busy={busy} run={runAction} />
+                        {writable ? <CampaignActions campaign={c} busy={busy} run={runAction} /> : null}
                       </div>
                     </td>
                   </tr>

@@ -1,6 +1,7 @@
 import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { CryptoService } from '../common/crypto.service';
+import { isWithinScope, resolveClientScope } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { newId, nowIso } from '../database/helpers';
 import { FlowCacheRecord, IntegrationRecord, TemplateCacheRecord, UserSession } from '../database/types';
@@ -37,9 +38,12 @@ export class IntegrationsService {
     private readonly metaGraph: MetaGraphService,
   ) {}
 
-  async list(): Promise<SanitizedIntegration[]> {
+  async list(session: UserSession): Promise<SanitizedIntegration[]> {
+    const scope = resolveClientScope(session);
     const integrations = await this.database.listIntegrationsInDatabase();
-    return integrations.map((integration) => this.sanitize(integration));
+    return integrations
+      .filter((integration) => isWithinScope(scope, integration.clientId))
+      .map((integration) => this.sanitize(integration));
   }
 
   async getById(id: string): Promise<IntegrationRecord> {
@@ -148,6 +152,9 @@ export class IntegrationsService {
 
   async syncTemplates(id: string, actor: UserSession): Promise<TemplateCacheRecord[]> {
     const integration = await this.getById(id);
+    if (!isWithinScope(resolveClientScope(actor), integration.clientId)) {
+      throw new NotFoundException('Integração não encontrada');
+    }
     const templates = await this.wrapMetaCall(() => this.metaGraph.syncTemplates(integration));
     const updatedAt = nowIso();
     await this.database.replaceTemplatesInDatabase(id, templates);
@@ -171,6 +178,9 @@ export class IntegrationsService {
 
   async syncFlows(id: string, actor: UserSession): Promise<FlowCacheRecord[]> {
     const integration = await this.getById(id);
+    if (!isWithinScope(resolveClientScope(actor), integration.clientId)) {
+      throw new NotFoundException('Integração não encontrada');
+    }
     const flows = await this.wrapMetaCall(() => this.metaGraph.syncFlows(integration));
     const updatedAt = nowIso();
     await this.database.replaceFlowsInDatabase(id, flows);
