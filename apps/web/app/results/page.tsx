@@ -1,1013 +1,393 @@
 'use client';
 
-import type { CSSProperties } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '../../components/app-shell';
-import { SectionCard } from '../../components/section-card';
-import { apiRequest, readToken } from '../../lib/api';
+import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
+import { apiRequest } from '../../lib/api';
+import { fmtDateTime, fmtInt } from '../../lib/format';
 
-interface ResultSummary {
+interface DeliveryOverview {
+  totalTrackedMessages: number;
+  totalAcceptedMessages: number;
+  totalSentMessages: number;
+  totalDeliveredMessages: number;
+  totalReadMessages: number;
+  totalFailedMessages: number;
+  totalPendingMessages: number;
+}
+
+interface TimelinePoint {
+  day: string;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+}
+
+interface CampaignRanking {
+  campaignId: string;
+  campaignName: string;
+  total: number;
+  delivered: number;
+  read: number;
+  failed: number;
+}
+
+interface ErrorRow {
+  label: string;
+  count: number;
+  percentage: number;
+}
+
+interface Summary {
   totalFlowResponses: number;
-  deliveryOverview: {
-    totalTrackedMessages: number;
-    totalProcessedMessages: number;
-    totalAcceptedMessages: number;
-    totalSentMessages: number;
-    totalDeliveredMessages: number;
-    totalReadMessages: number;
-    totalFailedMessages: number;
-    totalPendingMessages: number;
-    successRate: number;
-    readRate: number;
-    failureRate: number;
-  };
-  statusDistribution: Array<{
-    status: string;
-    label: string;
-    count: number;
-    percentage: number;
-    tone: 'neutral' | 'success' | 'danger' | 'warning';
-  }>;
-  deliveryTimeline: Array<{
-    day: string;
-    accepted: number;
-    sent: number;
-    delivered: number;
-    read: number;
-    failed: number;
-  }>;
-  topDeliveryCampaigns: Array<{
-    campaignId: string;
-    campaignName: string;
-    status: string;
-    total: number;
-    pending: number;
-    processed: number;
-    delivered: number;
-    read: number;
-    failed: number;
-    successRate: number;
-    readRate: number;
-    failureRate: number;
-  }>;
-  errorBreakdown: Array<{ label: string; count: number; percentage: number }>;
-  byFlow: Array<{ flowName: string; count: number; percentage: number }>;
-  byCampaign: Array<{ campaignName: string; count: number; percentage: number }>;
-  byDay: Array<{ day: string; count: number }>;
-  fieldCoverage: Array<{ fieldKey: string; count: number; percentage: number }>;
-  categoricalDistributions: Array<{
-    fieldKey: string;
-    totalResponses: number;
-    distinctValues: number;
-    values: Array<{ value: string; count: number }>;
-  }>;
-  surveyMetrics: Array<{
-    fieldKey: string;
-    metricType: 'nps' | 'csat';
-    label: string;
-    totalResponses: number;
-    validResponses: number;
-    ignoredResponses: number;
-    score: number;
-    averageScore: number | null;
-    scoreLabel: string;
-    scoreHint: string;
-    distribution: Array<{ value: string; count: number; percentage: number }>;
-    segments: Array<{
-      label: string;
-      count: number;
-      percentage: number;
-      tone: 'success' | 'warning' | 'danger';
-    }>;
-  }>;
+  deliveryOverview: DeliveryOverview;
+  deliveryTimeline: TimelinePoint[];
+  topDeliveryCampaigns: CampaignRanking[];
+  errorBreakdown: ErrorRow[];
 }
 
 interface FlowResponse {
   id: string;
-  flowCacheId?: string | null;
-  campaignName?: string | null;
-  contactName?: string | null;
-  contactPhone?: string | null;
-  flowName?: string | null;
-  templateName?: string | null;
   completedAt: string;
+  campaignName: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  flowName: string | null;
+  templateName: string | null;
   responsePayload: Record<string, unknown>;
-  detectedPayloadDefinitions?: Array<{
-    screenId: string;
-    formName?: string | null;
-    actionName: string;
-    payloadFields: Array<{
-      key: string;
-      sourceType: 'form' | 'static' | 'expression';
-      sourceField?: string | null;
-      expression?: string | null;
-      staticValue?: string | null;
-    }>;
-  }>;
 }
 
-interface GaugeBand {
-  label: string;
-  start: number;
-  end: number;
-  color: string;
-  tone: 'success' | 'warning' | 'danger' | 'neutral';
-}
-
-interface GaugeConfig {
-  min: number;
-  max: number;
-  ticks: number[];
-  bands: GaugeBand[];
-}
-
-const SURVEY_GAUGE_CONFIG: Record<ResultSummary['surveyMetrics'][number]['metricType'], GaugeConfig> = {
-  nps: {
-    min: -100,
-    max: 100,
-    ticks: [-100, 0, 50, 100],
-    bands: [
-      { label: 'Crítico', start: -100, end: 0, color: '#d9415d', tone: 'danger' },
-      { label: 'Atenção', start: 0, end: 50, color: '#f59f0b', tone: 'warning' },
-      { label: 'Excelente', start: 50, end: 100, color: '#18b777', tone: 'success' },
-    ],
-  },
-  csat: {
-    min: 0,
-    max: 100,
-    ticks: [0, 60, 80, 100],
-    bands: [
-      { label: 'Ruim', start: 0, end: 60, color: '#d9415d', tone: 'danger' },
-      { label: 'Atenção', start: 60, end: 80, color: '#f59f0b', tone: 'warning' },
-      { label: 'Bom', start: 80, end: 100, color: '#18b777', tone: 'success' },
-    ],
-  },
-};
+const SERIES: Array<{ key: keyof Omit<TimelinePoint, 'day'>; label: string; color: string }> = [
+  { key: 'sent', label: 'Enviadas', color: 'var(--info)' },
+  { key: 'delivered', label: 'Entregues', color: 'var(--success)' },
+  { key: 'read', label: 'Lidas', color: 'var(--uni-vinho-medio)' },
+  { key: 'failed', label: 'Falhas', color: 'var(--danger)' },
+];
 
 export default function ResultsPage() {
-  const [summary, setSummary] = useState<ResultSummary | null>(null);
-  const [responses, setResponses] = useState<FlowResponse[]>([]);
-  const [query, setQuery] = useState('');
-  const [flowFilter, setFlowFilter] = useState('all');
-  const [rowLimit, setRowLimit] = useState('100');
-  const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const summaryInFlightRef = useRef(false);
-  const responsesInFlightRef = useRef(false);
-
-  const loadSummary = async () => {
-    if (summaryInFlightRef.current) {
-      return;
-    }
-
-    summaryInFlightRef.current = true;
-    try {
-      const payload = await apiRequest<ResultSummary>('/results/summary');
-      setSummary(payload);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao carregar resultados');
-    } finally {
-      summaryInFlightRef.current = false;
-    }
-  };
-
-  const loadResponses = async () => {
-    if (responsesInFlightRef.current) {
-      return;
-    }
-
-    responsesInFlightRef.current = true;
-    try {
-      const payload = await apiRequest<FlowResponse[]>('/results/flow-responses');
-      setResponses(payload);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao carregar respostas');
-    } finally {
-      responsesInFlightRef.current = false;
-    }
-  };
-
-  useEffect(() => {
-    void loadSummary();
-    void loadResponses();
-  }, []);
-
-  const exportResponsesCsv = async () => {
-    if (exporting) {
-      return;
-    }
-
-    setExporting(true);
-    try {
-      const token = readToken();
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4311/api';
-      const params = new URLSearchParams();
-      if (flowFilter !== 'all') {
-        params.set('flowName', flowFilter);
-      }
-      if (rowLimit !== 'all') {
-        params.set('limit', rowLimit);
-      }
-      const url = `${baseUrl}/results/flow-responses/export.csv?${params.toString()}`;
-      const response = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!response.ok) {
-        throw new Error(`Erro ${response.status}`);
-      }
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = downloadUrl;
-      anchor.download = 'flow-responses.csv';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(downloadUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao exportar CSV');
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  useEffect(() => {
-    const summaryTimer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') {
-        return;
-      }
-
-      void loadSummary();
-    }, 30000);
-
-    return () => {
-      window.clearInterval(summaryTimer);
-    };
-  }, []);
-
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredResponses = responses.filter((response) => {
-    if (flowFilter !== 'all' && (response.flowName ?? 'Flow não identificado') !== flowFilter) {
-      return false;
-    }
-
-    if (!normalizedQuery) {
-      return true;
-    }
-
-    const searchable = [
-      response.flowName,
-      response.campaignName,
-      response.contactName,
-      response.contactPhone,
-      JSON.stringify(response.responsePayload),
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-
-    return searchable.includes(normalizedQuery);
-  });
-
-  const visibleResponses = rowLimit === 'all' ? filteredResponses : filteredResponses.slice(0, Number(rowLimit));
-  const flowOptions = summary?.byFlow.map((item) => item.flowName) ?? [];
-
   return (
-    <AppShell title="Resultados de Flows">
-      {error ? <div className="notice error">{error}</div> : null}
-
-      <SectionCard
-        title="Operação de envio"
-        description="Leitura acumulada do que foi aceito, enviado, entregue, lido e falhou no ambiente."
-      >
-        <div className="grid four">
-          <div className="metric">
-            <h3>Mensagens rastreadas</h3>
-            <strong>{summary?.deliveryOverview.totalTrackedMessages ?? 0}</strong>
-            <p className="muted">Total materializado nas campanhas.</p>
-          </div>
-          <div className="metric">
-            <h3>Processadas</h3>
-            <strong>{summary?.deliveryOverview.totalProcessedMessages ?? 0}</strong>
-            <p className="muted">Já saíram da fila ou falharam.</p>
-          </div>
-          <div className="metric">
-            <h3>Entregues</h3>
-            <strong>{summary?.deliveryOverview.totalDeliveredMessages ?? 0}</strong>
-            <p className="muted">Com evento de entrega registrado.</p>
-          </div>
-          <div className="metric">
-            <h3>Falhas</h3>
-            <strong>{summary?.deliveryOverview.totalFailedMessages ?? 0}</strong>
-            <p className="muted">Mensagens atualmente falhadas.</p>
-          </div>
-        </div>
-
-        <div className="grid two top-gap">
-          <div className="card">
-            <div className="stack">
-              <div>
-                <strong>Funil operacional</strong>
-                <div className="muted">Leitura acumulada comparável ao acompanhamento da Meta.</div>
-              </div>
-              <div className="chart-list compact">
-                {summary?.statusDistribution.length ? (
-                  summary.statusDistribution.map((item) => (
-                    <div key={item.status} className="chart-row">
-                      <div className="chart-head">
-                        <strong>{item.label}</strong>
-                        <span className="muted">
-                          {item.count} / {item.percentage}%
-                        </span>
-                      </div>
-                      <div className="chart-track">
-                        <div className={`chart-bar ${toneClass(item.tone)}`} style={{ width: `${item.percentage}%` }} />
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="muted">Sem mensagens rastreadas ainda.</div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="stack">
-              <div>
-                <strong>Indicadores</strong>
-                <div className="muted">Taxas calculadas sobre a base rastreada.</div>
-              </div>
-              <div className="grid three">
-                <div className="metric compact-metric">
-                  <h3>Sucesso</h3>
-                  <strong>{summary?.deliveryOverview.successRate ?? 0}%</strong>
-                  <p className="muted">Entregues / total.</p>
-                </div>
-                <div className="metric compact-metric">
-                  <h3>Leitura</h3>
-                  <strong>{summary?.deliveryOverview.readRate ?? 0}%</strong>
-                  <p className="muted">Lidas / total.</p>
-                </div>
-                <div className="metric compact-metric">
-                  <h3>Falha</h3>
-                  <strong>{summary?.deliveryOverview.failureRate ?? 0}%</strong>
-                  <p className="muted">Falhadas / total.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </SectionCard>
-
-      <div className="grid two top-gap">
-        <SectionCard
-          title="Linha do tempo operacional"
-          description="Série acumulada por dia das mensagens aceitas, enviadas, entregues, lidas e falhas."
-        >
-          <div className="chart-list">
-            {summary?.deliveryTimeline.length ? (
-              summary.deliveryTimeline.map((item) => (
-                <div key={item.day} className="timeline-card">
-                  <div className="chart-head">
-                    <strong>{formatDay(item.day)}</strong>
-                    <span className="muted">
-                      {item.delivered} entregues / {item.read} lidas / {item.failed} falhas
-                    </span>
-                  </div>
-                  <div className="timeline-series-grid">
-                    {renderSeriesStat('Aceitas', item.accepted, maxSeries(summary.deliveryTimeline, 'accepted'), 'neutral')}
-                    {renderSeriesStat('Enviadas', item.sent, maxSeries(summary.deliveryTimeline, 'sent'), 'neutral')}
-                    {renderSeriesStat('Entregues', item.delivered, maxSeries(summary.deliveryTimeline, 'delivered'), 'success')}
-                    {renderSeriesStat('Lidas', item.read, maxSeries(summary.deliveryTimeline, 'read'), 'success')}
-                    {renderSeriesStat('Falhas', item.failed, maxSeries(summary.deliveryTimeline, 'failed'), 'danger')}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="muted">Sem eventos operacionais suficientes ainda.</div>
-            )}
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          title="Mensagens de erro"
-          description="Falhas agrupadas pela combinação código/título registrada no envio ou webhook."
-        >
-          <div className="chart-list">
-            {summary?.errorBreakdown.length ? (
-              summary.errorBreakdown.map((item) => (
-                <div key={item.label} className="chart-row">
-                  <div className="chart-head">
-                    <strong>{item.label}</strong>
-                    <span className="muted">
-                      {item.count} / {item.percentage}%
-                    </span>
-                  </div>
-                  <div className="chart-track">
-                    <div className="chart-bar danger" style={{ width: `${item.percentage}%` }} />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="muted">Nenhuma falha operacional agrupada até agora.</div>
-            )}
-          </div>
-        </SectionCard>
-      </div>
-
-      <SectionCard
-        title="Top campanhas operacionais"
-        description="Campanhas com mais tráfego processado, entrega e falha neste ambiente."
-      >
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Campanha</th>
-                <th>Status</th>
-                <th>Total</th>
-                <th>Processadas</th>
-                <th>Entregues</th>
-                <th>Lidas</th>
-                <th>Falhas</th>
-                <th>Sucesso</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary?.topDeliveryCampaigns.length ? (
-                summary.topDeliveryCampaigns.map((campaign) => (
-                  <tr key={campaign.campaignId}>
-                    <td>{campaign.campaignName}</td>
-                    <td>
-                      <span className={`tag ${tagTone(campaign.status)}`}>{campaign.status}</span>
-                    </td>
-                    <td>{campaign.total}</td>
-                    <td>{campaign.processed}</td>
-                    <td>{campaign.delivered}</td>
-                    <td>{campaign.read}</td>
-                    <td>{campaign.failed}</td>
-                    <td>{campaign.successRate}%</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={8} className="muted">
-                    Nenhuma campanha operacional com tráfego ainda.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-
-      <div className="grid four">
-        <div className="metric">
-          <h3>Respostas</h3>
-          <strong>{summary?.totalFlowResponses ?? 0}</strong>
-          <p className="muted">Payload bruto preservado para auditoria.</p>
-        </div>
-        <div className="metric">
-          <h3>Flows com resposta</h3>
-          <strong>{summary?.byFlow.length ?? 0}</strong>
-          <p className="muted">Agrupamento imediato por Flow.</p>
-        </div>
-        <div className="metric">
-          <h3>Campanhas com resposta</h3>
-          <strong>{summary?.byCampaign.length ?? 0}</strong>
-          <p className="muted">Top campanhas com respostas recebidas.</p>
-        </div>
-        <div className="metric">
-          <h3>Campos detectados</h3>
-          <strong>{summary?.fieldCoverage.length ?? 0}</strong>
-          <p className="muted">Cobertura dos campos presentes nos payloads.</p>
-        </div>
-      </div>
-
-      <div className="grid two top-gap">
-        <SectionCard title="Distribuição por Flow" description="Volume e participação de cada Flow.">
-          <div className="chart-list">
-            {summary?.byFlow.length ? (
-              summary.byFlow.map((item) => (
-                <div key={item.flowName} className="chart-row">
-                  <div className="chart-head">
-                    <strong>{item.flowName}</strong>
-                    <span className="muted">
-                      {item.count} resposta(s) / {item.percentage}%
-                    </span>
-                  </div>
-                  <div className="chart-track">
-                    <div className="chart-bar" style={{ width: `${item.percentage}%` }} />
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="muted">Nenhuma resposta recebida ainda.</div>
-            )}
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Top campanhas" description="Campanhas mais respondidas até agora.">
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Campanha</th>
-                  <th>Respostas</th>
-                  <th>Participação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary?.byCampaign.length ? (
-                  summary.byCampaign.map((item) => (
-                    <tr key={item.campaignName}>
-                      <td>{item.campaignName}</td>
-                      <td>{item.count}</td>
-                      <td>{item.percentage}%</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="muted">
-                      Nenhuma campanha com resposta ainda.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </SectionCard>
-      </div>
-
-      <div className="grid two top-gap">
-        <SectionCard title="Linha do tempo" description="Respostas por dia para leitura rápida de tração.">
-          <div className="chart-list">
-            {summary?.byDay.length ? (
-              summary.byDay.map((item) => {
-                const maxCount = Math.max(...(summary.byDay.map((day) => day.count) || [1]));
-                const percentage = maxCount ? Number(((item.count / maxCount) * 100).toFixed(1)) : 0;
-                return (
-                  <div key={item.day} className="chart-row">
-                    <div className="chart-head">
-                      <strong>{formatDay(item.day)}</strong>
-                      <span className="muted">{item.count} resposta(s)</span>
-                    </div>
-                    <div className="chart-track">
-                      <div className="chart-bar secondary" style={{ width: `${percentage}%` }} />
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="muted">Sem histórico suficiente para gráfico diário.</div>
-            )}
-          </div>
-        </SectionCard>
-
-        <SectionCard title="Cobertura de campos" description="Quais chaves aparecem com mais frequência.">
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Campo</th>
-                  <th>Ocorrências</th>
-                  <th>Cobertura</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary?.fieldCoverage.length ? (
-                  summary.fieldCoverage.map((item) => (
-                    <tr key={item.fieldKey}>
-                      <td>{item.fieldKey}</td>
-                      <td>{item.count}</td>
-                      <td>{item.percentage}%</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={3} className="muted">
-                      Sem campos detectados ainda.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </SectionCard>
-      </div>
-
-      <SectionCard
-        title="Distribuições categóricas"
-        description="Campos com poucas opções distintas, úteis para NPS, CSAT e respostas fechadas."
-      >
-        <div className="grid two">
-          {summary?.categoricalDistributions.length ? (
-            summary.categoricalDistributions.map((distribution) => (
-              <div key={distribution.fieldKey} className="card">
-                <div className="stack">
-                  <div>
-                    <strong>{distribution.fieldKey}</strong>
-                    <div className="muted">
-                      {distribution.totalResponses} resposta(s) / {distribution.distinctValues} valor(es)
-                    </div>
-                  </div>
-                  <div className="chart-list compact">
-                    {distribution.values.map((item) => {
-                      const percentage = distribution.totalResponses
-                        ? Number(((item.count / distribution.totalResponses) * 100).toFixed(1))
-                        : 0;
-                      return (
-                        <div key={`${distribution.fieldKey}:${item.value}`} className="chart-row">
-                          <div className="chart-head">
-                            <strong>{item.value}</strong>
-                            <span className="muted">
-                              {item.count} / {percentage}%
-                            </span>
-                          </div>
-                          <div className="chart-track">
-                            <div className="chart-bar" style={{ width: `${percentage}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="muted">Ainda não há campos categóricos suficientes para distribuição.</div>
-          )}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Indicadores NPS e CSAT"
-        description="Cálculo de score a partir dos campos detectados no payload. NPS aplica a regra padrão e CSAT usa top-2-box da escala identificada."
-      >
-        <div className="grid two">
-          {summary?.surveyMetrics.length ? (
-            summary.surveyMetrics.map((metric) => (
-              <div key={`${metric.metricType}:${metric.fieldKey}`} className="card">
-                <div className="stack">
-                  <div className="card-header">
-                    <h3>
-                      {metric.scoreLabel} · {metric.fieldKey}
-                    </h3>
-                    <p>{metric.scoreHint}</p>
-                  </div>
-
-                  <div className="grid four">
-                    <div className="metric compact-metric">
-                      <h3>Score</h3>
-                      <strong>
-                        {metric.metricType === 'nps' ? metric.score : `${metric.score}%`}
-                      </strong>
-                      <p className="muted">{metric.label}</p>
-                    </div>
-                    <div className="metric compact-metric">
-                      <h3>Válidas</h3>
-                      <strong>{metric.validResponses}</strong>
-                      <p className="muted">Entram no cálculo.</p>
-                    </div>
-                    <div className="metric compact-metric">
-                      <h3>Ignoradas</h3>
-                      <strong>{metric.ignoredResponses}</strong>
-                      <p className="muted">Fora da escala detectada.</p>
-                    </div>
-                    <div className="metric compact-metric">
-                      <h3>Média</h3>
-                      <strong>{metric.averageScore ?? '-'}</strong>
-                      <p className="muted">Leitura auxiliar.</p>
-                    </div>
-                  </div>
-
-                  <SurveyGauge metric={metric} />
-
-                  <div className="grid three">
-                    {metric.segments.map((segment) => (
-                      <div key={`${metric.fieldKey}:${segment.label}`} className="chart-row">
-                        <div className="chart-head">
-                          <strong>{segment.label}</strong>
-                          <span className="muted">
-                            {segment.count} / {segment.percentage}%
-                          </span>
-                        </div>
-                        <div className="chart-track">
-                          <div
-                            className={`chart-bar ${toneClass(segment.tone)}`}
-                            style={{ width: `${segment.percentage}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="chart-list compact">
-                    {metric.distribution.map((item) => (
-                      <div key={`${metric.fieldKey}:${item.value}`} className="chart-row">
-                        <div className="chart-head">
-                          <strong>{item.value}</strong>
-                          <span className="muted">
-                            {item.count} / {item.percentage}%
-                          </span>
-                        </div>
-                        <div className="chart-track">
-                          <div className="chart-bar secondary" style={{ width: `${item.percentage}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="muted">Ainda não há campos `nps` ou `csat/cesat` suficientes para cálculo.</div>
-          )}
-        </div>
-      </SectionCard>
-
-      <SectionCard
-        title="Respostas recebidas"
-        description="Tabela operacional para grandes volumes, com filtro por texto, Flow e limite visível."
-      >
-        <div className="form-actions">
-          <button className="primary-button" type="button" onClick={() => void exportResponsesCsv()} disabled={exporting}>
-            {exporting ? 'Exportando...' : 'Exportar CSV'}
-          </button>
-        </div>
-        <div className="grid three">
-          <div className="field">
-            <label>Buscar</label>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="flow, campanha, contato, payload..."
-            />
-          </div>
-          <div className="field">
-            <label>Flow</label>
-            <select value={flowFilter} onChange={(event) => setFlowFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              {flowOptions.map((flowName) => (
-                <option key={flowName} value={flowName}>
-                  {flowName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Linhas visíveis</label>
-            <select value={rowLimit} onChange={(event) => setRowLimit(event.target.value)}>
-              <option value="all">Todos</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="250">250</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="notice top-gap">
-          Mostrando {visibleResponses.length} de {filteredResponses.length} resposta(s) filtrada(s).
-        </div>
-
-        <div className="table-wrap top-gap">
-          <table>
-            <thead>
-              <tr>
-                <th>Flow</th>
-                <th>Campanha</th>
-                <th>Contato</th>
-                <th>Recebido em</th>
-                <th>Resumo do payload</th>
-                <th>Detalhes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleResponses.length ? (
-                visibleResponses.map((response) => (
-                  <tr key={response.id}>
-                    <td>{response.flowName ?? 'Flow não identificado'}</td>
-                    <td>{response.campaignName ?? 'Sem campanha'}</td>
-                    <td>{response.contactName ?? response.contactPhone ?? 'Contato não identificado'}</td>
-                    <td>{new Date(response.completedAt).toLocaleString('pt-BR')}</td>
-                    <td>{summarizePayload(response.responsePayload)}</td>
-                    <td>
-                      <details>
-                        <summary>Ver JSON</summary>
-                        {response.detectedPayloadDefinitions?.length ? (
-                          <div className="stack top-gap">
-                            {response.detectedPayloadDefinitions.map((definition) => (
-                              <div
-                                key={`${response.id}:${definition.screenId}:${definition.actionName}`}
-                                className="notice"
-                              >
-                                <div className="muted">
-                                  Tela {definition.screenId}
-                                  {definition.formName ? ` / formulário ${definition.formName}` : ''}
-                                </div>
-                                <div className="muted">
-                                  {definition.payloadFields
-                                    .map((field) => {
-                                      if (field.sourceType === 'form') {
-                                        return `${field.key} <= form.${field.sourceField}`;
-                                      }
-                                      if (field.sourceType === 'expression') {
-                                        return `${field.key} <= ${field.expression}`;
-                                      }
-                                      return `${field.key} = ${field.staticValue ?? ''}`;
-                                    })
-                                    .join(' | ')}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                        <pre className="json-block">
-                          {JSON.stringify(response.responsePayload, null, 2)}
-                        </pre>
-                      </details>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="muted">
-                    Nenhuma resposta corresponde ao filtro atual.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+    <AppShell title="Resultados">
+      <ResultsContent />
     </AppShell>
   );
 }
 
-function SurveyGauge({
-  metric,
-}: {
-  metric: ResultSummary['surveyMetrics'][number];
-}) {
-  const config = SURVEY_GAUGE_CONFIG[metric.metricType];
-  const normalizedValue = clamp(metric.score, config.min, config.max);
-  const angle = normalizeGaugeValue(normalizedValue, config.min, config.max) * 180 - 90;
+function ResultsContent() {
+  const [tab, setTab] = useState<'summary' | 'flow' | 'events'>('summary');
 
   return (
-    <div className="survey-gauge-card">
-      <div className="survey-gauge-copy">
-        <div className="muted">Acumulado do período</div>
-        <strong>{metric.metricType === 'nps' ? metric.score : `${metric.score}%`}</strong>
-        <p className="muted">{metric.label}</p>
+    <>
+      <div className="op-head">
+        <div className="op-head-titles">
+          <h1 className="op-title">Resultados</h1>
+          <p className="op-sub">Entrega de mensagens e respostas de flow.</p>
+        </div>
       </div>
 
-      <div className="survey-gauge-visual">
-        <div
-          className="survey-gauge"
-          style={
-            {
-              '--gauge-angle': `${angle}deg`,
-            } as CSSProperties
-          }
-        >
-          <svg viewBox="0 0 240 140" className="survey-gauge-svg" aria-hidden="true">
-            <path
-              d={describeArcPath(config.min, config.max, config.min, config.max)}
-              stroke="rgba(221, 207, 185, 0.35)"
-              strokeWidth="18"
-              strokeLinecap="butt"
-              fill="none"
-              className="survey-gauge-base"
-            />
-            {config.bands.map((band) => (
-              <path
-                key={`${metric.fieldKey}:${band.label}:${band.start}`}
-                d={describeArcPath(band.start, band.end, config.min, config.max)}
-                stroke={band.color}
-                strokeWidth="18"
-                strokeLinecap="butt"
-                fill="none"
-              />
+      <div className="tabs-list page-tabs">
+        <button className={`tab-trigger${tab === 'summary' ? ' active' : ''}`} onClick={() => setTab('summary')}>
+          Resumo
+        </button>
+        <button className={`tab-trigger${tab === 'flow' ? ' active' : ''}`} onClick={() => setTab('flow')}>
+          Respostas de flow
+        </button>
+        <button className={`tab-trigger${tab === 'events' ? ' active' : ''}`} onClick={() => setTab('events')}>
+          Eventos
+        </button>
+      </div>
+
+      {tab === 'summary' ? <SummaryTab /> : null}
+      {tab === 'flow' ? <FlowTab /> : null}
+      {tab === 'events' ? (
+        <div className="tbl-wrap">
+          <EmptyState title="Sem dados no período" desc="O feed de eventos por mensagem será exibido aqui." />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function SummaryTab() {
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void apiRequest<Summary>('/results/summary')
+      .then((data) => {
+        setSummary(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar resultados.');
+        setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const o = summary?.deliveryOverview;
+  const timeline = summary?.deliveryTimeline ?? [];
+  const maxTotal = Math.max(
+    1,
+    ...timeline.map((p) => p.sent + p.delivered + p.read + p.failed),
+  );
+
+  return (
+    <>
+      {error ? <ErrorBanner message={error} onRetry={load} /> : null}
+
+      <div className="kpi-grid k6 block">
+        {loading ? (
+          <KpiSkeleton count={6} />
+        ) : (
+          <>
+            <Kpi label="Aceitas" value={fmtInt(o?.totalAcceptedMessages)} />
+            <Kpi label="Enviadas" value={fmtInt(o?.totalSentMessages)} />
+            <Kpi label="Entregues" value={fmtInt(o?.totalDeliveredMessages)} />
+            <Kpi label="Lidas" value={fmtInt(o?.totalReadMessages)} />
+            <Kpi label="Falhas" value={fmtInt(o?.totalFailedMessages)} />
+            <Kpi label="Respostas de flow" value={fmtInt(summary?.totalFlowResponses)} />
+          </>
+        )}
+      </div>
+
+      <div className="block">
+        <div className="block-head">
+          <span className="block-title">Volume por dia</span>
+          <div className="legend">
+            {SERIES.map((s) => (
+              <span key={s.key} className="legend-item">
+                <span className="legend-dot" style={{ background: s.color }} />
+                {s.label}
+              </span>
             ))}
-          </svg>
-          <div className="survey-gauge-needle" />
-          <div className="survey-gauge-center" />
-        </div>
-
-        <div className="survey-gauge-ticks">
-          {config.ticks.map((tick) => (
-            <span key={`${metric.fieldKey}:${tick}`}>{formatGaugeTick(tick, metric.metricType)}</span>
-          ))}
-        </div>
-      </div>
-
-      <div className={`badge-row survey-gauge-badges survey-gauge-badges-${config.bands.length}`}>
-        {config.bands.map((band) => (
-          <div
-            key={`${metric.fieldKey}:${band.label}:badge`}
-            className={`badge ${toneClass(band.tone)}`}
-            style={{ borderColor: `${band.color}33`, color: band.color }}
-          >
-            {band.label}
           </div>
-        ))}
+        </div>
+        <div className="panel">
+          {timeline.length === 0 ? (
+            <EmptyState title="Sem dados no período" />
+          ) : (
+            <div className="chart">
+              {timeline.map((point) => (
+                <div key={point.day} className="chart-col">
+                  <div className="chart-stack" style={{ height: 176 }}>
+                    {SERIES.map((s) => {
+                      const value = point[s.key];
+                      const height = (value / maxTotal) * 176;
+                      return height > 0 ? (
+                        <span key={s.key} style={{ height, background: s.color }} title={`${s.label}: ${value}`} />
+                      ) : null;
+                    })}
+                  </div>
+                  <span className="chart-x">{point.day.slice(5)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+
+      <div className="dash-cols">
+        <div className="block">
+          <div className="block-head">
+            <span className="block-title">Ranking por campanha</span>
+          </div>
+          <div className="tbl-wrap">
+            <table className="tbl dense">
+              <thead>
+                <tr>
+                  <th>Campanha</th>
+                  <th className="num">Total</th>
+                  <th className="num">Entregues</th>
+                  <th className="num">Lidas</th>
+                  <th className="num">Falhas</th>
+                </tr>
+              </thead>
+              {loading ? (
+                <SkeletonRows rows={4} cols={5} />
+              ) : (
+                <tbody>
+                  {(summary?.topDeliveryCampaigns ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>
+                        <EmptyState title="Sem dados no período" />
+                      </td>
+                    </tr>
+                  ) : (
+                    summary?.topDeliveryCampaigns.map((row) => (
+                      <tr key={row.campaignId}>
+                        <td className="cell-strong">{row.campaignName}</td>
+                        <td className="num">{fmtInt(row.total)}</td>
+                        <td className="num">{fmtInt(row.delivered)}</td>
+                        <td className="num">{fmtInt(row.read)}</td>
+                        <td className="num">{fmtInt(row.failed)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </div>
+
+        <div className="block">
+          <div className="block-head">
+            <span className="block-title">Ranking por erro</span>
+          </div>
+          <div className="tbl-wrap">
+            <table className="tbl dense">
+              <thead>
+                <tr>
+                  <th>Erro</th>
+                  <th className="num">Ocorrências</th>
+                  <th className="num">%</th>
+                </tr>
+              </thead>
+              {loading ? (
+                <SkeletonRows rows={4} cols={3} />
+              ) : (
+                <tbody>
+                  {(summary?.errorBreakdown ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={3}>
+                        <EmptyState title="Sem falhas no período" />
+                      </td>
+                    </tr>
+                  ) : (
+                    summary?.errorBreakdown.map((row) => (
+                      <tr key={row.label}>
+                        <td className="cell-sub">{row.label}</td>
+                        <td className="num">{fmtInt(row.count)}</td>
+                        <td className="num">{row.percentage}%</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
-function normalizeGaugeValue(value: number, min: number, max: number) {
-  return (value - min) / (max - min);
-}
+function FlowTab() {
+  const [responses, setResponses] = useState<FlowResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [flow, setFlow] = useState('');
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void apiRequest<FlowResponse[]>('/results/flow-responses?limit=500')
+      .then((data) => {
+        setResponses(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar respostas.');
+        setLoading(false);
+      });
+  }, []);
 
-function polarToCartesian(cx: number, cy: number, radius: number, angleInDegrees: number) {
-  const angleInRadians = (angleInDegrees * Math.PI) / 180;
-  return {
-    x: cx + radius * Math.cos(angleInRadians),
-    y: cy + radius * Math.sin(angleInRadians),
-  };
-}
+  useEffect(() => {
+    load();
+  }, [load]);
 
-function describeArcPath(start: number, end: number, min: number, max: number) {
-  const startAngle = normalizeGaugeValue(start, min, max) * 180 - 180;
-  const endAngle = normalizeGaugeValue(end, min, max) * 180 - 180;
-  const arcStart = polarToCartesian(120, 120, 72, endAngle);
-  const arcEnd = polarToCartesian(120, 120, 72, startAngle);
-  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+  const flows = useMemo(
+    () => Array.from(new Set(responses.map((r) => r.flowName).filter(Boolean))) as string[],
+    [responses],
+  );
 
-  return `M ${arcStart.x} ${arcStart.y} A 72 72 0 ${largeArcFlag} 0 ${arcEnd.x} ${arcEnd.y}`;
-}
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return responses.filter((r) => {
+      if (flow && r.flowName !== flow) return false;
+      if (term) {
+        const hay = `${r.contactName ?? ''} ${r.contactPhone ?? ''} ${r.campaignName ?? ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [responses, search, flow]);
 
-function formatGaugeTick(value: number, metricType: ResultSummary['surveyMetrics'][number]['metricType']) {
-  return metricType === 'nps' ? String(value) : `${value}%`;
-}
-
-const summarizePayload = (payload: Record<string, unknown>): string => {
-  const entries = Object.entries(payload).slice(0, 4);
-  if (!entries.length) {
-    return 'Payload vazio';
-  }
-
-  return entries
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(' | ');
-};
-
-const formatDay = (value: string): string => {
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(date);
-};
-
-const toneClass = (tone: 'neutral' | 'success' | 'danger' | 'warning'): string => {
-  if (tone === 'success') return 'success';
-  if (tone === 'danger') return 'danger';
-  if (tone === 'warning') return 'warning';
-  return 'secondary';
-};
-
-const tagTone = (status: string): string => {
-  if (['completed', 'read', 'delivered'].includes(status)) {
-    return 'success';
-  }
-  if (['failed', 'cancelled'].includes(status)) {
-    return 'danger';
-  }
-  if (['queued', 'sending', 'pending', 'paused'].includes(status)) {
-    return 'warning';
-  }
-  return '';
-};
-
-const maxSeries = (
-  timeline: ResultSummary['deliveryTimeline'],
-  key: 'accepted' | 'sent' | 'delivered' | 'read' | 'failed',
-): number => Math.max(1, ...timeline.map((item) => item[key]));
-
-const renderSeriesStat = (
-  label: string,
-  value: number,
-  maxValue: number,
-  tone: 'neutral' | 'success' | 'danger',
-) => {
-  const percentage = maxValue ? Number(((value / maxValue) * 100).toFixed(1)) : 0;
   return (
-    <div className="mini-series" key={label}>
-      <div className="chart-head">
-        <span>{label}</span>
-        <span className="muted">{value}</span>
+    <>
+      {error ? <ErrorBanner message={error} onRetry={load} /> : null}
+
+      <div className="toolbar">
+        <div className="tb-search">
+          <SearchIcon />
+          <input placeholder="Buscar contato ou campanha" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <select className="flt" value={flow} onChange={(e) => setFlow(e.target.value)}>
+          <option value="">Flow</option>
+          {flows.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
       </div>
-      <div className="chart-track">
-        <div className={`chart-bar ${toneClass(tone)}`} style={{ width: `${percentage}%` }} />
+
+      <div className="tbl-wrap">
+        <table className="tbl dense">
+          <thead>
+            <tr>
+              <th>Campanha</th>
+              <th>Template</th>
+              <th>Contato</th>
+              <th>WhatsApp</th>
+              <th>Flow</th>
+              <th>Concluído em</th>
+              <th className="num">Campos respondidos</th>
+            </tr>
+          </thead>
+          {loading ? (
+            <SkeletonRows rows={8} cols={7} />
+          ) : (
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>
+                    <EmptyState title="Sem respostas de flow" />
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((r) => (
+                  <tr key={r.id}>
+                    <td className="cell-sub">{r.campaignName ?? '—'}</td>
+                    <td className="cell-sub">{r.templateName ?? '—'}</td>
+                    <td className="cell-strong">{r.contactName ?? '—'}</td>
+                    <td className="cell-mono">{r.contactPhone ?? '—'}</td>
+                    <td className="cell-sub">{r.flowName ?? '—'}</td>
+                    <td className="cell-mono">{fmtDateTime(r.completedAt)}</td>
+                    <td className="num">{fmtInt(Object.keys(r.responsePayload ?? {}).length)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          )}
+        </table>
       </div>
-    </div>
+    </>
   );
-};
+}
+
+function SearchIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}

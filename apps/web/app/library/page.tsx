@@ -1,374 +1,413 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { AppShell } from '../../components/app-shell';
-import { SectionCard } from '../../components/section-card';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AppShell, useShell } from '../../components/app-shell';
+import {
+  Badge,
+  BadgeText,
+  Drawer,
+  EmptyState,
+  ErrorBanner,
+  SkeletonRows,
+  ToastHost,
+  useToasts,
+} from '../../components/ui';
 import { apiRequest } from '../../lib/api';
+import { TEMPLATE_STATUS, badgeFor } from '../../lib/badges';
+import { fmtDateTime } from '../../lib/format';
+import { isCollosRole } from '../../lib/session';
+
+interface TemplateComponent {
+  type?: string;
+  format?: string;
+  text?: string;
+  buttons?: Array<{ type?: string; text?: string }>;
+}
+
+interface VariableDescriptor {
+  componentType: string;
+  placeholderIndex: number;
+  label: string;
+}
 
 interface Template {
   id: string;
+  integrationId: string;
   name: string;
   languageCode: string;
   category: string;
   status: string;
   hasFlowButton: boolean;
-  variableDescriptors: Array<{ label: string }>;
+  flowButtonMeta?: Record<string, unknown> | null;
+  variableDescriptors: VariableDescriptor[];
+  components: TemplateComponent[];
+  lastSyncedAt: string;
 }
 
-interface Flow {
+interface Integration {
   id: string;
   name: string;
-  status: string;
-  categories: string[];
-  previewUrl?: string | null;
-  completionPayloadDefinitions?: Array<{
-    screenId: string;
-    formName?: string | null;
-    actionName: string;
-    payloadFields: Array<{
-      key: string;
-      sourceType: 'form' | 'static' | 'expression';
-      sourceField?: string | null;
-      expression?: string | null;
-      staticValue?: string | null;
-    }>;
-  }> | null;
 }
 
-function getStatusTone(status: string) {
-  const normalized = status.trim().toUpperCase();
-
-  if (['APPROVED', 'PUBLISHED', 'ACTIVE'].includes(normalized)) {
-    return 'success';
-  }
-
-  if (['DRAFT', 'PENDING', 'IN_REVIEW'].includes(normalized)) {
-    return 'warning';
-  }
-
-  if (['DEPRECATED', 'REJECTED', 'DISABLED', 'ARCHIVED'].includes(normalized)) {
-    return 'danger';
-  }
-
-  return '';
-}
-
-function formatLabel(value: string) {
-  return value.replace(/_/g, ' ');
-}
-
-function MetricIcon({ children }: { children: React.ReactNode }) {
-  return <span className="library-stat-icon">{children}</span>;
-}
-
-function TemplateIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <path
-        d="M7 4.75h10A2.25 2.25 0 0 1 19.25 7v10A2.25 2.25 0 0 1 17 19.25H7A2.25 2.25 0 0 1 4.75 17V7A2.25 2.25 0 0 1 7 4.75Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M8 9h8M8 12h8M8 15h5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function FlowIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-      <circle cx="7" cy="7" r="2.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="17" cy="7" r="2.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="12" cy="17" r="2.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M8.8 8.3 10.6 10M15.2 8.3 13.4 10M12 14.75v-2.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function LinkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        d="M9 15 15 9M10.75 8.75H15.25V13.25"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function EmptyState({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="library-empty">
-      <div className="library-empty-icon">{icon}</div>
-      <strong>{title}</strong>
-      <p>{description}</p>
-    </div>
-  );
-}
+const metaStatusBadge = (status: string) =>
+  badgeFor(TEMPLATE_STATUS, status.trim().toUpperCase());
 
 export default function LibraryPage() {
+  return (
+    <AppShell title="Modelos">
+      <ModelsContent />
+    </AppShell>
+  );
+}
+
+function ModelsContent() {
+  const { session } = useShell();
+  const collos = isCollosRole(session.role);
+  const { toasts, push } = useToasts();
+  const [tab, setTab] = useState<'synced' | 'requests'>('synced');
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [flows, setFlows] = useState<Flow[]>([]);
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [detail, setDetail] = useState<Template | null>(null);
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [integrationFilter, setIntegrationFilter] = useState('');
+  const [flowFilter, setFlowFilter] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void apiRequest<Template[]>('/library/templates')
+      .then((data) => {
+        setTemplates(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar modelos.');
+        setLoading(false);
+      });
+    if (collos) {
+      void apiRequest<Integration[]>('/integrations')
+        .then(setIntegrations)
+        .catch(() => undefined);
+    }
+  }, [collos]);
 
   useEffect(() => {
-    void Promise.all([apiRequest<Template[]>('/library/templates'), apiRequest<Flow[]>('/library/flows')])
-      .then(([templatesPayload, flowsPayload]) => {
-        setTemplates(templatesPayload);
-        setFlows(flowsPayload);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Falha ao carregar biblioteca'));
-  }, []);
+    load();
+  }, [load]);
 
-  const templatesWithFlow = templates.filter((template) => template.hasFlowButton).length;
-  const publishedFlows = flows.filter((flow) => flow.status.trim().toUpperCase() === 'PUBLISHED').length;
-  const previewableFlows = flows.filter((flow) => flow.previewUrl).length;
-  const flowsWithPayload = flows.filter((flow) => flow.completionPayloadDefinitions?.length).length;
+  const integrationName = (id: string): string =>
+    integrations.find((i) => i.id === id)?.name ?? '—';
+
+  const categories = useMemo(
+    () => Array.from(new Set(templates.map((t) => t.category).filter(Boolean))),
+    [templates],
+  );
+  const statuses = useMemo(
+    () => Array.from(new Set(templates.map((t) => t.status.toUpperCase()).filter(Boolean))),
+    [templates],
+  );
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return templates.filter((t) => {
+      if (statusFilter && t.status.toUpperCase() !== statusFilter) return false;
+      if (categoryFilter && t.category !== categoryFilter) return false;
+      if (integrationFilter && t.integrationId !== integrationFilter) return false;
+      if (flowFilter === 'yes' && !t.hasFlowButton) return false;
+      if (flowFilter === 'no' && t.hasFlowButton) return false;
+      if (term && !t.name.toLowerCase().includes(term)) return false;
+      return true;
+    });
+  }, [templates, search, statusFilter, categoryFilter, integrationFilter, flowFilter]);
+
+  const syncAll = async () => {
+    if (integrations.length === 0) {
+      push('warning', 'Nenhuma integração para sincronizar.');
+      return;
+    }
+    setSyncing(true);
+    const targets = integrationFilter ? integrations.filter((i) => i.id === integrationFilter) : integrations;
+    try {
+      let total = 0;
+      for (const integration of targets) {
+        const result = await apiRequest<unknown[]>(`/integrations/${integration.id}/sync/templates`, {
+          method: 'POST',
+        });
+        total += Array.isArray(result) ? result.length : 0;
+      }
+      push('success', `Modelos sincronizados: ${total}.`);
+      load();
+    } catch (err) {
+      push('danger', err instanceof Error ? err.message : 'Falha ao sincronizar.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
-    <AppShell title="Biblioteca Meta">
-      <div className="library-page">
-        {error ? <div className="notice error">{error}</div> : null}
+    <>
+      <div className="op-head">
+        <div className="op-head-titles">
+          <h1 className="op-title">Modelos</h1>
+          <p className="op-sub">Templates de mensagem sincronizados com a Meta.</p>
+        </div>
+        {collos && tab === 'synced' ? (
+          <div className="op-actions">
+            <button className="btn primary md" onClick={syncAll} disabled={syncing}>
+              {syncing ? 'Sincronizando…' : 'Sincronizar modelos'}
+            </button>
+          </div>
+        ) : null}
+      </div>
 
-        <div className="library-overview">
-          <div className="library-stat">
-            <div className="library-stat-head">
-              <div>
-                <h3>Templates</h3>
-                <p>Total aprovado em cache local</p>
-              </div>
-              <MetricIcon>
-                <TemplateIcon />
-              </MetricIcon>
+      <div className="tabs-list page-tabs">
+        <button
+          className={`tab-trigger${tab === 'synced' ? ' active' : ''}`}
+          onClick={() => setTab('synced')}
+        >
+          Sincronizados
+        </button>
+        <button
+          className={`tab-trigger${tab === 'requests' ? ' active' : ''}`}
+          onClick={() => setTab('requests')}
+        >
+          Solicitações
+        </button>
+      </div>
+
+      {tab === 'requests' ? (
+        <div className="tbl-wrap">
+          <EmptyState
+            title="Sem solicitações"
+            desc="Solicitações de novos modelos aparecerão aqui."
+          />
+        </div>
+      ) : (
+        <>
+          {error ? <ErrorBanner message={error} onRetry={load} /> : null}
+
+          <div className="toolbar">
+            <div className="tb-search">
+              <SearchIcon />
+              <input placeholder="Buscar modelo" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
-            <strong>{templates.length}</strong>
+            <select className="flt" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">Status Meta</option>
+              {statuses.map((s) => (
+                <option key={s} value={s}>
+                  {metaStatusBadge(s).label}
+                </option>
+              ))}
+            </select>
+            <select className="flt" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+              <option value="">Categoria</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            {collos ? (
+              <select
+                className="flt"
+                value={integrationFilter}
+                onChange={(e) => setIntegrationFilter(e.target.value)}
+              >
+                <option value="">Integração</option>
+                {integrations.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <select className="flt" value={flowFilter} onChange={(e) => setFlowFilter(e.target.value)}>
+              <option value="">Tem flow</option>
+              <option value="yes">Com flow</option>
+              <option value="no">Sem flow</option>
+            </select>
           </div>
 
-          <div className="library-stat">
-            <div className="library-stat-head">
-              <div>
-                <h3>Com FLOW</h3>
-                <p>Templates com botão operacional</p>
-              </div>
-              <MetricIcon>
-                <FlowIcon />
-              </MetricIcon>
+          <div className="tbl-wrap">
+            <table className="tbl dense">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Idioma</th>
+                  <th>Categoria</th>
+                  <th>Status Meta</th>
+                  {collos ? <th>Integração</th> : null}
+                  <th>Tem flow</th>
+                  <th>Último sync</th>
+                  <th></th>
+                </tr>
+              </thead>
+              {loading ? (
+                <SkeletonRows rows={6} cols={collos ? 8 : 7} />
+              ) : (
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={collos ? 8 : 7}>
+                        <EmptyState title="Nenhum modelo sincronizado" />
+                      </td>
+                    </tr>
+                  ) : (
+                    filtered.map((template) => (
+                      <tr key={template.id}>
+                        <td className="cell-strong">{template.name}</td>
+                        <td className="cell-mono">{template.languageCode}</td>
+                        <td className="cell-sub">{template.category}</td>
+                        <td>
+                          <Badge def={metaStatusBadge(template.status)} />
+                        </td>
+                        {collos ? <td className="cell-sub">{integrationName(template.integrationId)}</td> : null}
+                        <td>
+                          {template.hasFlowButton ? (
+                            <BadgeText label="Sim" cls="info" />
+                          ) : (
+                            <span className="cell-sub">Não</span>
+                          )}
+                        </td>
+                        <td className="cell-mono">{fmtDateTime(template.lastSyncedAt)}</td>
+                        <td>
+                          <div className="row-actions">
+                            <button className="btn tertiary sm" onClick={() => setDetail(template)}>
+                              Ver detalhes
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              )}
+            </table>
+          </div>
+        </>
+      )}
+
+      {detail ? <TemplateDrawer template={detail} onClose={() => setDetail(null)} /> : null}
+      <ToastHost toasts={toasts} />
+    </>
+  );
+}
+
+function TemplateDrawer({ template, onClose }: { template: Template; onClose: () => void }) {
+  const header = template.components.find((c) => c.type?.toUpperCase() === 'HEADER');
+  const body = template.components.find((c) => c.type?.toUpperCase() === 'BODY');
+  const footer = template.components.find((c) => c.type?.toUpperCase() === 'FOOTER');
+  const buttonsComp = template.components.find((c) => c.type?.toUpperCase() === 'BUTTONS');
+
+  return (
+    <Drawer
+      title={template.name}
+      subtitle={`${template.languageCode} · ${template.category}`}
+      onClose={onClose}
+      width={840}
+    >
+      <div className="dl" style={{ marginBottom: 20 }}>
+        <dt>Status Meta</dt>
+        <dd>
+          <Badge def={metaStatusBadge(template.status)} />
+        </dd>
+        <dt>Idioma</dt>
+        <dd>{template.languageCode}</dd>
+        <dt>Categoria</dt>
+        <dd>{template.category}</dd>
+        <dt>Tem flow</dt>
+        <dd>{template.hasFlowButton ? 'Sim' : 'Não'}</dd>
+      </div>
+
+      <div className="grid-2">
+        <div>
+          <div className="block">
+            <div className="block-head">
+              <span className="block-title">Componentes</span>
             </div>
-            <strong>{templatesWithFlow}</strong>
+            <div className="stack">
+              {template.components.map((component, index) => (
+                <div key={index} className="panel panel--inset" style={{ padding: 14 }}>
+                  <div className="flt-label" style={{ marginBottom: 4 }}>
+                    {component.type ?? 'COMPONENTE'}
+                    {component.format ? ` · ${component.format}` : ''}
+                  </div>
+                  {component.text ? <div style={{ fontSize: 13.5 }}>{component.text}</div> : null}
+                  {component.buttons?.length ? (
+                    <div className="row" style={{ marginTop: 6 }}>
+                      {component.buttons.map((button, buttonIndex) => (
+                        <span key={buttonIndex} className="badge neutral">
+                          {button.text ?? button.type}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="library-stat">
-            <div className="library-stat-head">
-              <div>
-                <h3>Flows publicados</h3>
-                <p>Prontos para associação direta</p>
-              </div>
-              <MetricIcon>
-                <FlowIcon />
-              </MetricIcon>
+          <div className="block">
+            <div className="block-head">
+              <span className="block-title">Variáveis detectadas</span>
             </div>
-            <strong>{publishedFlows}</strong>
-          </div>
-
-          <div className="library-stat">
-            <div className="library-stat-head">
-              <div>
-                <h3>Payload final</h3>
-                <p>Flows com mapeamento detectado</p>
+            {template.variableDescriptors.length === 0 ? (
+              <div className="cell-sub">Nenhuma variável.</div>
+            ) : (
+              <div className="row">
+                {template.variableDescriptors.map((variable, index) => (
+                  <span key={index} className="badge brand-soft">
+                    {`{{${variable.placeholderIndex}}}`} · {variable.label}
+                  </span>
+                ))}
               </div>
-              <MetricIcon>
-                <LinkIcon />
-              </MetricIcon>
-            </div>
-            <strong>{flowsWithPayload}</strong>
+            )}
           </div>
         </div>
 
-        <div className="grid two library-grid">
-          <SectionCard title="Templates aprovados" description="Templates sincronizados localmente para operação.">
-            <div className="library-section-head">
-              <div className="badge-row">
-                <span className="tag">{templates.length} sincronizados</span>
-                <span className="tag success">{templatesWithFlow} com FLOW</span>
+        <div>
+          <div className="block">
+            <div className="block-head">
+              <span className="block-title">Preview no WhatsApp</span>
+            </div>
+            <div className="wa-preview">
+              <div className="wa-bubble">
+                {header?.text ? <div className="wa-head">{header.text}</div> : null}
+                <div>{body?.text ?? 'Sem corpo de mensagem.'}</div>
+                {footer?.text ? <div className="wa-foot">{footer.text}</div> : null}
+                <div className="wa-time">agora</div>
+                {buttonsComp?.buttons?.length
+                  ? buttonsComp.buttons.map((button, index) => (
+                      <div key={index} className="wa-btn">
+                        {button.text ?? button.type}
+                      </div>
+                    ))
+                  : null}
               </div>
             </div>
-
-            <div className="library-list">
-              {templates.length ? (
-                templates.map((template) => (
-                  <div key={template.id} className="library-item">
-                    <div className="library-item-top">
-                      <div className="library-item-title">
-                        <span className="library-item-icon">
-                          <TemplateIcon />
-                        </span>
-                        <div>
-                          <strong>{template.name}</strong>
-                          <p className="library-item-subtitle">Template pronto para uso operacional.</p>
-                        </div>
-                      </div>
-
-                      <div className="badge-row">
-                        <span className={`tag ${getStatusTone(template.status)}`}>{formatLabel(template.status)}</span>
-                        {template.hasFlowButton ? <span className="tag success">Com FLOW</span> : <span className="tag">Sem FLOW</span>}
-                      </div>
-                    </div>
-
-                    <div className="badge-row">
-                      <span className="tag">{template.languageCode.replace('_', '-')}</span>
-                      <span className="tag">{formatLabel(template.category)}</span>
-                    </div>
-
-                    <div className="library-meta">
-                      <span className="library-meta-label">Variáveis</span>
-                      <div className="library-variable-list">
-                        {template.variableDescriptors.length ? (
-                          template.variableDescriptors.map((item) => (
-                            <span key={item.label} className="tag">
-                              {item.label}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="tag">Sem placeholders</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <EmptyState
-                  icon={<TemplateIcon />}
-                  title="Nenhum template sincronizado"
-                  description="Sincronize a integração para popular a biblioteca local."
-                />
-              )}
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Flows" description="Flows disponíveis para consulta e associação operacional.">
-            <div className="library-section-head">
-              <div className="badge-row">
-                <span className="tag">{flows.length} sincronizados</span>
-                <span className="tag success">{publishedFlows} publicados</span>
-                <span className="tag">{previewableFlows} com preview</span>
+            {template.hasFlowButton ? (
+              <div className="toast" style={{ marginTop: 12 }}>
+                Este modelo possui um flow vinculado.
               </div>
-            </div>
-
-            <div className="library-list">
-              {flows.length ? (
-                flows.map((flow) => (
-                  <div key={flow.id} className="library-item">
-                    <div className="library-item-top">
-                      <div className="library-item-title">
-                        <span className="library-item-icon flow">
-                          <FlowIcon />
-                        </span>
-                        <div>
-                          <strong>{flow.name}</strong>
-                          <p className="library-item-subtitle">Flow disponível para consulta e associação.</p>
-                        </div>
-                      </div>
-
-                      <span className={`tag ${getStatusTone(flow.status)}`}>{formatLabel(flow.status)}</span>
-                    </div>
-
-                    <div className="badge-row">
-                      {flow.categories.length ? (
-                        flow.categories.map((category) => (
-                          <span key={category} className="tag">
-                            {formatLabel(category)}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="tag">Sem categoria</span>
-                      )}
-
-                      {flow.previewUrl ? (
-                        <a className="tag success library-link" href={flow.previewUrl} target="_blank" rel="noreferrer">
-                          <LinkIcon />
-                          Preview
-                        </a>
-                      ) : (
-                        <span className="tag warning">Sem preview</span>
-                      )}
-                    </div>
-
-                    {flow.completionPayloadDefinitions?.length ? (
-                      <div className="library-payload-box">
-                        <div className="badge-row">
-                          <span className="tag success">Payload final detectado</span>
-                        </div>
-
-                        <div className="library-payload-list">
-                          {flow.completionPayloadDefinitions.map((definition) => (
-                            <div
-                              key={`${flow.id}:${definition.screenId}:${definition.actionName}`}
-                              className="library-payload-item"
-                            >
-                              <div className="library-payload-header">
-                                <strong>
-                                  Tela {definition.screenId}
-                                  {definition.formName ? ` / ${definition.formName}` : ''}
-                                </strong>
-                                <span className="tag">{definition.actionName}</span>
-                              </div>
-
-                              <div className="library-payload-fields">
-                                {definition.payloadFields.map((field) => (
-                                  <span key={`${definition.screenId}:${field.key}`} className="tag">
-                                    {field.sourceType === 'form'
-                                      ? `${field.key} <= form.${field.sourceField}`
-                                      : field.sourceType === 'expression'
-                                        ? `${field.key} <= ${field.expression}`
-                                        : `${field.key} = ${field.staticValue ?? ''}`}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="library-inline-note">Payload final não detectado automaticamente.</div>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <EmptyState
-                  icon={<FlowIcon />}
-                  title="Nenhum flow sincronizado"
-                  description="Sincronize os flows da integração para consultar previews e categorias."
-                />
-              )}
-            </div>
-          </SectionCard>
+            ) : null}
+          </div>
         </div>
       </div>
-    </AppShell>
+    </Drawer>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
   );
 }

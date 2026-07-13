@@ -1,8 +1,12 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Roles } from '../common/roles';
+import { RolesGuard } from '../common/roles.guard';
 import { IntegrationsService, SaveIntegrationInput } from './integrations.service';
 import { UserSession } from '../database/types';
 
 @Controller('integrations')
+@UseGuards(RolesGuard)
+@Roles('super_admin', 'admin')
 export class IntegrationsController {
   constructor(private readonly integrationsService: IntegrationsService) {}
 
