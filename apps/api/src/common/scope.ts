@@ -1,6 +1,19 @@
 import { UserSession, isCollosRole } from '../database/types';
 
 /**
+ * Tenants do usuário, tolerando tokens legados (pré multi-tenant) que carregam
+ * `clientId` único em vez de `clientIds`. Evita que um token antigo resulte em
+ * escopo vazio (usuário sem ver nada) até relogar.
+ */
+export const sessionClientIds = (session: UserSession): string[] => {
+  if (Array.isArray(session.clientIds) && session.clientIds.length > 0) {
+    return session.clientIds;
+  }
+  const legacy = (session as UserSession & { clientId?: string | null }).clientId;
+  return legacy ? [legacy] : [];
+};
+
+/**
  * Resolve o tenant efetivo (ativo) de uma requisição.
  *
  * - Papéis Collos (super_admin/admin): veem tudo. `requestedClientId` (ex.: o
@@ -24,7 +37,7 @@ export const resolveClientScope = (
   if (isCollosRole(session.role)) {
     return requested;
   }
-  const allowed = session.clientIds ?? [];
+  const allowed = sessionClientIds(session);
   if (requested && allowed.includes(requested)) {
     return requested;
   }
@@ -50,7 +63,7 @@ export const writeClientId = (
   if (isCollosRole(session.role)) {
     return requested;
   }
-  const allowed = session.clientIds ?? [];
+  const allowed = sessionClientIds(session);
   if (requested && allowed.includes(requested)) {
     return requested;
   }

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { sessionClientIds } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { ClientRecord, EntityStatus, UserSession, isCollosRole } from '../database/types';
 
@@ -38,9 +39,10 @@ export class ClientsService {
       }
     }
 
+    const allowed = sessionClientIds(session);
     const visible = isCollosRole(session.role)
       ? clients
-      : clients.filter((client) => (session.clientIds ?? []).includes(client.id));
+      : clients.filter((client) => allowed.includes(client.id));
 
     return visible
       .map((client) => ({ ...client, integrationsCount: countByClient.get(client.id) ?? 0 }))
