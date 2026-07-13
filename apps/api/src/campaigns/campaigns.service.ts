@@ -151,10 +151,8 @@ export class CampaignsService {
             : { type: 'contact_name' };
         }
       }
-      const mediaHeader = extractTemplateMediaHeader(template.components);
-      if (mediaHeader && !mapping['header:media']) {
-        mapping['header:media'] = { type: 'static', value: mediaHeader.example ?? '' };
-      }
+      // Header de mídia: NÃO usar o exemplo da Meta como default (header_handle da
+      // CDN dá 403 no envio). O usuário informa a própria URL pública no wizard.
     }
 
     const campaign: CampaignRecord = {

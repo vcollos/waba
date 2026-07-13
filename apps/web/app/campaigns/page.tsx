@@ -542,8 +542,10 @@ function CampaignWizard({
           next[key] = d.example ? { type: 'static', value: d.example } : { type: 'contact_name' };
         }
       }
+      // Não pré-preencher com o exemplo da Meta (header_handle da CDN dá 403 no envio).
+      // O usuário informa a própria URL pública.
       if (template.mediaHeader && !next['header:media']) {
-        next['header:media'] = { type: 'static', value: template.mediaHeader.example ?? '' };
+        next['header:media'] = { type: 'static', value: '' };
       }
       return next;
     });
@@ -786,8 +788,8 @@ function CampaignWizard({
                 />
                 <span className="hint">
                   Este template exige uma {MEDIA_LABEL[template.mediaHeader.format].toLowerCase()} no
-                  topo. Informe uma URL pública
-                  {template.mediaHeader.example ? ' (pré-preenchemos o exemplo aprovado)' : ''}.
+                  topo. Cole uma URL <strong>pública</strong> (que abra no navegador sem login) — a
+                  imagem de exemplo da Meta não funciona como link de envio.
                 </span>
               </div>
             </div>
