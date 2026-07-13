@@ -503,6 +503,20 @@ img { display: block; max-width: 100%; }
 
 select.input { appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%237A5A6C' stroke-width='1.6'><path d='m3 5 3 3 3-3'/></svg>"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 
+/* Corrige conflito com legacy.css: `.field input/select/textarea` (0,1,1) sobrepunha
+   `.input` (0,1,0), forçando padding vertical de 12px que cortava o texto dos <select>.
+   Reafirma o box do DS com especificidade maior. */
+.field input.input,
+.field select.input,
+.field textarea.input {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+}
+.field textarea.input { height: auto; padding: 10px 12px; }
+.field select.input { padding-right: 32px; }
+
 .check-row {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px;
