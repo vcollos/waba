@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppShell } from '../../components/app-shell';
+import { AppShell, useShell } from '../../components/app-shell';
 import {
   Badge,
   BadgeText,
@@ -68,6 +68,7 @@ export default function ListsPage() {
 }
 
 function ListsContent() {
+  const { scopeClientId } = useShell();
   const { toasts, push } = useToasts();
   const [lists, setLists] = useState<ListRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,7 +81,7 @@ function ListsContent() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    void apiRequest<ListRow[]>('/lists')
+    void apiRequest<ListRow[]>(`/lists${scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : ''}`)
       .then((data) => {
         setLists(data);
         setLoading(false);
@@ -89,7 +90,7 @@ function ListsContent() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar listas.');
         setLoading(false);
       });
-  }, []);
+  }, [scopeClientId]);
 
   useEffect(() => {
     load();

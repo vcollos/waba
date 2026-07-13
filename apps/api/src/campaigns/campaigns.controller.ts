@@ -7,20 +7,25 @@ export class CampaignsController {
   constructor(private readonly campaignsService: CampaignsService) {}
 
   @Get()
-  list() {
-    return this.campaignsService.list();
+  list(@Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
+    return this.campaignsService.list(request.user, clientId);
   }
 
   @Get(':id')
   get(
     @Param('id') id: string,
+    @Req() request: { user: UserSession },
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    return this.campaignsService.getCampaign(id, {
-      limit: limit ? Number(limit) : undefined,
-      offset: offset ? Number(offset) : undefined,
-    });
+    return this.campaignsService.getCampaign(
+      id,
+      {
+        limit: limit ? Number(limit) : undefined,
+        offset: offset ? Number(offset) : undefined,
+      },
+      request.user,
+    );
   }
 
   @Post()

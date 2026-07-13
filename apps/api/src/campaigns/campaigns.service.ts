@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditService } from '../common/audit.service';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, nowIso, resolveParameterValue } from '../database/helpers';
+import { isWithinScope, resolveClientScope } from '../common/scope';
 import {
   CampaignAudienceConfig,
   CampaignAudienceOrderField,
@@ -38,10 +39,21 @@ export class CampaignsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list() {
+  /** Garante que a campanha pertence ao escopo do usuário; senão 404 (não vaza existência). */
+  private async assertCampaignScope(id: string, actor: UserSession): Promise<void> {
+    const state = await this.database.readMeta();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (!campaign || !isWithinScope(resolveClientScope(actor), campaign.clientId)) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+  }
+
+  async list(actor: UserSession, requestedClientId?: string) {
+    const scope = resolveClientScope(actor, requestedClientId);
     const state = await this.database.readMeta();
     const listsById = await this.loadListsByIds(state.campaigns.map((campaign) => campaign.listId));
     return state.campaigns
+      .filter((campaign) => isWithinScope(scope, campaign.clientId))
       .map((campaign) => ({
         ...campaign,
         template: state.templates.find((template) => template.id === campaign.templateCacheId) ?? null,
@@ -50,10 +62,13 @@ export class CampaignsService {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
-  async getCampaign(id: string, options?: GetCampaignOptions) {
+  async getCampaign(id: string, options?: GetCampaignOptions, actor?: UserSession) {
     const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
     if (!campaign) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+    if (actor && !isWithinScope(resolveClientScope(actor), campaign.clientId)) {
       throw new NotFoundException('Campanha não encontrada');
     }
 
@@ -107,7 +122,8 @@ export class CampaignsService {
       ? findFlowForTemplate(template, state.flows)
       : undefined;
 
-    if (!state.integrations.some((item) => item.id === input.integrationId)) {
+    const integration = state.integrations.find((item) => item.id === input.integrationId);
+    if (!integration || !isWithinScope(resolveClientScope(actor), integration.clientId)) {
       throw new NotFoundException('Integração não encontrada');
     }
     if (!(await this.loadListsByIds([input.listId])).has(input.listId)) {
@@ -168,6 +184,7 @@ export class CampaignsService {
   }
 
   async start(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
     if (!campaign) {
@@ -209,11 +226,13 @@ export class CampaignsService {
   }
 
   async pause(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     await this.transitionStatus(id, 'paused', actor, 'campaign.paused');
     return this.getCampaign(id);
   }
 
   async resume(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     const campaign = await this.getCampaign(id, { limit: 1 });
     if (campaign.summary.pending === 0 && campaign.summary.failed === 0) {
       throw new BadRequestException('Campanha não possui mensagens para retomar');
@@ -224,6 +243,7 @@ export class CampaignsService {
   }
 
   async retryFailed(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     const retryAt = nowIso();
     const failedMessages = (await this.database.listCampaignMessagesInDatabase({ campaignId: id })).filter(
       (item) => item.status === 'failed',
@@ -260,6 +280,7 @@ export class CampaignsService {
   }
 
   async retryUnansweredFlow(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     const retryAt = nowIso();
     const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
@@ -343,6 +364,7 @@ export class CampaignsService {
   }
 
   async removeDraft(id: string, actor: UserSession) {
+    await this.assertCampaignScope(id, actor);
     const state = await this.database.readMeta();
     const campaign = state.campaigns.find((item) => item.id === id);
     if (!campaign) {

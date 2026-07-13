@@ -12,6 +12,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { resolveClientScope } from '../common/scope';
 import { ContactsService } from './contacts.service';
 import { UserSession } from '../database/types';
 
@@ -21,23 +22,30 @@ export class ContactsController {
 
   @Get('contacts')
   contacts(
+    @Req() request: { user: UserSession },
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Query('clientId') clientId?: string,
   ) {
+    const scope = resolveClientScope(request.user, clientId);
     if (limit !== undefined || offset !== undefined) {
-      return this.contactsService.listContactsPage({
-        limit: limit ? Number(limit) : undefined,
-        offset: offset ? Number(offset) : undefined,
-      });
+      return this.contactsService.listContactsPage(
+        {
+          limit: limit ? Number(limit) : undefined,
+          offset: offset ? Number(offset) : undefined,
+        },
+        scope,
+      );
     }
 
-    return this.contactsService.listContacts();
+    return this.contactsService.listContacts(scope);
   }
 
   @Post('contacts')
   createContact(
     @Body()
     body: {
+      clientId?: string | null;
       clientName?: string | null;
       firstName?: string;
       lastName?: string | null;
@@ -111,22 +119,22 @@ export class ContactsController {
   }
 
   @Get('lists')
-  lists() {
-    return this.contactsService.listLists();
+  lists(@Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
+    return this.contactsService.listLists(resolveClientScope(request.user, clientId));
   }
 
   @Get('lists/:id')
-  list(@Param('id') id: string) {
-    return this.contactsService.getList(id);
+  list(@Param('id') id: string, @Req() request: { user: UserSession }) {
+    return this.contactsService.getList(id, resolveClientScope(request.user));
   }
 
   @Post('lists')
   createList(
-    @Body() body: { name?: string; description?: string },
+    @Body() body: { name?: string; description?: string; clientId?: string | null },
     @Req() request: { user: UserSession },
   ) {
     return this.contactsService.createList(
-      { name: body.name ?? 'Nova lista', description: body.description },
+      { name: body.name ?? 'Nova lista', description: body.description, clientId: body.clientId },
       request.user,
     );
   }

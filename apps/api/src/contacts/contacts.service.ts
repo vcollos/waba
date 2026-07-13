@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { parse } from 'csv-parse/sync';
 import { PoolClient } from 'pg';
 import { AuditService } from '../common/audit.service';
+import { resolveClientScope, writeClientId } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, normalizePhone, nowIso } from '../database/helpers';
 import {
@@ -36,6 +37,7 @@ type BulkAction =
   | 'set_client';
 
 interface ContactInput {
+  clientId?: string | null;
   clientName?: string | null;
   firstName?: string;
   lastName?: string | null;
@@ -121,7 +123,13 @@ export class ContactsService {
     private readonly audit: AuditService,
   ) {}
 
-  async listContacts() {
+  async listContacts(scope: string | null = null) {
+    const args: unknown[] = [];
+    let where = '';
+    if (scope !== null) {
+      args.push(scope);
+      where = 'WHERE c.client_id = $1';
+    }
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
         c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
@@ -131,8 +139,10 @@ export class ContactsService {
        FROM contacts c
        LEFT JOIN list_members lm ON lm.contact_id = c.id
        LEFT JOIN lists l ON l.id = lm.list_id
+       ${where}
        GROUP BY c.id
        ORDER BY c.updated_at DESC`,
+      args,
     );
 
     return rows.map((row) => ({
@@ -141,12 +151,32 @@ export class ContactsService {
     }));
   }
 
-  async listContactsPage(params: ContactsListParams): Promise<PaginatedContactsResult> {
+  async listContactsPage(
+    params: ContactsListParams,
+    scope: string | null = null,
+  ): Promise<PaginatedContactsResult> {
     const limit = Math.max(1, Math.min(250, Number(params.limit ?? 50)));
     const offset = Math.max(0, Number(params.offset ?? 0));
+    const countArgs: unknown[] = [];
+    let countWhere = '';
+    if (scope !== null) {
+      countArgs.push(scope);
+      countWhere = 'WHERE client_id = $1';
+    }
     const [{ count }] = await this.database.postgresQuery<{ count: string }>(
-      'SELECT COUNT(*)::text AS count FROM contacts',
+      `SELECT COUNT(*)::text AS count FROM contacts ${countWhere}`,
+      countArgs,
     );
+    const rowArgs: unknown[] = [];
+    let rowWhere = '';
+    if (scope !== null) {
+      rowArgs.push(scope);
+      rowWhere = 'WHERE c.client_id = $1';
+    }
+    rowArgs.push(limit);
+    const limitPos = rowArgs.length;
+    rowArgs.push(offset);
+    const offsetPos = rowArgs.length;
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
         c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
@@ -156,10 +186,11 @@ export class ContactsService {
        FROM contacts c
        LEFT JOIN list_members lm ON lm.contact_id = c.id
        LEFT JOIN lists l ON l.id = lm.list_id
+       ${rowWhere}
        GROUP BY c.id
        ORDER BY c.updated_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
+       LIMIT $${limitPos} OFFSET $${offsetPos}`,
+      rowArgs,
     );
 
     return {
@@ -173,7 +204,7 @@ export class ContactsService {
     };
   }
 
-  async listLists() {
+  async listLists(scope: string | null = null) {
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
         l.id,
@@ -218,8 +249,10 @@ export class ContactsService {
        FROM lists l
        LEFT JOIN list_members lm ON lm.list_id = l.id
        LEFT JOIN contacts c ON c.id = lm.contact_id
+       ${scope !== null ? 'WHERE l.client_id = $1' : ''}
        GROUP BY l.id
        ORDER BY l.created_at DESC`,
+      scope !== null ? [scope] : [],
     );
 
     return rows.map((row) => ({
@@ -230,14 +263,14 @@ export class ContactsService {
     }));
   }
 
-  async getList(id: string) {
+  async getList(id: string, scope: string | null = null) {
     const [row] = await this.database.postgresQuery<Record<string, unknown>>(
-      `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
+      `SELECT id, name, description, source_type, source_file_path, client_id, created_at, updated_at
        FROM lists
        WHERE id = $1`,
       [id],
     );
-    if (!row) {
+    if (!row || (scope !== null && (row.client_id ?? null) !== scope)) {
       throw new NotFoundException('Lista não encontrada');
     }
 
@@ -259,10 +292,14 @@ export class ContactsService {
     };
   }
 
-  async createList(input: { name: string; description?: string }, actor: UserSession): Promise<ListRecord> {
+  async createList(
+    input: { name: string; description?: string; clientId?: string | null },
+    actor: UserSession,
+  ): Promise<ListRecord> {
     const timestamp = nowIso();
     const list: ListRecord = {
       id: newId(),
+      clientId: writeClientId(actor, input.clientId),
       name: input.name.trim() || 'Nova lista',
       description: cleanNullableText(input.description),
       sourceType: 'manual',
@@ -272,10 +309,11 @@ export class ContactsService {
 
     await this.database.postgresQuery(
       `INSERT INTO lists (
-        id, name, description, source_type, source_file_path, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        id, client_id, name, description, source_type, source_file_path, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         list.id,
+        list.clientId ?? null,
         list.name,
         list.description ?? null,
         list.sourceType,
@@ -396,8 +434,11 @@ export class ContactsService {
     });
 
     const timestamp = nowIso();
+    // Tenant dos registros importados: cliente => o próprio; Collos => nenhum.
+    const importClientId = writeClientId(actor, null);
     const list: ListRecord = {
       id: newId(),
+      clientId: importClientId,
       name: params.listName.trim() || params.fileName.replace(/\.[^.]+$/, ''),
       description: `Importado de ${params.fileName}`,
       sourceType: 'csv',
@@ -412,10 +453,11 @@ export class ContactsService {
     try {
       await this.database.postgresQuery(
         `INSERT INTO lists (
-          id, name, description, source_type, source_file_path, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          id, client_id, name, description, source_type, source_file_path, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           list.id,
+          list.clientId ?? null,
           list.name,
           list.description ?? null,
           list.sourceType,
@@ -486,6 +528,7 @@ export class ContactsService {
         const attributes = collectAttributes(row, params.mapping);
 
         const payload = {
+          clientId: importClientId,
           clientName:
             pickMappedValue(row, params.mapping.clientName) ||
             params.defaults.clientName ||
@@ -628,7 +671,9 @@ export class ContactsService {
   async createContact(input: ContactInput, actor: UserSession) {
     const timestamp = nowIso();
     const normalized = normalizePhone(String(input.phone ?? ''));
-    const contact = createNewContact(input, normalized, timestamp);
+    // Tenant do novo contato: cliente => o próprio; Collos => o informado (ou nenhum).
+    const scopedInput = { ...input, clientId: writeClientId(actor, input.clientId) };
+    const contact = createNewContact(scopedInput, normalized, timestamp);
 
     await this.database.postgresTransaction(async (client) => {
       await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash);
@@ -662,9 +707,10 @@ export class ContactsService {
   async updateContact(id: string, input: ContactInput, actor: UserSession) {
     let updatedContact: ContactRecord | undefined;
 
+    const scope = resolveClientScope(actor);
     await this.database.postgresTransaction(async (client) => {
       const existing = await getContactByIdFromDatabase(client, id);
-      if (!existing) {
+      if (!existing || (scope !== null && (existing.clientId ?? null) !== scope)) {
         throw new NotFoundException('Contato não encontrado');
       }
 
@@ -725,9 +771,10 @@ export class ContactsService {
   }
 
   async deleteContact(id: string, actor: UserSession) {
+    const scope = resolveClientScope(actor);
     await this.database.postgresTransaction(async (client) => {
       const existing = await getContactByIdFromDatabase(client, id);
-      if (!existing) {
+      if (!existing || (scope !== null && (existing.clientId ?? null) !== scope)) {
         throw new NotFoundException('Contato não encontrado');
       }
       await client.query('DELETE FROM list_members WHERE contact_id = $1', [id]);
@@ -761,11 +808,17 @@ export class ContactsService {
       throw new BadRequestException('Selecione pelo menos um contato');
     }
 
+    const scope = resolveClientScope(actor);
     let affected = 0;
     let matchedContactIds: string[] = [];
 
     await this.database.postgresTransaction(async (client) => {
-      const existingIds = await selectExistingContactIds(client, contactIds);
+      // Restringe a ação em massa aos contatos do escopo do usuário.
+      const scopedRows = await client.query<{ id: string }>(
+        `SELECT id FROM contacts WHERE id = ANY($1) AND ($2::text IS NULL OR client_id = $2)`,
+        [contactIds, scope],
+      );
+      const existingIds = scopedRows.rows.map((row) => row.id);
       if (existingIds.length === 0) {
         throw new NotFoundException('Nenhum contato encontrado');
       }
@@ -877,9 +930,10 @@ export class ContactsService {
 
   async setOptOut(contactId: string, actor: UserSession, source: OptOutRecord['source'] = 'manual') {
     const timestamp = nowIso();
+    const scope = resolveClientScope(actor);
     await this.database.postgresTransaction(async (client) => {
       const contact = await getContactByIdFromDatabase(client, contactId);
-      if (!contact) {
+      if (!contact || (scope !== null && (contact.clientId ?? null) !== scope)) {
         throw new NotFoundException('Contato não encontrado');
       }
 
@@ -907,9 +961,10 @@ export class ContactsService {
   }
 
   async clearOptOut(contactId: string, actor: UserSession) {
+    const scope = resolveClientScope(actor);
     await this.database.postgresTransaction(async (client) => {
       const contact = await getContactByIdFromDatabase(client, contactId);
-      if (!contact) {
+      if (!contact || (scope !== null && (contact.clientId ?? null) !== scope)) {
         throw new NotFoundException('Contato não encontrado');
       }
 
@@ -1102,6 +1157,7 @@ const createNewContact = (
 
   return {
     id: newId(),
+    clientId: input.clientId ?? null,
     externalRef: cleanNullableText(input.externalRef),
     clientName: cleanNullableText(input.clientName),
     firstName: names.firstName,
@@ -1173,6 +1229,7 @@ const cleanNullableText = (value: string | null | undefined): string | null => {
 
 const mapContactRow = (row: Record<string, unknown>): ContactRecord => ({
   id: String(row.id),
+  clientId: (toOptionalString(row.client_id) ?? null) as string | null,
   externalRef: cleanNullableText(toOptionalString(row.external_ref)),
   clientName: cleanNullableText(toOptionalString(row.client_name)),
   firstName: String(row.first_name ?? 'Sem nome'),
@@ -1212,7 +1269,7 @@ const getContactByIdFromDatabase = (
   database
     .query(
       `SELECT
-        id, external_ref, client_name, first_name, last_name, name, category, record_status,
+        id, client_id, external_ref, client_name, first_name, last_name, name, category, record_status,
         phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
         is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
        FROM contacts
@@ -1283,12 +1340,13 @@ const insertContactPg = async (
 ) => {
   await database.query(
     `INSERT INTO contacts (
-      id, external_ref, client_name, first_name, last_name, name, category, record_status,
+      id, client_id, external_ref, client_name, first_name, last_name, name, category, record_status,
       phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
       is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
     [
       contact.id,
+      contact.clientId ?? null,
       contact.externalRef ?? null,
       contact.clientName ?? null,
       contact.firstName,

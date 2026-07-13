@@ -6,24 +6,30 @@ import type { FlowResponseRecord } from '../database/types';
 export class ResultsService {
   constructor(private readonly database: DatabaseService) {}
 
-  async listFlowResponses(filters?: {
-    campaignId?: string;
-    flowCacheId?: string;
-    flowName?: string;
-    contactId?: string;
-    limit?: number;
-  }) {
-    return this.loadFlowResponses(filters);
+  async listFlowResponses(
+    filters?: {
+      campaignId?: string;
+      flowCacheId?: string;
+      flowName?: string;
+      contactId?: string;
+      limit?: number;
+    },
+    scope: string | null = null,
+  ) {
+    return this.loadFlowResponses(filters, undefined, scope);
   }
 
-  async exportFlowResponsesCsv(filters?: {
-    campaignId?: string;
-    flowCacheId?: string;
-    flowName?: string;
-    contactId?: string;
-    limit?: number;
-  }) {
-    const rows = await this.loadFlowResponses(filters);
+  async exportFlowResponsesCsv(
+    filters?: {
+      campaignId?: string;
+      flowCacheId?: string;
+      flowName?: string;
+      contactId?: string;
+      limit?: number;
+    },
+    scope: string | null = null,
+  ) {
+    const rows = await this.loadFlowResponses(filters, undefined, scope);
     const flattenPayload = Boolean(filters?.flowCacheId || filters?.flowName);
 
     if (!flattenPayload) {
@@ -90,9 +96,19 @@ export class ResultsService {
       limit?: number;
     },
     defaultLimit?: number,
+    scope: string | null = null,
   ) {
     const state = await this.database.readMetaSnapshot();
-    const filteredResponses = await this.database.listFlowResponsesInDatabase(filters);
+    const rawResponses = await this.database.listFlowResponsesInDatabase(filters);
+    const scopeCampaignsById = new Map(state.campaigns.map((c) => [c.id, c]));
+    // Escopo de tenant: cliente só vê respostas de campanhas do próprio tenant.
+    const filteredResponses =
+      scope === null
+        ? rawResponses
+        : rawResponses.filter((r) => {
+            const campaign = r.campaignId ? scopeCampaignsById.get(r.campaignId) : null;
+            return campaign != null && (campaign.clientId ?? null) === scope;
+          });
     const contactIds = [
       ...new Set(filteredResponses.map((response) => response.contactId).filter(isDefined)),
     ];
@@ -146,13 +162,34 @@ export class ResultsService {
     return flowNameFiltered.slice(0, finalLimit);
   }
 
-  async summary() {
-    const [state, flowResponses, campaignMessages, messageEvents] = await Promise.all([
+  async summary(scope: string | null = null) {
+    const [state, allFlowResponses, allCampaignMessages, allMessageEvents] = await Promise.all([
       this.database.readMetaSnapshot(),
       this.database.listFlowResponsesInDatabase(),
       this.database.listCampaignMessagesInDatabase(),
       this.database.listMessageEventsInDatabase(),
     ]);
+    // Escopo de tenant: restringe tudo às campanhas do tenant selecionado/forçado.
+    const scopedCampaigns =
+      scope === null
+        ? state.campaigns
+        : state.campaigns.filter((c) => (c.clientId ?? null) === scope);
+    const scopedCampaignIds = new Set(scopedCampaigns.map((c) => c.id));
+    const flowResponses =
+      scope === null
+        ? allFlowResponses
+        : allFlowResponses.filter((r) => r.campaignId != null && scopedCampaignIds.has(r.campaignId));
+    const campaignMessages =
+      scope === null
+        ? allCampaignMessages
+        : allCampaignMessages.filter((m) => scopedCampaignIds.has(m.campaignId));
+    const scopedMessageIds = new Set(campaignMessages.map((m) => m.id));
+    const messageEvents =
+      scope === null
+        ? allMessageEvents
+        : allMessageEvents.filter(
+            (e) => e.campaignMessageId != null && scopedMessageIds.has(e.campaignMessageId),
+          );
     const totalResponses = flowResponses.length;
     const byFlow = new Map<string, number>();
     const byCampaign = new Map<string, number>();
@@ -240,7 +277,7 @@ export class ResultsService {
     const totalProcessedMessages = totalTrackedMessages - totalPendingMessages;
 
     const statusDistribution = buildStatusDistribution(currentStatusCounts, totalTrackedMessages);
-    const topDeliveryCampaigns = [...state.campaigns]
+    const topDeliveryCampaigns = [...scopedCampaigns]
       .map((campaign) => {
         const total = campaign.summary.total;
         const pending = campaign.summary.pending;
