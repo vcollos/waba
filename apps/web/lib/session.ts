@@ -25,6 +25,9 @@ export interface ClientRecord {
 export const COLLOS_ROLES: Role[] = ['super_admin', 'admin'];
 export const isCollosRole = (role: Role): boolean => COLLOS_ROLES.includes(role);
 
+/** Pode executar ações operacionais (criar campanha, sincronizar modelos, etc.). Viewer só lê. */
+export const canWrite = (role: Role): boolean => role !== 'viewer';
+
 export const ROLE_LABELS: Record<Role, string> = {
   super_admin: 'Super admin',
   admin: 'Admin',

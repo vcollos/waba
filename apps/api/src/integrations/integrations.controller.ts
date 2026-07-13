@@ -6,34 +6,40 @@ import { UserSession } from '../database/types';
 
 @Controller('integrations')
 @UseGuards(RolesGuard)
-@Roles('super_admin', 'admin')
 export class IntegrationsController {
   constructor(private readonly integrationsService: IntegrationsService) {}
 
+  // Leitura: qualquer papel autenticado, escopado por tenant (o wizard de
+  // campanha e a tela de Modelos precisam listar as integrações do cliente).
   @Get()
-  list() {
-    return this.integrationsService.list();
+  list(@Req() request: { user: UserSession }) {
+    return this.integrationsService.list(request.user);
   }
 
+  // Criar/editar integração e segredos: apenas Collos.
   @Post()
-  save(
-    @Body() body: SaveIntegrationInput,
-    @Req() request: { user: UserSession },
-  ) {
+  @Roles('super_admin', 'admin')
+  save(@Body() body: SaveIntegrationInput, @Req() request: { user: UserSession }) {
     return this.integrationsService.save(body, request.user);
   }
 
+  // Testar conexão: apenas Collos.
   @Post(':id/test')
+  @Roles('super_admin', 'admin')
   test(@Param('id') id: string) {
     return this.integrationsService.testConnection(id);
   }
 
+  // Sincronizar modelos/flows: Collos e papéis operacionais do cliente
+  // (client_admin, operator) — sempre escopado à integração do próprio tenant.
   @Post(':id/sync/templates')
+  @Roles('super_admin', 'admin', 'client_admin', 'operator')
   syncTemplates(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.integrationsService.syncTemplates(id, request.user);
   }
 
   @Post(':id/sync/flows')
+  @Roles('super_admin', 'admin', 'client_admin', 'operator')
   syncFlows(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.integrationsService.syncFlows(id, request.user);
   }
