@@ -121,6 +121,8 @@ export interface ImportRecord {
 export interface TemplateVariableDescriptor {
   componentType: 'body' | 'header';
   placeholderIndex: number;
+  /** Nome da variável em templates de formato NAMED (ex.: "link"); null p/ POSITIONAL. */
+  paramName?: string | null;
   label: string;
 }
 
