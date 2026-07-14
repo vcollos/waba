@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { IntegrationsService, SaveIntegrationInput } from './integrations.service';
@@ -28,6 +28,17 @@ export class IntegrationsController {
   @Roles('super_admin', 'admin')
   test(@Param('id') id: string) {
     return this.integrationsService.testConnection(id);
+  }
+
+  // Designar a integração a um cliente (ou desvincular): apenas Collos.
+  @Patch(':id/client')
+  @Roles('super_admin', 'admin')
+  setClient(
+    @Param('id') id: string,
+    @Body() body: { clientId?: string | null },
+    @Req() request: { user: UserSession },
+  ) {
+    return this.integrationsService.setClient(id, body.clientId ?? null, request.user);
   }
 
   // Sincronizar modelos/flows: Collos e papéis operacionais do cliente

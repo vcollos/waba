@@ -176,6 +176,33 @@ export class IntegrationsService {
     return templates;
   }
 
+  /** (Re)atribui uma integração a um cliente (ou null para desvincular). Collos only. */
+  async setClient(
+    id: string,
+    clientId: string | null,
+    actor: UserSession,
+  ): Promise<SanitizedIntegration> {
+    const integration = await this.getById(id);
+    const updated: IntegrationRecord = {
+      ...integration,
+      clientId: clientId || null,
+      updatedAt: nowIso(),
+    };
+    await this.database.saveIntegrationInDatabase(updated);
+
+    void this.audit
+      .log({
+        actorUserId: actor.id,
+        action: 'integration.client_assigned',
+        entityType: 'integration',
+        entityId: id,
+        metadata: { clientId: updated.clientId },
+      })
+      .catch(() => undefined);
+
+    return this.sanitize(updated);
+  }
+
   async syncFlows(id: string, actor: UserSession): Promise<FlowCacheRecord[]> {
     const integration = await this.getById(id);
     if (!isWithinScope(resolveClientScope(actor), integration.clientId)) {
