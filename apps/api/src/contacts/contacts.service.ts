@@ -573,13 +573,17 @@ export class ContactsService {
         ],
       );
 
+      // Dedup do import é POR TENANT: só reaproveita contatos do mesmo tenant do
+      // import (COALESCE trata nulo como o pool compartilhado). Isso mantém o
+      // isolamento e casa com a unicidade composta (client_id, phone_hash).
       const existingContacts = (
         await this.database.postgresQuery<Record<string, unknown>>(
           `SELECT
             id, external_ref, client_name, first_name, last_name, name, category, record_status,
             phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
             is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-           FROM contacts`,
+           FROM contacts WHERE COALESCE(client_id, '') = COALESCE($1, '')`,
+          [importClientId],
         )
       ).map(mapContactRow);
 
@@ -782,7 +786,7 @@ export class ContactsService {
     const contact = createNewContact(scopedInput, normalized, timestamp);
 
     await this.database.postgresTransaction(async (client) => {
-      await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash);
+      await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash, contact.clientId ?? null);
       await ensureListIdsExistInDatabase(client, input.listIds);
       await insertContactPg(client, contact);
       for (const listId of input.listIds ?? []) {
@@ -873,25 +877,21 @@ export class ContactsService {
           category: row.category ?? null,
         };
 
+        // Lookup POR TENANT: telefone de outro tenant é invisível aqui (entra
+        // como novo contato deste tenant). Isso fecha o oráculo de enumeração
+        // cross-tenant — a resposta não distingue "existe em outro tenant".
         const existingRows = await client.query<Record<string, unknown>>(
           `SELECT
             id, client_id, external_ref, client_name, first_name, last_name, name, category, record_status,
             phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
             is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
-           FROM contacts WHERE phone_hash = $1`,
-          [phoneHash],
+           FROM contacts WHERE phone_hash = $1 AND COALESCE(client_id, '') = COALESCE($2, '')`,
+          [phoneHash, clientId],
         );
         const existing = existingRows.rows[0] ? mapContactRow(existingRows.rows[0]) : null;
 
         let contactId: string;
         if (existing) {
-          // Isolamento: um token de tenant só toca contatos do PRÓPRIO tenant.
-          // Contatos de outro tenant ou do pool compartilhado (client_id nulo)
-          // não são mutados nem anexados por aqui.
-          if ((existing.clientId ?? null) !== clientId) {
-            skipped += 1;
-            continue;
-          }
           const merged = updateExistingContact(existing, input, normalized, timestamp);
           await updateContactPg(client, merged);
           contactId = existing.id;
@@ -929,7 +929,7 @@ export class ContactsService {
 
       const normalized = normalizePhone(String(input.phone ?? existing.phoneRaw));
       const nextPhoneHash = hash((normalized.phoneE164 || existing.phoneE164).replace(/^\+/, ''));
-      await ensurePhoneIsUniqueInDatabase(client, nextPhoneHash, id);
+      await ensurePhoneIsUniqueInDatabase(client, nextPhoneHash, existing.clientId ?? null, id);
 
       updatedContact = updateExistingContact(
         existing,
@@ -1494,17 +1494,20 @@ const getContactByIdFromDatabase = (
       return row ? mapContactRow(row) : null;
     });
 
+// Unicidade de telefone é POR TENANT: o mesmo número pode existir em tenants
+// diferentes (COALESCE trata client_id nulo como o pool compartilhado).
 const ensurePhoneIsUniqueInDatabase = (
   database: Pick<PoolClient, 'query'>,
   phoneHash: string,
+  clientId: string | null,
   excludeContactId?: string,
 ) =>
   database
     .query(
       excludeContactId
-        ? 'SELECT id FROM contacts WHERE phone_hash = $1 AND id != $2 LIMIT 1'
-        : 'SELECT id FROM contacts WHERE phone_hash = $1 LIMIT 1',
-      excludeContactId ? [phoneHash, excludeContactId] : [phoneHash],
+        ? `SELECT id FROM contacts WHERE phone_hash = $1 AND COALESCE(client_id, '') = COALESCE($2, '') AND id != $3 LIMIT 1`
+        : `SELECT id FROM contacts WHERE phone_hash = $1 AND COALESCE(client_id, '') = COALESCE($2, '') LIMIT 1`,
+      excludeContactId ? [phoneHash, clientId, excludeContactId] : [phoneHash, clientId],
     )
     .then((result) => {
       const row = result.rows[0];

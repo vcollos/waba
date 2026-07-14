@@ -21,7 +21,7 @@ export class WebhooksService {
       }
 
       for (const message of change.messages) {
-        await this.handleInbound(message, payload, change.contacts);
+        await this.handleInbound(message, payload, change.contacts, change.phoneNumberId);
       }
     }
 
@@ -84,6 +84,7 @@ export class WebhooksService {
     message: Record<string, unknown>,
     payload: Record<string, unknown>,
     contacts: Array<Record<string, unknown>>,
+    receivingPhoneNumberId: string | null,
   ) {
     const waId = String(message.from ?? contacts[0]?.wa_id ?? '');
     if (!waId) {
@@ -91,12 +92,23 @@ export class WebhooksService {
     }
 
     const state = await this.database.readMetaSnapshot();
+    // Escopo por tenant: o telefone pode existir em mais de um tenant (unicidade
+    // por (client_id, phone_hash)). Resolvemos o tenant pela integração que
+    // recebeu a mensagem (phone_number_id) para não marcar opt-out no contato
+    // errado. Integração desconhecida => pool compartilhado (client_id nulo).
+    const tenantClientId =
+      (receivingPhoneNumberId
+        ? state.integrations.find(
+            (integration) => integration.phoneNumberId === receivingPhoneNumberId,
+          )?.clientId
+        : null) ?? null;
     const [contactRow] = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, phone_hash
        FROM contacts
        WHERE phone_hash = $1
+         AND COALESCE(client_id, '') = COALESCE($2, '')
        LIMIT 1`,
-      [hash(waId)],
+      [hash(waId), tenantClientId],
     );
     const contact = contactRow
       ? {
@@ -271,6 +283,7 @@ const extractChanges = (
   statuses: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
   contacts: Array<Record<string, unknown>>;
+  phoneNumberId: string | null;
 }> => {
   const entries = Array.isArray(payload.entry) ? payload.entry : [];
   const changes = entries.flatMap((entry) =>
@@ -281,10 +294,12 @@ const extractChanges = (
 
   return changes.map((change) => {
     const value = ((change as Record<string, unknown>).value ?? {}) as Record<string, unknown>;
+    const metadata = (value.metadata ?? {}) as Record<string, unknown>;
     return {
       statuses: Array.isArray(value.statuses) ? (value.statuses as Array<Record<string, unknown>>) : [],
       messages: Array.isArray(value.messages) ? (value.messages as Array<Record<string, unknown>>) : [],
       contacts: Array.isArray(value.contacts) ? (value.contacts as Array<Record<string, unknown>>) : [],
+      phoneNumberId: metadata.phone_number_id ? String(metadata.phone_number_id) : null,
     };
   });
 };
