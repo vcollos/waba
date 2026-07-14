@@ -984,6 +984,16 @@ export class DatabaseService implements OnModuleDestroy {
         );
         CREATE INDEX IF NOT EXISTS idx_api_tokens_client ON api_tokens(client_id);
       `);
+
+      // Unicidade de telefone POR TENANT: troca o UNIQUE global de phone_hash por
+      // um índice único composto (client_id, phone_hash). COALESCE trata o pool
+      // compartilhado (client_id nulo) como um "tenant" próprio. Idempotente e
+      // não-destrutivo (a base atual está toda sob um único tenant, sem colisão).
+      await this.metaClient.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_client_phone_unique
+          ON contacts (COALESCE(client_id, ''), phone_hash);
+        ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_phone_hash_key;
+      `);
     }
   }
 
