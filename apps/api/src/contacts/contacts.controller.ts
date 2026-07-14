@@ -155,6 +155,7 @@ export class ContactsController {
     @Body()
     body: {
       listName?: string;
+      clientId?: string;
       mapping?: string;
       defaults?: string;
     },
@@ -165,6 +166,7 @@ export class ContactsController {
         listName: body.listName ?? file.originalname.replace(/\.[^.]+$/, ''),
         fileName: file.originalname,
         content: file.buffer,
+        clientId: body.clientId ?? null,
         mapping: parseJsonBody(body.mapping),
         defaults: parseJsonBody(body.defaults),
       },
