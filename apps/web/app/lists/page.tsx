@@ -93,6 +93,8 @@ function ListsContent() {
   const [search, setSearch] = useState('');
   const [origin, setOrigin] = useState('');
   const [viewing, setViewing] = useState<ListRow | null>(null);
+  const [editing, setEditing] = useState<ListRow | null>(null);
+  const [deleting, setDeleting] = useState<ListRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
   const [showTokens, setShowTokens] = useState(false);
@@ -205,6 +207,16 @@ function ListsContent() {
                         <button className="btn tertiary sm" onClick={() => setViewing(list)}>
                           Ver lista
                         </button>
+                        {writable ? (
+                          <>
+                            <button className="btn tertiary sm" onClick={() => setEditing(list)}>
+                              Editar
+                            </button>
+                            <button className="btn danger sm" onClick={() => setDeleting(list)}>
+                              Excluir
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -232,6 +244,30 @@ function ListsContent() {
           onSaved={() => {
             setCreating(false);
             push('success', 'Lista criada.');
+            load();
+          }}
+        />
+      ) : null}
+
+      {editing ? (
+        <EditListModal
+          list={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            push('success', 'Lista atualizada.');
+            load();
+          }}
+        />
+      ) : null}
+
+      {deleting ? (
+        <DeleteListModal
+          list={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            push('success', 'Lista excluída.');
             load();
           }}
         />
@@ -276,6 +312,8 @@ function ListDrawer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editingMember, setEditingMember] = useState<Member | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -293,6 +331,20 @@ function ListDrawer({
   useEffect(() => {
     reload();
   }, [reload]);
+
+  const removeMember = async (contactId: string) => {
+    setRemovingId(contactId);
+    setError(null);
+    try {
+      await apiRequest(`/lists/${list.id}/members/${contactId}`, { method: 'DELETE' });
+      reload();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao remover contato.');
+    } finally {
+      setRemovingId(null);
+    }
+  };
 
   return (
     <Drawer title={list.name} subtitle={list.description ?? undefined} onClose={onClose} width={840}>
@@ -360,10 +412,11 @@ function ListDrawer({
                 <th>Status</th>
                 <th>Válido</th>
                 <th>Opt-out</th>
+                {writable ? <th></th> : null}
               </tr>
             </thead>
             {loading ? (
-              <SkeletonRows rows={6} cols={6} />
+              <SkeletonRows rows={6} cols={writable ? 7 : 6} />
             ) : (
               <tbody>
                 {detail && detail.members.length > 0 ? (
@@ -385,11 +438,27 @@ function ListDrawer({
                       <td>
                         {member.isOptedOut ? <BadgeText label="Opt-out" cls="warning" /> : <span className="cell-sub">—</span>}
                       </td>
+                      {writable ? (
+                        <td>
+                          <div className="row-actions">
+                            <button className="btn tertiary sm" onClick={() => setEditingMember(member)}>
+                              Editar
+                            </button>
+                            <button
+                              className="btn danger sm"
+                              onClick={() => removeMember(member.id)}
+                              disabled={removingId === member.id}
+                            >
+                              {removingId === member.id ? 'Removendo…' : 'Remover'}
+                            </button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={writable ? 7 : 6}>
                       <EmptyState title="Lista sem membros" />
                     </td>
                   </tr>
@@ -399,7 +468,117 @@ function ListDrawer({
           </table>
         </div>
       </div>
+      {editingMember ? (
+        <EditMemberModal
+          member={editingMember}
+          onClose={() => setEditingMember(null)}
+          onSaved={() => {
+            setEditingMember(null);
+            reload();
+            onChanged();
+          }}
+        />
+      ) : null}
     </Drawer>
+  );
+}
+
+function EditMemberModal({
+  member,
+  onClose,
+  onSaved,
+}: {
+  member: Member;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [firstName, setFirstName] = useState(member.name.split(' ')[0] ?? '');
+  const [lastName, setLastName] = useState(member.name.split(' ').slice(1).join(' '));
+  const [phone, setPhone] = useState(member.phoneE164 || member.phoneRaw || '');
+  const [category, setCategory] = useState(member.category ?? '');
+  const [recordStatus, setRecordStatus] = useState<'active' | 'inactive'>(member.recordStatus);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!firstName.trim() || !phone.trim()) {
+      setError('Informe ao menos nome e telefone.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/contacts/${member.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          firstName,
+          lastName: lastName || null,
+          phone,
+          category: category || null,
+          recordStatus,
+        }),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao salvar contato.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Corrigir contato"
+      onClose={onClose}
+      footer={
+        <>
+          {error ? (
+            <span className="left" style={{ color: 'var(--danger)', fontSize: 13 }}>
+              {error}
+            </span>
+          ) : null}
+          <button className="btn tertiary md" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button className="btn primary md" onClick={submit} disabled={saving}>
+            {saving ? 'Salvando…' : 'Salvar'}
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <div className="field">
+          <label>
+            Nome <span className="req">*</span>
+          </label>
+          <input className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Sobrenome</label>
+          <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>
+            WhatsApp <span className="req">*</span>
+          </label>
+          <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Categoria</label>
+          <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Status</label>
+          <select
+            className="input"
+            value={recordStatus}
+            onChange={(e) => setRecordStatus(e.target.value as 'active' | 'inactive')}
+          >
+            <option value="active">Ativo</option>
+            <option value="inactive">Inativo</option>
+          </select>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -566,6 +745,128 @@ function CreateListModal({
           </span>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function EditListModal({
+  list,
+  onClose,
+  onSaved,
+}: {
+  list: ListRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(list.name);
+  const [description, setDescription] = useState(list.description ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!name.trim()) {
+      setError('Informe o nome da lista.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/lists/${list.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name, description: description.trim() ? description : null }),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao salvar lista.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Editar lista"
+      onClose={onClose}
+      footer={
+        <>
+          {error ? (
+            <span className="left" style={{ color: 'var(--danger)', fontSize: 13 }}>
+              {error}
+            </span>
+          ) : null}
+          <button className="btn tertiary md" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button className="btn primary md" onClick={submit} disabled={saving}>
+            {saving ? 'Salvando…' : 'Salvar'}
+          </button>
+        </>
+      }
+    >
+      <div className="form-grid">
+        <div className="field col-2">
+          <label>
+            Nome <span className="req">*</span>
+          </label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="field col-2">
+          <label>Descrição</label>
+          <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DeleteListModal({
+  list,
+  onClose,
+  onDeleted,
+}: {
+  list: ListRow;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await apiRequest(`/lists/${list.id}`, { method: 'DELETE' });
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao excluir lista.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Excluir lista"
+      onClose={onClose}
+      footer={
+        <>
+          {error ? (
+            <span className="left" style={{ color: 'var(--danger)', fontSize: 13 }}>
+              {error}
+            </span>
+          ) : null}
+          <button className="btn tertiary md" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button className="btn danger md" onClick={submit} disabled={saving}>
+            {saving ? 'Excluindo…' : 'Excluir lista'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 14, lineHeight: 1.5 }}>
+        Excluir a lista <strong>{list.name}</strong> ({fmtInt(list.totalMembers)} contato(s))? Os
+        contatos em si <strong>não</strong> são apagados — apenas a lista e as associações. Esta ação
+        não pode ser desfeita.
+      </p>
     </Modal>
   );
 }

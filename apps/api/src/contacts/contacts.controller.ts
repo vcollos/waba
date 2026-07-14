@@ -139,6 +139,29 @@ export class ContactsController {
     );
   }
 
+  @Patch('lists/:id')
+  updateList(
+    @Param('id') id: string,
+    @Body() body: { name?: string; description?: string | null },
+    @Req() request: { user: UserSession },
+  ) {
+    return this.contactsService.updateList(id, body, request.user);
+  }
+
+  @Delete('lists/:id')
+  deleteList(@Param('id') id: string, @Req() request: { user: UserSession }) {
+    return this.contactsService.deleteList(id, request.user);
+  }
+
+  @Delete('lists/:id/members/:contactId')
+  removeListMember(
+    @Param('id') id: string,
+    @Param('contactId') contactId: string,
+    @Req() request: { user: UserSession },
+  ) {
+    return this.contactsService.removeListMember(id, contactId, request.user);
+  }
+
   @Post('contacts/imports/csv/preview')
   @UseInterceptors(FileInterceptor('file'))
   previewCsv(@UploadedFile() file: { originalname: string; buffer: Buffer }) {

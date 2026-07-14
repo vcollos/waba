@@ -334,6 +334,106 @@ export class ContactsService {
     return list;
   }
 
+  /** Edita nome/descrição de uma lista existente (escopado ao tenant). */
+  async updateList(
+    id: string,
+    input: { name?: string; description?: string | null },
+    actor: UserSession,
+  ): Promise<ListRecord> {
+    const scope = resolveClientScope(actor);
+    const [row] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, name, description, source_type, source_file_path, client_id, created_at, updated_at
+       FROM lists WHERE id = $1`,
+      [id],
+    );
+    if (!row || (scope !== null && (row.client_id ?? null) !== scope)) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+
+    const name = input.name !== undefined ? input.name.trim() || String(row.name) : String(row.name);
+    const description =
+      input.description !== undefined
+        ? cleanNullableText(input.description)
+        : cleanNullableText(toOptionalString(row.description));
+    const updatedAt = nowIso();
+
+    await this.database.postgresQuery(
+      `UPDATE lists SET name = $1, description = $2, updated_at = $3 WHERE id = $4`,
+      [name, description, updatedAt, id],
+    );
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'list.updated',
+      entityType: 'list',
+      entityId: id,
+      metadata: { name },
+    });
+
+    return { ...mapListRow(row), name, description, updatedAt };
+  }
+
+  /** Exclui uma lista (e suas associações; os contatos em si são preservados). */
+  async deleteList(id: string, actor: UserSession): Promise<{ id: string }> {
+    const scope = resolveClientScope(actor);
+    const [row] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, client_id FROM lists WHERE id = $1`,
+      [id],
+    );
+    if (!row || (scope !== null && (row.client_id ?? null) !== scope)) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+
+    await this.database.postgresTransaction(async (client) => {
+      await client.query(`DELETE FROM list_members WHERE list_id = $1`, [id]);
+      await client.query(`DELETE FROM lists WHERE id = $1`, [id]);
+    });
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'list.deleted',
+      entityType: 'list',
+      entityId: id,
+    });
+
+    return { id };
+  }
+
+  /** Remove um contato de uma lista (sem excluir o contato do tenant). */
+  async removeListMember(
+    listId: string,
+    contactId: string,
+    actor: UserSession,
+  ): Promise<{ removed: boolean }> {
+    const scope = resolveClientScope(actor);
+    const [row] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, client_id FROM lists WHERE id = $1`,
+      [listId],
+    );
+    if (!row || (scope !== null && (row.client_id ?? null) !== scope)) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+
+    await this.database.postgresQuery(
+      `DELETE FROM list_members WHERE list_id = $1 AND contact_id = $2`,
+      [listId, contactId],
+    );
+    await this.database.postgresQuery(`UPDATE lists SET updated_at = $1 WHERE id = $2`, [
+      nowIso(),
+      listId,
+    ]);
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'list.member_removed',
+      entityType: 'list',
+      entityId: listId,
+      metadata: { contactId },
+    });
+
+    return { removed: true };
+  }
+
   async previewCsvImport(params: { fileName: string; content: Buffer }) {
     const matrix = parseCsvMatrix(params.content);
     const { headers, records } = toColumnRecords(matrix);
