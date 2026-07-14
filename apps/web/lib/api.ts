@@ -78,3 +78,35 @@ export async function apiRequest<T>(
 }
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+/** Baixa um arquivo de um endpoint autenticado (ex.: CSV) via fetch + blob. */
+export async function apiDownload(path: string, fileName: string): Promise<void> {
+  const headers = new Headers();
+  const token = readToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (response.status === 401) {
+    clearToken();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    return;
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(String((payload as { message?: string }).message ?? `Erro ${response.status}`));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}

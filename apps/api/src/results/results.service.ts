@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { escapeCsvCell } from '../common/csv';
 import { DatabaseService } from '../database/database.service';
 import type { FlowResponseRecord } from '../database/types';
 
@@ -432,8 +433,6 @@ const matchesFlowResponseFilters = (
 };
 
 const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
-
-const escapeCsvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const stringifyPayloadValue = (value: unknown): string => {
   if (value === null || value === undefined) {

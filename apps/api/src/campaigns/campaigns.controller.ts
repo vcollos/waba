@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { CampaignsService, CreateCampaignInput } from './campaigns.service';
@@ -32,6 +33,23 @@ export class CampaignsController {
       },
       request.user,
     );
+  }
+
+  @Get(':id/export.csv')
+  async exportCsv(
+    @Param('id') id: string,
+    @Req() request: { user: UserSession },
+    @Res() response: Response,
+    @Query('clientId') clientId?: string,
+  ) {
+    const { fileName, csv } = await this.campaignsService.exportCampaignCsv(
+      id,
+      request.user,
+      clientId ?? null,
+    );
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    response.send(csv);
   }
 
   @Post()
