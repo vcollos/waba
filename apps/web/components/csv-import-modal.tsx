@@ -69,6 +69,9 @@ export function CsvImportModal({
   const [step, setStep] = useState(1);
   const [listName, setListName] = useState('');
   const [fileName, setFileName] = useState('');
+  // Guardamos o File em estado: o <input type="file"> só existe no passo 1 e é
+  // desmontado ao avançar, então não dá para relê-lo do ref na confirmação.
+  const [csvFile, setCsvFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [defaults, setDefaults] = useState({ clientName: '', category: '', status: 'active' as RecordStatus });
@@ -98,6 +101,7 @@ export function CsvImportModal({
       setPreview(result);
       setMapping(result.recommendedMapping);
       setFileName(file.name);
+      setCsvFile(file);
       setStep(2);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao ler o CSV.');
@@ -107,7 +111,7 @@ export function CsvImportModal({
   };
 
   const startImport = async () => {
-    const file = fileRef.current?.files?.[0];
+    const file = csvFile ?? fileRef.current?.files?.[0];
     if (!file) {
       setError('Arquivo perdido. Recomece o assistente.');
       return;
