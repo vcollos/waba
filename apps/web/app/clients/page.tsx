@@ -27,6 +27,12 @@ interface ClientView {
   updatedAt: string;
 }
 
+interface Integration {
+  id: string;
+  name: string;
+  clientId: string | null;
+}
+
 type Draft = {
   name: string;
   legalName: string;
@@ -59,6 +65,7 @@ function ClientsContent() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [editing, setEditing] = useState<ClientView | 'new' | null>(null);
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -72,6 +79,7 @@ function ClientsContent() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar clientes.');
         setLoading(false);
       });
+    void apiRequest<Integration[]>('/integrations').then(setIntegrations).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -179,6 +187,7 @@ function ClientsContent() {
       {editing ? (
         <ClientModal
           client={editing === 'new' ? null : editing}
+          integrations={integrations}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -192,10 +201,12 @@ function ClientsContent() {
 
 function ClientModal({
   client,
+  integrations,
   onClose,
   onSaved,
 }: {
   client: ClientView | null;
+  integrations: Integration[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -210,19 +221,38 @@ function ClientModal({
         }
       : emptyDraft(),
   );
+  // Integrações marcadas como pertencentes a este cliente.
+  const [assigned, setAssigned] = useState<string[]>(
+    client ? integrations.filter((i) => i.clientId === client.id).map((i) => i.id) : [],
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const set = (patch: Partial<Draft>) => setDraft((current) => ({ ...current, ...patch }));
+  const toggleIntegration = (id: string) =>
+    setAssigned((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(client ? `/clients/${client.id}` : '/clients', {
+      const saved = await apiRequest<{ id: string }>(client ? `/clients/${client.id}` : '/clients', {
         method: client ? 'PATCH' : 'POST',
         body: JSON.stringify(draft),
       });
+      const clientId = saved.id;
+      // Reconcilia as integrações: atribui as marcadas, desvincula as que deixaram de estar.
+      await Promise.all(
+        integrations.map((integration) => {
+          const wasMine = integration.clientId === clientId;
+          const nowMine = assigned.includes(integration.id);
+          if (wasMine === nowMine) return Promise.resolve();
+          return apiRequest(`/integrations/${integration.id}/client`, {
+            method: 'PATCH',
+            body: JSON.stringify({ clientId: nowMine ? clientId : null }),
+          });
+        }),
+      );
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao salvar cliente.');
@@ -288,6 +318,41 @@ function ClientModal({
             value={draft.billingEmail}
             onChange={(e) => set({ billingEmail: e.target.value })}
           />
+        </div>
+
+        <div className="field col-2">
+          <label>Integrações do cliente</label>
+          {integrations.length === 0 ? (
+            <span className="cell-sub">Nenhuma integração cadastrada.</span>
+          ) : (
+            <div className="stack" style={{ gap: 4 }}>
+              {integrations.map((integration) => {
+                const checked = assigned.includes(integration.id);
+                const ownedByOther = !checked && integration.clientId && integration.clientId !== (client?.id ?? '');
+                return (
+                  <label key={integration.id} className="check-row" style={{ padding: '6px 8px' }}>
+                    <span className={`cbox${checked ? ' on' : ''}`} />
+                    <input
+                      type="checkbox"
+                      style={{ display: 'none' }}
+                      checked={checked}
+                      onChange={() => toggleIntegration(integration.id)}
+                    />
+                    <span>{integration.name}</span>
+                    {ownedByOther ? (
+                      <span className="badge neutral" style={{ marginLeft: 'auto' }}>
+                        vinculada a outro cliente
+                      </span>
+                    ) : null}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <span className="hint">
+            Marque as integrações que este cliente pode usar. Ele também pode conectar as próprias na
+            tela de Integrações.
+          </span>
         </div>
       </div>
     </Modal>
