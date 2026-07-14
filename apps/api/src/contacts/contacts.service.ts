@@ -300,8 +300,8 @@ export class ContactsService {
     const list: ListRecord = {
       id: newId(),
       clientId: writeClientId(actor, input.clientId),
-      name: input.name.trim() || 'Nova lista',
-      description: cleanNullableText(input.description),
+      name: (input.name.trim() || 'Nova lista').slice(0, 200),
+      description: cleanNullableText(input.description)?.slice(0, 2000) ?? null,
       sourceType: input.sourceType ?? 'manual',
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -350,10 +350,12 @@ export class ContactsService {
       throw new NotFoundException('Lista não encontrada');
     }
 
-    const name = input.name !== undefined ? input.name.trim() || String(row.name) : String(row.name);
+    const name = (
+      input.name !== undefined ? input.name.trim() || String(row.name) : String(row.name)
+    ).slice(0, 200);
     const description =
       input.description !== undefined
-        ? cleanNullableText(input.description)
+        ? (cleanNullableText(input.description)?.slice(0, 2000) ?? null)
         : cleanNullableText(toOptionalString(row.description));
     const updatedAt = nowIso();
 
@@ -883,8 +885,10 @@ export class ContactsService {
 
         let contactId: string;
         if (existing) {
-          // Isolamento: contato já vinculado a OUTRO tenant não é tocado.
-          if ((existing.clientId ?? null) !== null && existing.clientId !== clientId) {
+          // Isolamento: um token de tenant só toca contatos do PRÓPRIO tenant.
+          // Contatos de outro tenant ou do pool compartilhado (client_id nulo)
+          // não são mutados nem anexados por aqui.
+          if ((existing.clientId ?? null) !== clientId) {
             skipped += 1;
             continue;
           }

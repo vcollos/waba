@@ -9,14 +9,23 @@ import {
   Query,
   Req,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Roles } from '../common/roles';
+import { RolesGuard } from '../common/roles.guard';
 import { resolveClientScope } from '../common/scope';
 import { ContactsService } from './contacts.service';
 import { UserSession } from '../database/types';
 
+// Escrita de contatos/listas: Collos + papéis operacionais do tenant. `viewer`
+// (somente leitura) fica de fora — as rotas GET não têm @Roles, então seguem
+// liberadas a qualquer papel autenticado (escopadas por tenant no service).
+const CONTACTS_WRITE_ROLES = ['super_admin', 'admin', 'client_admin', 'operator'] as const;
+
 @Controller()
+@UseGuards(RolesGuard)
 export class ContactsController {
   constructor(private readonly contactsService: ContactsService) {}
 
@@ -42,6 +51,7 @@ export class ContactsController {
   }
 
   @Post('contacts')
+  @Roles(...CONTACTS_WRITE_ROLES)
   createContact(
     @Body()
     body: {
@@ -62,6 +72,7 @@ export class ContactsController {
   }
 
   @Patch('contacts/:id')
+  @Roles(...CONTACTS_WRITE_ROLES)
   updateContact(
     @Param('id') id: string,
     @Body()
@@ -82,11 +93,13 @@ export class ContactsController {
   }
 
   @Delete('contacts/:id')
+  @Roles(...CONTACTS_WRITE_ROLES)
   deleteContact(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.contactsService.deleteContact(id, request.user);
   }
 
   @Post('contacts/bulk')
+  @Roles(...CONTACTS_WRITE_ROLES)
   bulkAction(
     @Body()
     body: {
@@ -129,6 +142,7 @@ export class ContactsController {
   }
 
   @Post('lists')
+  @Roles(...CONTACTS_WRITE_ROLES)
   createList(
     @Body() body: { name?: string; description?: string; clientId?: string | null },
     @Req() request: { user: UserSession },
@@ -140,6 +154,7 @@ export class ContactsController {
   }
 
   @Patch('lists/:id')
+  @Roles(...CONTACTS_WRITE_ROLES)
   updateList(
     @Param('id') id: string,
     @Body() body: { name?: string; description?: string | null },
@@ -149,11 +164,13 @@ export class ContactsController {
   }
 
   @Delete('lists/:id')
+  @Roles(...CONTACTS_WRITE_ROLES)
   deleteList(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.contactsService.deleteList(id, request.user);
   }
 
   @Delete('lists/:id/members/:contactId')
+  @Roles(...CONTACTS_WRITE_ROLES)
   removeListMember(
     @Param('id') id: string,
     @Param('contactId') contactId: string,
@@ -163,6 +180,7 @@ export class ContactsController {
   }
 
   @Post('contacts/imports/csv/preview')
+  @Roles(...CONTACTS_WRITE_ROLES)
   @UseInterceptors(FileInterceptor('file'))
   previewCsv(@UploadedFile() file: { originalname: string; buffer: Buffer }) {
     return this.contactsService.previewCsvImport({
@@ -172,6 +190,7 @@ export class ContactsController {
   }
 
   @Post('contacts/imports/csv')
+  @Roles(...CONTACTS_WRITE_ROLES)
   @UseInterceptors(FileInterceptor('file'))
   async importCsv(
     @UploadedFile() file: { originalname: string; buffer: Buffer },
@@ -203,11 +222,13 @@ export class ContactsController {
   }
 
   @Post('contacts/:id/opt-out')
+  @Roles(...CONTACTS_WRITE_ROLES)
   optOut(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.contactsService.setOptOut(id, request.user);
   }
 
   @Post('contacts/:id/opt-in')
+  @Roles(...CONTACTS_WRITE_ROLES)
   optIn(@Param('id') id: string, @Req() request: { user: UserSession }) {
     return this.contactsService.clearOptOut(id, request.user);
   }
