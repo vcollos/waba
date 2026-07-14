@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
+import { buildCsv } from '../common/csv';
 import { DatabaseService } from '../database/database.service';
 import {
   extractTemplateMediaHeader,
@@ -37,6 +38,29 @@ interface GetCampaignOptions {
   limit?: number;
   offset?: number;
 }
+
+const CAMPAIGN_MESSAGE_STATUS_LABEL: Record<string, string> = {
+  pending: 'Pendente',
+  accepted: 'Aceito',
+  sent: 'Enviado',
+  delivered: 'Entregue',
+  read: 'Lido',
+  failed: 'Falhou',
+  skipped: 'Ignorado',
+  cancelled: 'Cancelado',
+};
+
+/** Timestamp ISO -> data/hora legível (America/Sao_Paulo) para o relatório. */
+const formatReportTimestamp = (iso?: string | null): string => {
+  if (!iso) {
+    return '';
+  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+};
 
 @Injectable()
 export class CampaignsService {
@@ -117,6 +141,72 @@ export class CampaignsService {
         })
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     };
+  }
+
+  /** Relatório da campanha por destinatário (CSV), escopado ao tenant. */
+  async exportCampaignCsv(
+    id: string,
+    actor: UserSession,
+    requestedClientId?: string | null,
+  ): Promise<{ fileName: string; csv: string }> {
+    const state = await this.database.readMeta();
+    const campaign = state.campaigns.find((item) => item.id === id);
+    if (
+      !campaign ||
+      !isWithinScope(resolveClientScope(actor, requestedClientId ?? null), campaign.clientId)
+    ) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+
+    const messages = await this.database.listCampaignMessagesInDatabase({ campaignId: id });
+    const contactsById = await this.loadContactsByIds(messages.map((message) => message.contactId));
+
+    const header = [
+      'Nome',
+      'Telefone',
+      'Status',
+      'Enviado em',
+      'Entregue em',
+      'Lido em',
+      'Falhou em',
+      'Tentativas',
+      'Codigo erro',
+      'Titulo erro',
+      'Mensagem erro',
+      'Motivo ignorado',
+      'ID Meta',
+    ];
+    const rows = messages
+      .slice()
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((message) => {
+        const contact = contactsById.get(message.contactId) ?? null;
+        return [
+          contact?.name ?? '',
+          message.phoneE164 ?? '',
+          CAMPAIGN_MESSAGE_STATUS_LABEL[message.status] ?? message.status,
+          formatReportTimestamp(message.sentAt),
+          formatReportTimestamp(message.deliveredAt),
+          formatReportTimestamp(message.readAt),
+          formatReportTimestamp(message.failedAt),
+          String(message.attemptCount ?? 0),
+          message.providerErrorCode ?? '',
+          message.providerErrorTitle ?? '',
+          message.providerErrorMessage ?? '',
+          message.skipReason ?? '',
+          message.providerMessageId ?? '',
+        ];
+      });
+
+    // BOM para o Excel abrir acentos corretamente.
+    const csv = `﻿${buildCsv(header, rows)}`;
+    const slug =
+      campaign.name
+        .normalize('NFKD')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .toLowerCase() || 'campanha';
+    return { fileName: `campanha-${slug}.csv`, csv };
   }
 
   async create(input: CreateCampaignInput, actor: UserSession) {

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { buildCsv } from '../common/csv';
 import { DatabaseService } from '../database/database.service';
 import type { FlowResponseRecord } from '../database/types';
 
@@ -55,7 +56,7 @@ export class ResultsService {
         JSON.stringify(row.responsePayload ?? {}),
       ]);
 
-      return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+      return buildCsv(header, lines);
     }
 
     const payloadColumns = [...new Set(rows.flatMap((row) => Object.keys(row.responsePayload ?? {})))].sort();
@@ -84,7 +85,7 @@ export class ResultsService {
       ];
     });
 
-    return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+    return buildCsv(header, lines);
   }
 
   private async loadFlowResponses(
@@ -432,8 +433,6 @@ const matchesFlowResponseFilters = (
 };
 
 const isDefined = <T>(value: T | null | undefined): value is T => value !== null && value !== undefined;
-
-const escapeCsvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const stringifyPayloadValue = (value: unknown): string => {
   if (value === null || value === undefined) {

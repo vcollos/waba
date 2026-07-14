@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
 import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
-import { apiRequest } from '../../lib/api';
+import { apiDownload, apiRequest } from '../../lib/api';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 
 interface DeliveryOverview {
@@ -208,15 +208,16 @@ function SummaryTab() {
                   <th className="num">Entregues</th>
                   <th className="num">Lidas</th>
                   <th className="num">Falhas</th>
+                  <th></th>
                 </tr>
               </thead>
               {loading ? (
-                <SkeletonRows rows={4} cols={5} />
+                <SkeletonRows rows={4} cols={6} />
               ) : (
                 <tbody>
                   {(summary?.topDeliveryCampaigns ?? []).length === 0 ? (
                     <tr>
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         <EmptyState title="Sem dados no período" />
                       </td>
                     </tr>
@@ -228,6 +229,22 @@ function SummaryTab() {
                         <td className="num">{fmtInt(row.delivered)}</td>
                         <td className="num">{fmtInt(row.read)}</td>
                         <td className="num">{fmtInt(row.failed)}</td>
+                        <td>
+                          <button
+                            className="btn tertiary sm"
+                            onClick={() => {
+                              const qs = scopeClientId
+                                ? `?clientId=${encodeURIComponent(scopeClientId)}`
+                                : '';
+                              void apiDownload(
+                                `/campaigns/${row.campaignId}/export.csv${qs}`,
+                                `campanha-${row.campaignId}.csv`,
+                              ).catch(() => undefined);
+                            }}
+                          >
+                            Exportar
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}

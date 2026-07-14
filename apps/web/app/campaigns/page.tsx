@@ -13,7 +13,7 @@ import {
   ToastHost,
   useToasts,
 } from '../../components/ui';
-import { apiRequest } from '../../lib/api';
+import { apiDownload, apiRequest } from '../../lib/api';
 import { CAMPAIGN_STATUS, MESSAGE_STATUS, badgeFor } from '../../lib/badges';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 import { canWrite, isCollosRole } from '../../lib/session';
@@ -272,7 +272,9 @@ function CampaignsContent() {
         </table>
       </div>
 
-      {detailId ? <CampaignDrawer id={detailId} onClose={() => setDetailId(null)} /> : null}
+      {detailId ? (
+        <CampaignDrawer id={detailId} scopeClientId={scopeClientId} onClose={() => setDetailId(null)} />
+      ) : null}
 
       {wizard ? (
         <CampaignWizard
@@ -353,10 +355,19 @@ interface CampaignDetail extends CampaignItem {
   }>;
 }
 
-function CampaignDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+function CampaignDrawer({
+  id,
+  scopeClientId,
+  onClose,
+}: {
+  id: string;
+  scopeClientId: string | null;
+  onClose: () => void;
+}) {
   const [detail, setDetail] = useState<CampaignDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -371,6 +382,19 @@ function CampaignDrawer({ id, onClose }: { id: string; onClose: () => void }) {
       });
   }, [id]);
 
+  const exportReport = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const qs = scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : '';
+      await apiDownload(`/campaigns/${id}/export.csv${qs}`, `campanha-${id}.csv`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao exportar relatório.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const s = detail?.summary;
 
   return (
@@ -379,7 +403,16 @@ function CampaignDrawer({ id, onClose }: { id: string; onClose: () => void }) {
       subtitle={detail ? undefined : 'Carregando…'}
       onClose={onClose}
       width={840}
-      actions={detail ? <Badge def={badgeFor(CAMPAIGN_STATUS, detail.status)} /> : undefined}
+      actions={
+        detail ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button className="btn secondary sm" onClick={exportReport} disabled={exporting}>
+              {exporting ? 'Exportando…' : 'Exportar relatório'}
+            </button>
+            <Badge def={badgeFor(CAMPAIGN_STATUS, detail.status)} />
+          </div>
+        ) : undefined
+      }
     >
       {error ? <ErrorBanner message={error} /> : null}
       {loading || !detail ? (
