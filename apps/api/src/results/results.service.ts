@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { escapeCsvCell } from '../common/csv';
+import { buildCsv } from '../common/csv';
 import { DatabaseService } from '../database/database.service';
 import type { FlowResponseRecord } from '../database/types';
 
@@ -56,7 +56,7 @@ export class ResultsService {
         JSON.stringify(row.responsePayload ?? {}),
       ]);
 
-      return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+      return buildCsv(header, lines);
     }
 
     const payloadColumns = [...new Set(rows.flatMap((row) => Object.keys(row.responsePayload ?? {})))].sort();
@@ -85,7 +85,7 @@ export class ResultsService {
       ];
     });
 
-    return [header, ...lines].map((line) => line.map(escapeCsvCell).join(',')).join('\n');
+    return buildCsv(header, lines);
   }
 
   private async loadFlowResponses(
