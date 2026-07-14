@@ -26,6 +26,34 @@ Domínios de produção:
 - api: `https://waba-api.collos.com.br/api`
 - webhook Meta: `https://waba-api.collos.com.br/api/webhooks/meta/whatsapp`
 
+## Multi-tenant (isolamento por tenant)
+
+A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
+
+- isolamento por `client_id`, imposto no **backend**, nunca só na UI
+- papéis Collos (`super_admin`/`admin`) veem tudo; papéis de cliente
+  (`client_admin`/`operator`/`viewer`) só o próprio tenant; `viewer` = leitura
+- escopo centralizado em `apps/api/src/common/scope.ts` (`resolveClientScope`,
+  `writeClientId`, `isWithinScope`, `sessionClientIds`)
+- toda entidade escopável grava `client_id` via `writeClientId` e filtra leitura
+  via `resolveClientScope`/`isWithinScope`
+- detalhes e decisões em `docs/decisions/` (ver ADR 0001 e 0002)
+
+## API pública por token de tenant
+
+- listas aceitam inclusão de contatos via API externa autenticada por token do
+  tenant (`api_tokens`, só hash sha256 persistido; texto puro exibido uma vez)
+- guard: `apps/api/src/api-tokens/api-token.guard.ts` (Authorization: Bearer)
+- rotas sob `/api/public/v1` (`GET/POST /lists`, `POST /lists/:id/contacts`)
+- o tenant vem **sempre** do token; nunca confiar em `clientId` do corpo
+- gestão de tokens: `/api/api-tokens` (JWT; `super_admin`/`admin`/`client_admin`)
+
+## Rastreamento (Plane)
+
+- projeto **WABA Collos** no Plane (`work.collos.com.br`, workspace `collos`)
+- fluxo adaptado do fluxo-dev: issue-first → implementar → revisar → doc/ADR →
+  fechar. Sem time local de subagentes; correções diretas + ADR + este arquivo
+
 ## Regras de operação
 
 - trate `PostgreSQL` como store operacional principal
@@ -112,6 +140,7 @@ Com token válido, validar:
 - `GET /api/library/flows`
 - `GET /api/contacts?limit=50&offset=0`
 - `GET /api/lists`
+- `GET /api/api-tokens`
 - `GET /api/dashboard/summary`
 - `GET /api/results/summary`
 - `POST /api/integrations/{id}/test`
@@ -122,6 +151,9 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
 ## Pontos críticos do código
 
 - persistência e bootstrap: `apps/api/src/database/database.service.ts`
+- escopo multi-tenant: `apps/api/src/common/scope.ts`
+- tokens de API + ingestão pública: `apps/api/src/api-tokens/`
+- assistente CSV compartilhado (fonte única): `apps/web/components/csv-import-modal.tsx`
 - dispatch de campanha: `apps/api/src/campaigns/dispatch.service.ts`
 - agregação/resumo de campanha: `apps/api/src/campaigns/campaigns.service.ts`
 - webhook Meta: `apps/api/src/webhooks/webhooks.service.ts`
@@ -161,4 +193,5 @@ Ao alterar arquitetura, deploy, persistência ou operação:
 
 - atualizar `README.md`
 - atualizar `docs/campaign-sender-spec.md`
+- registrar decisões arquiteturais em `docs/decisions/` (ADR) e atualizar o índice
 - manter este `AGENTS.md` alinhado com a realidade da VPS

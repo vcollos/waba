@@ -947,6 +947,19 @@ export class DatabaseService implements OnModuleDestroy {
     this.database!.exec(`
       CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
       CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
+      CREATE TABLE IF NOT EXISTS api_tokens (
+        id TEXT PRIMARY KEY,
+        client_id TEXT,
+        name TEXT NOT NULL,
+        token_prefix TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        last_used_at TEXT,
+        revoked_at TEXT,
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_tokens_client ON api_tokens(client_id);
     `);
 
     if (this.metaClient) {
@@ -957,6 +970,19 @@ export class DatabaseService implements OnModuleDestroy {
         CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
         CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
         CREATE INDEX IF NOT EXISTS idx_integrations_client_id ON integrations(client_id);
+        CREATE TABLE IF NOT EXISTS api_tokens (
+          id TEXT PRIMARY KEY,
+          client_id TEXT,
+          name TEXT NOT NULL,
+          token_prefix TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          last_used_at TIMESTAMPTZ,
+          revoked_at TIMESTAMPTZ,
+          created_by TEXT,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_client ON api_tokens(client_id);
       `);
     }
   }

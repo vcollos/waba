@@ -293,7 +293,7 @@ export class ContactsService {
   }
 
   async createList(
-    input: { name: string; description?: string; clientId?: string | null },
+    input: { name: string; description?: string; clientId?: string | null; sourceType?: ListRecord['sourceType'] },
     actor: UserSession,
   ): Promise<ListRecord> {
     const timestamp = nowIso();
@@ -302,7 +302,7 @@ export class ContactsService {
       clientId: writeClientId(actor, input.clientId),
       name: input.name.trim() || 'Nova lista',
       description: cleanNullableText(input.description),
-      sourceType: 'manual',
+      sourceType: input.sourceType ?? 'manual',
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -353,6 +353,7 @@ export class ContactsService {
       listName: string;
       fileName: string;
       content: Buffer;
+      clientId?: string | null;
       mapping?: Partial<Record<CsvImportField, string | null>>;
       defaults?: CsvImportDefaults;
     },
@@ -390,6 +391,7 @@ export class ContactsService {
         {
           fileName: params.fileName,
           listName: job.listName,
+          clientId: params.clientId ?? null,
           fileSha256: createHash('sha256').update(params.content).digest('hex'),
           records,
           mapping,
@@ -415,6 +417,7 @@ export class ContactsService {
     params: {
       listName: string;
       fileName: string;
+      clientId?: string | null;
       fileSha256: string;
       records: Array<Record<string, string>>;
       mapping: Record<CsvImportField, string | null>;
@@ -434,8 +437,9 @@ export class ContactsService {
     });
 
     const timestamp = nowIso();
-    // Tenant dos registros importados: cliente => o próprio; Collos => nenhum.
-    const importClientId = writeClientId(actor, null);
+    // Tenant dos registros importados: cliente => o próprio; Collos => o tenant
+    // ativo (seletor da topbar) se informado, senão nenhum (escopo compartilhado).
+    const importClientId = writeClientId(actor, params.clientId ?? null);
     const list: ListRecord = {
       id: newId(),
       clientId: importClientId,
@@ -702,6 +706,111 @@ export class ContactsService {
     });
 
     return contact;
+  }
+
+  /**
+   * Ingestão de contatos via API pública (token do tenant). Faz upsert por
+   * phone_hash e garante a associação à lista. Escopado ao clientId do token:
+   * a lista precisa pertencer ao tenant e contatos de outro tenant são pulados.
+   */
+  async apiIngestContacts(
+    listId: string,
+    rows: Array<{
+      name?: string;
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      email?: string | null;
+      category?: string | null;
+    }>,
+    clientId: string,
+  ): Promise<{
+    listId: string;
+    received: number;
+    inserted: number;
+    updated: number;
+    skipped: number;
+    invalid: number;
+  }> {
+    const [listRow] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, client_id FROM lists WHERE id = $1`,
+      [listId],
+    );
+    if (!listRow || (listRow.client_id ?? null) !== clientId) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new BadRequestException('Envie ao menos um contato em "contacts"');
+    }
+    if (rows.length > 5000) {
+      throw new BadRequestException('Máximo de 5000 contatos por requisição');
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    let skipped = 0;
+    let invalid = 0;
+
+    await this.database.postgresTransaction(async (client) => {
+      for (const row of rows) {
+        const rawPhone = String(row.phone ?? '').trim();
+        if (!rawPhone) {
+          invalid += 1;
+          continue;
+        }
+        const normalized = normalizePhone(rawPhone);
+        const phoneHash = hash((normalized.phoneE164 || rawPhone).replace(/^\+/, ''));
+        const timestamp = nowIso();
+        const input: ContactInput = {
+          clientId,
+          firstName: row.firstName,
+          lastName: row.lastName ?? null,
+          name: row.name,
+          phone: rawPhone,
+          email: row.email ?? null,
+          category: row.category ?? null,
+        };
+
+        const existingRows = await client.query<Record<string, unknown>>(
+          `SELECT
+            id, client_id, external_ref, client_name, first_name, last_name, name, category, record_status,
+            phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+            is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at
+           FROM contacts WHERE phone_hash = $1`,
+          [phoneHash],
+        );
+        const existing = existingRows.rows[0] ? mapContactRow(existingRows.rows[0]) : null;
+
+        let contactId: string;
+        if (existing) {
+          // Isolamento: contato já vinculado a OUTRO tenant não é tocado.
+          if ((existing.clientId ?? null) !== null && existing.clientId !== clientId) {
+            skipped += 1;
+            continue;
+          }
+          const merged = updateExistingContact(existing, input, normalized, timestamp);
+          await updateContactPg(client, merged);
+          contactId = existing.id;
+          updated += 1;
+        } else {
+          const contact = createNewContact(input, normalized, timestamp);
+          await insertContactPg(client, contact);
+          contactId = contact.id;
+          inserted += 1;
+        }
+
+        await client.query(
+          `INSERT INTO list_members (id, list_id, contact_id, created_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (list_id, contact_id) DO NOTHING`,
+          [newId(), listId, contactId, timestamp],
+        );
+      }
+
+      await client.query(`UPDATE lists SET updated_at = $1 WHERE id = $2`, [nowIso(), listId]);
+    });
+
+    return { listId, received: rows.length, inserted, updated, skipped, invalid };
   }
 
   async updateContact(id: string, input: ContactInput, actor: UserSession) {
