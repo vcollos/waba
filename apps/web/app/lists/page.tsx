@@ -75,6 +75,11 @@ const originBadge = (source: string) =>
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 
+// Sufixo do tenant ativo: detalhe/edição/exclusão precisam escopar pelo mesmo
+// tenant da listagem (senão o backend cai no primeiro tenant do usuário).
+const clientQuery = (clientId: string | null) =>
+  clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+
 export default function ListsPage() {
   return (
     <AppShell title="Listas">
@@ -252,6 +257,7 @@ function ListsContent() {
       {editing ? (
         <EditListModal
           list={editing}
+          scopeClientId={scopeClientId}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -264,6 +270,7 @@ function ListsContent() {
       {deleting ? (
         <DeleteListModal
           list={deleting}
+          scopeClientId={scopeClientId}
           onClose={() => setDeleting(null)}
           onDeleted={() => {
             setDeleting(null);
@@ -317,7 +324,7 @@ function ListDrawer({
 
   const reload = useCallback(() => {
     setLoading(true);
-    void apiRequest<ListDetail>(`/lists/${list.id}`)
+    void apiRequest<ListDetail>(`/lists/${list.id}${clientQuery(scopeClientId)}`)
       .then((data) => {
         setDetail(data);
         setLoading(false);
@@ -326,7 +333,7 @@ function ListDrawer({
         setError(err instanceof Error ? err.message : 'Falha ao carregar a lista.');
         setLoading(false);
       });
-  }, [list.id]);
+  }, [list.id, scopeClientId]);
 
   useEffect(() => {
     reload();
@@ -336,7 +343,9 @@ function ListDrawer({
     setRemovingId(contactId);
     setError(null);
     try {
-      await apiRequest(`/lists/${list.id}/members/${contactId}`, { method: 'DELETE' });
+      await apiRequest(`/lists/${list.id}/members/${contactId}${clientQuery(scopeClientId)}`, {
+        method: 'DELETE',
+      });
       reload();
       onChanged();
     } catch (err) {
@@ -471,6 +480,7 @@ function ListDrawer({
       {editingMember ? (
         <EditMemberModal
           member={editingMember}
+          scopeClientId={scopeClientId}
           onClose={() => setEditingMember(null)}
           onSaved={() => {
             setEditingMember(null);
@@ -485,10 +495,12 @@ function ListDrawer({
 
 function EditMemberModal({
   member,
+  scopeClientId,
   onClose,
   onSaved,
 }: {
   member: Member;
+  scopeClientId: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -508,7 +520,7 @@ function EditMemberModal({
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/contacts/${member.id}`, {
+      await apiRequest(`/contacts/${member.id}${clientQuery(scopeClientId)}`, {
         method: 'PATCH',
         body: JSON.stringify({
           firstName,
@@ -751,10 +763,12 @@ function CreateListModal({
 
 function EditListModal({
   list,
+  scopeClientId,
   onClose,
   onSaved,
 }: {
   list: ListRow;
+  scopeClientId: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -771,7 +785,7 @@ function EditListModal({
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/lists/${list.id}`, {
+      await apiRequest(`/lists/${list.id}${clientQuery(scopeClientId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ name, description: description.trim() ? description : null }),
       });
@@ -820,10 +834,12 @@ function EditListModal({
 
 function DeleteListModal({
   list,
+  scopeClientId,
   onClose,
   onDeleted,
 }: {
   list: ListRow;
+  scopeClientId: string | null;
   onClose: () => void;
   onDeleted: () => void;
 }) {
@@ -834,7 +850,7 @@ function DeleteListModal({
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/lists/${list.id}`, { method: 'DELETE' });
+      await apiRequest(`/lists/${list.id}${clientQuery(scopeClientId)}`, { method: 'DELETE' });
       onDeleted();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao excluir lista.');

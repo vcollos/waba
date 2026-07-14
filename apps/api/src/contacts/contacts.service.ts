@@ -339,8 +339,9 @@ export class ContactsService {
     id: string,
     input: { name?: string; description?: string | null },
     actor: UserSession,
+    requestedClientId: string | null = null,
   ): Promise<ListRecord> {
-    const scope = resolveClientScope(actor);
+    const scope = resolveClientScope(actor, requestedClientId);
     const [row] = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, name, description, source_type, source_file_path, client_id, created_at, updated_at
        FROM lists WHERE id = $1`,
@@ -376,8 +377,12 @@ export class ContactsService {
   }
 
   /** Exclui uma lista (e suas associações; os contatos em si são preservados). */
-  async deleteList(id: string, actor: UserSession): Promise<{ id: string }> {
-    const scope = resolveClientScope(actor);
+  async deleteList(
+    id: string,
+    actor: UserSession,
+    requestedClientId: string | null = null,
+  ): Promise<{ id: string }> {
+    const scope = resolveClientScope(actor, requestedClientId);
     const [row] = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, client_id FROM lists WHERE id = $1`,
       [id],
@@ -406,8 +411,9 @@ export class ContactsService {
     listId: string,
     contactId: string,
     actor: UserSession,
+    requestedClientId: string | null = null,
   ): Promise<{ removed: boolean }> {
-    const scope = resolveClientScope(actor);
+    const scope = resolveClientScope(actor, requestedClientId);
     const [row] = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, client_id FROM lists WHERE id = $1`,
       [listId],
@@ -917,10 +923,15 @@ export class ContactsService {
     return { listId, received: rows.length, inserted, updated, skipped, invalid };
   }
 
-  async updateContact(id: string, input: ContactInput, actor: UserSession) {
+  async updateContact(
+    id: string,
+    input: ContactInput,
+    actor: UserSession,
+    requestedClientId: string | null = null,
+  ) {
     let updatedContact: ContactRecord | undefined;
 
-    const scope = resolveClientScope(actor);
+    const scope = resolveClientScope(actor, requestedClientId);
     await this.database.postgresTransaction(async (client) => {
       const existing = await getContactByIdFromDatabase(client, id);
       if (!existing || (scope !== null && (existing.clientId ?? null) !== scope)) {

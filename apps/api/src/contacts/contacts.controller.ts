@@ -88,8 +88,9 @@ export class ContactsController {
       listIds?: string[];
     },
     @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
   ) {
-    return this.contactsService.updateContact(id, body, request.user);
+    return this.contactsService.updateContact(id, body, request.user, clientId ?? null);
   }
 
   @Delete('contacts/:id')
@@ -137,8 +138,12 @@ export class ContactsController {
   }
 
   @Get('lists/:id')
-  list(@Param('id') id: string, @Req() request: { user: UserSession }) {
-    return this.contactsService.getList(id, resolveClientScope(request.user));
+  list(
+    @Param('id') id: string,
+    @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.contactsService.getList(id, resolveClientScope(request.user, clientId));
   }
 
   @Post('lists')
@@ -159,14 +164,19 @@ export class ContactsController {
     @Param('id') id: string,
     @Body() body: { name?: string; description?: string | null },
     @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
   ) {
-    return this.contactsService.updateList(id, body, request.user);
+    return this.contactsService.updateList(id, body, request.user, clientId ?? null);
   }
 
   @Delete('lists/:id')
   @Roles(...CONTACTS_WRITE_ROLES)
-  deleteList(@Param('id') id: string, @Req() request: { user: UserSession }) {
-    return this.contactsService.deleteList(id, request.user);
+  deleteList(
+    @Param('id') id: string,
+    @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.contactsService.deleteList(id, request.user, clientId ?? null);
   }
 
   @Delete('lists/:id/members/:contactId')
@@ -175,8 +185,9 @@ export class ContactsController {
     @Param('id') id: string,
     @Param('contactId') contactId: string,
     @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
   ) {
-    return this.contactsService.removeListMember(id, contactId, request.user);
+    return this.contactsService.removeListMember(id, contactId, request.user, clientId ?? null);
   }
 
   @Post('contacts/imports/csv/preview')
