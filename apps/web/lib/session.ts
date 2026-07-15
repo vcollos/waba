@@ -58,6 +58,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/results', label: 'Resultados', dot: 'var(--uni-goiaba)' },
   { href: '/billing', label: 'Cobrança', dot: 'var(--uni-lima)' },
   { href: '/audit', label: 'Auditoria', dot: 'var(--uni-pessego)', collosOnly: true },
+  { href: '/tenant-organizer', label: 'Organização', dot: 'var(--uni-roxo)', collosOnly: true },
 ];
 
 export const navForRole = (role: Role): NavItem[] =>

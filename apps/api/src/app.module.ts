@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
+import { AdminTenantsModule } from './admin-tenants/admin-tenants.module';
 import { ApiTokensModule } from './api-tokens/api-tokens.module';
 import { AppBootstrapService } from './app-bootstrap.service';
 import { AuditModule } from './audit/audit.module';
@@ -20,6 +21,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   imports: [
     CoreModule,
     AuditModule,
+    AdminTenantsModule,
     ApiTokensModule,
     AuthModule,
     CampaignsModule,
