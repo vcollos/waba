@@ -205,7 +205,7 @@ function ListsSection({
   const transfer = async () => {
     setBusy(true);
     try {
-      const res = await apiRequest<{ lists: number; contactsMoved: number; contactsSkipped: number }>(
+      const res = await apiRequest<{ lists: number; contactsMoved: number; contactsReused: number }>(
         '/admin/tenants/transfer/lists',
         { method: 'POST', body: JSON.stringify({ listIds: [...selected], clientId: target }) },
       );
@@ -213,7 +213,9 @@ function ListsSection({
       setTarget('');
       onDone(
         `${res.lists} lista(s) → ${clientName(target)}. ${fmtInt(res.contactsMoved)} contato(s) movido(s)` +
-          (res.contactsSkipped ? `, ${fmtInt(res.contactsSkipped)} pulado(s) (telefone já no destino).` : '.'),
+          (res.contactsReused
+            ? `, ${fmtInt(res.contactsReused)} reaproveitado(s) (telefone já existia no destino).`
+            : '.'),
       );
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Falha ao transferir listas.');
@@ -333,6 +335,10 @@ function CampaignsSection({
       <div className="block-head">
         <span className="block-title">Campanhas</span>
       </div>
+      <p className="hint" style={{ margin: '0 0 8px' }}>
+        Retag do tenant da campanha. As mensagens já enviadas e seus destinatários permanecem como
+        registro histórico — mova as listas/contatos correspondentes para manter a consistência.
+      </p>
       <TransferBar
         count={selected.size}
         clients={clients}

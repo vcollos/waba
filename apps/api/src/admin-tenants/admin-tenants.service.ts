@@ -93,7 +93,7 @@ export class AdminTenantsService {
     listIds: string[],
     targetClientId: string | null,
     actor: UserSession,
-  ): Promise<{ lists: number; contactsMoved: number; contactsSkipped: number }> {
+  ): Promise<{ lists: number; contactsMoved: number; contactsReused: number }> {
     const ids = [...new Set((listIds ?? []).filter(Boolean))];
     if (ids.length === 0) {
       throw new BadRequestException('Selecione ao menos uma lista');
@@ -101,49 +101,76 @@ export class AdminTenantsService {
     const target = await this.resolveTarget(targetClientId);
 
     let contactsMoved = 0;
-    let contactsSkipped = 0;
+    let contactsReused = 0;
     await this.database.postgresTransaction(async (client) => {
-      for (const listId of ids) {
-        const listRes = await client.query(`SELECT id FROM lists WHERE id = $1`, [listId]);
-        if (listRes.rowCount === 0) {
-          throw new NotFoundException(`Lista ${listId} não encontrada`);
-        }
-
-        // Membros que colidiriam com um contato já existente no tenant destino.
-        const conflictRes = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-           FROM contacts c
-           WHERE c.id IN (SELECT contact_id FROM list_members WHERE list_id = $2)
-             AND EXISTS (
-               SELECT 1 FROM contacts t
-               WHERE COALESCE(t.client_id, '') = COALESCE($1, '')
-                 AND t.phone_hash = c.phone_hash
-                 AND t.id <> c.id
-             )`,
-          [target, listId],
-        );
-        contactsSkipped += Number(conflictRes.rows[0]?.count ?? 0);
-
-        const movedRes = await client.query(
-          `UPDATE contacts
-           SET client_id = $1, updated_at = $2
-           WHERE id IN (SELECT contact_id FROM list_members WHERE list_id = $3)
-             AND NOT EXISTS (
-               SELECT 1 FROM contacts t
-               WHERE COALESCE(t.client_id, '') = COALESCE($1, '')
-                 AND t.phone_hash = contacts.phone_hash
-                 AND t.id <> contacts.id
-             )`,
-          [target, nowIso(), listId],
-        );
-        contactsMoved += movedRes.rowCount ?? 0;
-
-        await client.query(`UPDATE lists SET client_id = $1, updated_at = $2 WHERE id = $3`, [
-          target,
-          nowIso(),
-          listId,
-        ]);
+      const existingLists = await client.query<{ id: string }>(
+        `SELECT id FROM lists WHERE id = ANY($1::text[])`,
+        [ids],
+      );
+      if (existingLists.rowCount !== ids.length) {
+        throw new NotFoundException('Uma ou mais listas não foram encontradas');
       }
+
+      // Dedup por "keeper": para cada telefone do lote, um único contato canônico
+      // no destino — o já existente lá, senão o menor id entre os membros do lote.
+      // Isso evita violar o índice composto tanto por colisão com o destino quanto
+      // por colisão INTRA-LOTE (dois membros de tenants diferentes, mesmo telefone).
+      await client.query(
+        `CREATE TEMP TABLE _batch_members ON COMMIT DROP AS
+           SELECT DISTINCT c.id AS contact_id, c.phone_hash
+           FROM list_members lm JOIN contacts c ON c.id = lm.contact_id
+           WHERE lm.list_id = ANY($1::text[])`,
+        [ids],
+      );
+      await client.query(
+        `CREATE TEMP TABLE _keepers ON COMMIT DROP AS
+           SELECT ph AS phone_hash,
+             COALESCE(
+               (SELECT id FROM contacts
+                 WHERE COALESCE(client_id, '') = COALESCE($1, '') AND phone_hash = ph
+                 LIMIT 1),
+               (SELECT contact_id FROM _batch_members bm WHERE bm.phone_hash = ph
+                 ORDER BY contact_id LIMIT 1)
+             ) AS keeper_id
+           FROM (SELECT DISTINCT phone_hash AS ph FROM _batch_members) x`,
+        [target],
+      );
+
+      // Move para o destino apenas os contatos "keeper" que ainda não estão lá.
+      const movedRes = await client.query(
+        `UPDATE contacts SET client_id = $1, updated_at = $2
+         WHERE id IN (SELECT keeper_id FROM _keepers)
+           AND COALESCE(client_id, '') <> COALESCE($1, '')`,
+        [target, nowIso()],
+      );
+      contactsMoved += movedRes.rowCount ?? 0;
+
+      // Re-aponta membros não-keeper para o keeper (dedup). Remove antes as
+      // associações que colidiriam com o UNIQUE(list_id, contact_id).
+      await client.query(
+        `DELETE FROM list_members lm
+         USING _batch_members bm, _keepers k
+         WHERE lm.list_id = ANY($1::text[]) AND lm.contact_id = bm.contact_id
+           AND bm.phone_hash = k.phone_hash AND lm.contact_id <> k.keeper_id
+           AND EXISTS (
+             SELECT 1 FROM list_members lm2 WHERE lm2.list_id = lm.list_id AND lm2.contact_id = k.keeper_id
+           )`,
+        [ids],
+      );
+      const reusedRes = await client.query(
+        `UPDATE list_members lm SET contact_id = k.keeper_id
+         FROM _batch_members bm, _keepers k
+         WHERE lm.list_id = ANY($1::text[]) AND lm.contact_id = bm.contact_id
+           AND bm.phone_hash = k.phone_hash AND lm.contact_id <> k.keeper_id`,
+        [ids],
+      );
+      contactsReused += reusedRes.rowCount ?? 0;
+
+      await client.query(`UPDATE lists SET client_id = $1, updated_at = $2 WHERE id = ANY($3::text[])`, [
+        target,
+        nowIso(),
+        ids,
+      ]);
     });
 
     void this.audit
@@ -152,11 +179,11 @@ export class AdminTenantsService {
         action: 'admin.tenant.lists_transferred',
         entityType: 'list',
         entityId: ids.join(','),
-        metadata: { targetClientId: target, lists: ids.length, contactsMoved, contactsSkipped },
+        metadata: { targetClientId: target, lists: ids.length, contactsMoved, contactsReused },
       })
       .catch(() => undefined);
 
-    return { lists: ids.length, contactsMoved, contactsSkipped };
+    return { lists: ids.length, contactsMoved, contactsReused };
   }
 
   /** Reatribui o tenant de campanhas (retag no app_state). */
