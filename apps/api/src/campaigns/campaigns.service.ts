@@ -211,13 +211,9 @@ export class CampaignsService {
 
   async create(input: CreateCampaignInput, actor: UserSession) {
     const state = await this.database.readMeta();
-    const template = input.templateCacheId
-      ? state.templates.find((item) => item.id === input.templateCacheId)
-      : undefined;
-    const inferredFlow = template?.hasFlowButton
-      ? findFlowForTemplate(template, state.flows)
-      : undefined;
 
+    // A integração vem primeiro: ela define o tenant da campanha e amarra o que
+    // pode ser usado nela. O dispatch envia sempre por `campaign.integrationId`.
     const integration = state.integrations.find((item) => item.id === input.integrationId);
     if (!integration || !isWithinScope(resolveClientScope(actor), integration.clientId)) {
       throw new NotFoundException('Integração não encontrada');
@@ -225,8 +221,27 @@ export class CampaignsService {
     if (!(await this.loadListsByIds([input.listId])).has(input.listId)) {
       throw new NotFoundException('Lista não encontrada');
     }
+
+    // Template e flow só valem se forem da MESMA integração da campanha. A
+    // etiqueta de tenant (library) pode expor um template de outra integração:
+    // resolvê-lo aqui vazaria o flow do dono original (endpointUri, raw...) via
+    // `inferredFlow`, além de quebrar no envio à Meta.
+    const template = input.templateCacheId
+      ? state.templates.find(
+          (item) => item.id === input.templateCacheId && item.integrationId === integration.id,
+        )
+      : undefined;
     if (input.templateCacheId && !template) {
+      // Mensagem genérica de propósito: não revela existência fora do escopo.
       throw new NotFoundException('Template não encontrado');
+    }
+
+    const integrationFlows = state.flows.filter((flow) => flow.integrationId === integration.id);
+    const inferredFlow = template?.hasFlowButton
+      ? findFlowForTemplate(template, integrationFlows)
+      : undefined;
+    if (input.flowCacheId && !integrationFlows.some((flow) => flow.id === input.flowCacheId)) {
+      throw new NotFoundException('Flow não encontrado');
     }
 
     const mapping = input.parameterMapping ?? {};
@@ -247,8 +262,8 @@ export class CampaignsService {
 
     const campaign: CampaignRecord = {
       id: newId(),
-      clientId: state.integrations.find((item) => item.id === input.integrationId)?.clientId ?? null,
-      integrationId: input.integrationId,
+      clientId: integration.clientId ?? null,
+      integrationId: integration.id,
       name: input.name,
       mode: input.mode,
       templateCacheId: input.templateCacheId ?? null,

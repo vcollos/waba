@@ -37,7 +37,13 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
   `writeClientId`, `isWithinScope`, `sessionClientIds`)
 - toda entidade escopável grava `client_id` via `writeClientId` e filtra leitura
   via `resolveClientScope`/`isWithinScope`
-- detalhes e decisões em `docs/decisions/` (ver ADR 0001 e 0002)
+- exceção: `templates.client_id` é um **override** (etiqueta administrativa), não
+  um tenant de criação — tenant efetivo do modelo =
+  `template.clientId ?? integration.clientId` (ADR 0004). Etiquetar **move** o
+  modelo: o tenant anterior perde a visibilidade.
+- campanha: template e flow só podem ser da **integração da campanha** — a
+  integração define o que pode ser usado nela (`campaigns.service.ts#create`)
+- detalhes e decisões em `docs/decisions/` (ver ADR 0001, 0002 e 0004)
 
 ## API pública por token de tenant
 

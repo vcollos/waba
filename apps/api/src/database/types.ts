@@ -138,6 +138,8 @@ export interface TemplateMediaHeader {
 export interface TemplateCacheRecord {
   id: string;
   integrationId: string;
+  /** Override de tenant por template; nulo = herda o tenant da integração. */
+  clientId?: string | null;
   metaTemplateId: string;
   name: string;
   languageCode: string;

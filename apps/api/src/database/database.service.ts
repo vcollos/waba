@@ -393,6 +393,7 @@ export class DatabaseService implements OnModuleDestroy {
       `SELECT
         id,
         integration_id,
+        client_id,
         meta_template_id,
         name,
         language_code,
@@ -420,19 +421,42 @@ export class DatabaseService implements OnModuleDestroy {
     await this.ensureReady();
     if (!this.metaClient) {
       await this.write((state) => {
+        // Preserva o override de tenant (`clientId`) entre sincronizações:
+        // a chave estável é `metaTemplateId` (o `id` local é regerado a cada sync).
+        const overrides = new Map<string, string>();
+        for (const template of state.templates) {
+          if (template.integrationId === integrationId && template.clientId) {
+            overrides.set(template.metaTemplateId, template.clientId);
+          }
+        }
         state.templates = state.templates.filter((template) => template.integrationId !== integrationId);
-        state.templates.push(...templates);
+        state.templates.push(
+          ...templates.map((template) => ({
+            ...template,
+            clientId: overrides.get(template.metaTemplateId) ?? template.clientId ?? null,
+          })),
+        );
       });
       return;
     }
 
-    await this.postgresTransaction(async (client) => {
+    const overrides = await this.postgresTransaction(async (client) => {
+      // Lê os overrides de tenant antes do DELETE para não zerar a etiqueta no re-sync.
+      const existing = await client.query<{ meta_template_id: string; client_id: string }>(
+        'SELECT meta_template_id, client_id FROM templates WHERE integration_id = $1 AND client_id IS NOT NULL',
+        [integrationId],
+      );
+      const overrides = new Map<string, string>(
+        existing.rows.map((row) => [row.meta_template_id, row.client_id]),
+      );
+
       await client.query('DELETE FROM templates WHERE integration_id = $1', [integrationId]);
       for (const template of templates) {
         await client.query(
           `INSERT INTO templates (
             id,
             integration_id,
+            client_id,
             meta_template_id,
             name,
             language_code,
@@ -445,11 +469,12 @@ export class DatabaseService implements OnModuleDestroy {
             raw_json,
             last_synced_at
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13::timestamptz
+            $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14::timestamptz
           )`,
           [
             template.id,
             template.integrationId,
+            overrides.get(template.metaTemplateId) ?? template.clientId ?? null,
             template.metaTemplateId,
             template.name,
             template.languageCode,
@@ -464,13 +489,19 @@ export class DatabaseService implements OnModuleDestroy {
           ],
         );
       }
+
+      return overrides;
     });
 
+    // Reflete no cache em memória o mesmo `client_id` efetivamente gravado.
     this.metaStateCache = {
       ...this.metaStateCache,
       templates: [
         ...this.metaStateCache.templates.filter((template) => template.integrationId !== integrationId),
-        ...structuredClone(templates),
+        ...structuredClone(templates).map((template) => ({
+          ...template,
+          clientId: overrides.get(template.metaTemplateId) ?? template.clientId ?? null,
+        })),
       ],
     };
   }
@@ -695,6 +726,7 @@ export class DatabaseService implements OnModuleDestroy {
         CREATE TABLE IF NOT EXISTS templates (
           id TEXT PRIMARY KEY,
           integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
+          client_id TEXT,
           meta_template_id TEXT NOT NULL,
           name TEXT NOT NULL,
           language_code TEXT NOT NULL,
@@ -936,7 +968,8 @@ export class DatabaseService implements OnModuleDestroy {
   /**
    * Migração idempotente e não-destrutiva do modelo multi-tenant:
    * adiciona `client_id` às tabelas relacionais grandes (contacts, lists,
-   * integrations) sem remover dados existentes. Linhas legadas ficam com
+   * integrations, templates) sem remover dados existentes. Em `templates` a
+   * coluna é um override do tenant herdado da integração. Linhas legadas ficam com
    * `client_id` nulo (escopo Collos) até serem atribuídas a um tenant.
    */
   private async migrateTenantSchema(): Promise<void> {
@@ -967,9 +1000,11 @@ export class DatabaseService implements OnModuleDestroy {
         ALTER TABLE contacts ADD COLUMN IF NOT EXISTS client_id TEXT;
         ALTER TABLE lists ADD COLUMN IF NOT EXISTS client_id TEXT;
         ALTER TABLE integrations ADD COLUMN IF NOT EXISTS client_id TEXT;
+        ALTER TABLE templates ADD COLUMN IF NOT EXISTS client_id TEXT;
         CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
         CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
         CREATE INDEX IF NOT EXISTS idx_integrations_client_id ON integrations(client_id);
+        CREATE INDEX IF NOT EXISTS idx_templates_client ON templates(client_id);
         CREATE TABLE IF NOT EXISTS api_tokens (
           id TEXT PRIMARY KEY,
           client_id TEXT,
@@ -2279,6 +2314,7 @@ export class DatabaseService implements OnModuleDestroy {
             `INSERT INTO templates (
               id,
               integration_id,
+              client_id,
               meta_template_id,
               name,
               language_code,
@@ -2291,11 +2327,12 @@ export class DatabaseService implements OnModuleDestroy {
               raw_json,
               last_synced_at
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13::timestamptz
+              $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14::timestamptz
             )`,
             [
               template.id,
               template.integrationId,
+              template.clientId ?? null,
               template.metaTemplateId,
               template.name,
               template.languageCode,
@@ -2393,6 +2430,7 @@ export class DatabaseService implements OnModuleDestroy {
         `SELECT
           id,
           integration_id,
+          client_id,
           meta_template_id,
           name,
           language_code,
@@ -2461,6 +2499,7 @@ type IntegrationRow = {
 type TemplateRow = {
   id: string;
   integration_id: string;
+  client_id: string | null;
   meta_template_id: string;
   name: string;
   language_code: string;
@@ -2735,6 +2774,7 @@ const mapIntegrationRow = (row: IntegrationRow): IntegrationRecord => ({
 const mapTemplateRow = (row: TemplateRow): TemplateCacheRecord => ({
   id: row.id,
   integrationId: row.integration_id,
+  clientId: row.client_id ?? null,
   metaTemplateId: row.meta_template_id,
   name: row.name,
   languageCode: row.language_code,

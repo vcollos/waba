@@ -15,6 +15,10 @@ modelos, resultados); apenas a Collos (administração da plataforma) vê tudo.
 1. **Isolamento por `clientId`**, imposto no **backend** (nunca só na UI):
    - Coluna `client_id` (nullable) nas tabelas relacionais grandes: `contacts`,
      `lists`, `integrations`. Campanhas herdam o `clientId` da integração.
+     > **Emenda (ADR [0004](0004-etiqueta-de-tenant-por-modelo.md)):** a herança
+     > de tenant não é universal. `templates` também tem `client_id`, como
+     > **override** do tenant da integração — o tenant efetivo de um modelo é
+     > `template.clientId ?? integration.clientId`. Campanhas seguem herdando.
    - Migração idempotente e não-destrutiva (`ALTER TABLE ... ADD COLUMN IF NOT
      EXISTS`) em `database.service.ts#migrateTenantSchema`. Linhas legadas ficam
      com `client_id` nulo (escopo compartilhado) até serem atribuídas.
