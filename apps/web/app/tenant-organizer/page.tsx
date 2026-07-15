@@ -32,13 +32,26 @@ interface OverviewCampaign {
   clientId: string | null;
   status: string;
 }
+interface OverviewTemplate {
+  id: string;
+  name: string;
+  languageCode: string;
+  integrationId: string;
+  integrationName: string;
+  clientId: string | null;
+  effectiveClientId: string | null;
+}
 interface Overview {
   clients: OverviewClient[];
   lists: OverviewList[];
   campaigns: OverviewCampaign[];
+  templates: OverviewTemplate[];
 }
 
 const ORIGIN_LABEL: Record<string, string> = { csv: 'CSV', manual: 'Manual', api: 'API' };
+
+// Valor sentinela do select de Modelos: envia clientId=null (limpa a etiqueta).
+const INHERIT = '__inherit__';
 
 export default function TenantOrganizerPage() {
   return (
@@ -91,8 +104,8 @@ function TenantOrganizerContent() {
         <div className="op-head-titles">
           <h1 className="op-title">Organização de tenants</h1>
           <p className="op-sub">
-            Transfira listas (com seus contatos) e campanhas entre tenants. Somente administração
-            Collos.
+            Transfira listas (com seus contatos) e campanhas entre tenants, e etiquete modelos por
+            tenant. Somente administração Collos.
           </p>
         </div>
       </div>
@@ -114,6 +127,18 @@ function TenantOrganizerContent() {
       <CampaignsSection
         loading={loading}
         campaigns={data?.campaigns ?? []}
+        clients={data?.clients ?? []}
+        clientName={clientName}
+        onDone={(msg) => {
+          push('success', msg);
+          load();
+        }}
+        onError={(msg) => push('danger', msg)}
+      />
+
+      <TemplatesSection
+        loading={loading}
+        templates={data?.templates ?? []}
         clients={data?.clients ?? []}
         clientName={clientName}
         onDone={(msg) => {
@@ -150,6 +175,10 @@ function TransferBar({
   busy,
   onTransfer,
   noun,
+  verb = 'Transferir',
+  busyLabel = 'Transferindo…',
+  placeholder = 'Transferir para…',
+  extraOptions = [],
 }: {
   count: number;
   clients: OverviewClient[];
@@ -158,15 +187,24 @@ function TransferBar({
   busy: boolean;
   onTransfer: () => void;
   noun: string;
+  verb?: string;
+  busyLabel?: string;
+  placeholder?: string;
+  extraOptions?: Array<{ value: string; label: string }>;
 }) {
   return (
     <div className="toolbar" style={{ justifyContent: 'flex-start', gap: 10 }}>
       <span className="cell-sub">{count} selecionado(s)</span>
       <select className="flt" value={target} onChange={(e) => setTarget(e.target.value)}>
-        <option value="">Transferir para…</option>
+        <option value="">{placeholder}</option>
         {clients.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
+          </option>
+        ))}
+        {extraOptions.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -175,7 +213,7 @@ function TransferBar({
         onClick={onTransfer}
         disabled={busy || count === 0 || !target}
       >
-        {busy ? 'Transferindo…' : `Transferir ${noun}`}
+        {busy ? busyLabel : `${verb} ${noun}`}
       </button>
     </div>
   );
@@ -387,6 +425,127 @@ function CampaignsSection({
                     <td className="cell-strong">{campaign.name}</td>
                     <td className="cell-sub">{campaign.status}</td>
                     <td className="cell-sub">{clientName(campaign.clientId)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TemplatesSection({
+  loading,
+  templates,
+  clients,
+  clientName,
+  onDone,
+  onError,
+}: {
+  loading: boolean;
+  templates: OverviewTemplate[];
+  clients: OverviewClient[];
+  clientName: (id: string | null) => string;
+  onDone: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const { selected, toggle, setAll, clear } = useSelection();
+  const [target, setTarget] = useState('');
+  const [busy, setBusy] = useState(false);
+  const allIds = useMemo(() => templates.map((t) => t.id), [templates]);
+  const allOn = allIds.length > 0 && allIds.every((id) => selected.has(id));
+
+  const assign = async () => {
+    setBusy(true);
+    const inherit = target === INHERIT;
+    try {
+      const res = await apiRequest<{ templates: number }>('/admin/tenants/transfer/templates', {
+        method: 'POST',
+        body: JSON.stringify({ templateIds: [...selected], clientId: inherit ? null : target }),
+      });
+      clear();
+      setTarget('');
+      onDone(`${res.templates} modelo(s) → ${inherit ? 'herda da conta' : clientName(target)}.`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Falha ao atribuir modelos.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="block">
+      <div className="block-head">
+        <span className="block-title">Modelos</span>
+      </div>
+      <p className="hint" style={{ margin: '0 0 8px' }}>
+        A etiqueta define qual tenant enxerga o modelo quando vários tenants usam a mesma conta
+        WABA. Sem etiqueta, o modelo herda o tenant da conta.
+      </p>
+      <TransferBar
+        count={selected.size}
+        clients={clients}
+        target={target}
+        setTarget={setTarget}
+        busy={busy}
+        onTransfer={assign}
+        noun="modelos"
+        verb="Atribuir"
+        busyLabel="Atribuindo…"
+        placeholder="Atribuir para…"
+        extraOptions={[{ value: INHERIT, label: 'Herdar da conta (limpar etiqueta)' }]}
+      />
+      <div className="tbl-wrap">
+        <table className="tbl dense">
+          <thead>
+            <tr>
+              <th style={{ width: 36 }}>
+                <input
+                  type="checkbox"
+                  checked={allOn}
+                  onChange={(e) => setAll(allIds, e.target.checked)}
+                />
+              </th>
+              <th>Nome</th>
+              <th>Idioma</th>
+              <th>Conta WABA</th>
+              <th>Tenant efetivo</th>
+              <th>Etiqueta</th>
+            </tr>
+          </thead>
+          {loading ? (
+            <SkeletonRows rows={5} cols={6} />
+          ) : (
+            <tbody>
+              {templates.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <EmptyState title="Nenhum modelo" />
+                  </td>
+                </tr>
+              ) : (
+                templates.map((template) => (
+                  <tr key={template.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(template.id)}
+                        onChange={() => toggle(template.id)}
+                      />
+                    </td>
+                    <td className="cell-strong">{template.name}</td>
+                    <td className="cell-sub">{template.languageCode}</td>
+                    <td className="cell-sub">{template.integrationName}</td>
+                    <td className="cell-sub">{clientName(template.effectiveClientId)}</td>
+                    <td>
+                      {template.clientId ? (
+                        <BadgeText label="etiquetado" cls="success" />
+                      ) : (
+                        <span className="cell-sub">herda da conta</span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}

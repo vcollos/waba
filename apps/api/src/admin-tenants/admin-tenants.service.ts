@@ -19,6 +19,18 @@ interface OverviewCampaign {
   status: string;
 }
 
+interface OverviewTemplate {
+  id: string;
+  name: string;
+  languageCode: string;
+  integrationId: string;
+  integrationName: string;
+  /** Override por template (etiqueta); null = herda o tenant da integração. */
+  clientId: string | null;
+  /** Tenant efetivo: override ?? tenant da integração. */
+  effectiveClientId: string | null;
+}
+
 interface OverviewClient {
   id: string;
   name: string;
@@ -40,6 +52,7 @@ export class AdminTenantsService {
     clients: OverviewClient[];
     lists: OverviewList[];
     campaigns: OverviewCampaign[];
+    templates: OverviewTemplate[];
   }> {
     const listRows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
@@ -50,6 +63,21 @@ export class AdminTenantsService {
         (SELECT COUNT(*) FROM list_members lm WHERE lm.list_id = l.id)::int AS member_count
        FROM lists l
        ORDER BY l.name ASC`,
+    );
+    // Tenant efetivo do modelo = override da etiqueta ?? tenant da integração
+    // (uma mesma conta WABA pode servir vários tenants).
+    const templateRows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        t.id,
+        t.name,
+        t.language_code,
+        t.integration_id,
+        i.name AS integration_name,
+        t.client_id,
+        COALESCE(t.client_id, i.client_id) AS effective_client_id
+       FROM templates t
+       LEFT JOIN integrations i ON i.id = t.integration_id
+       ORDER BY t.name ASC`,
     );
     const state = await this.database.readMeta();
 
@@ -67,6 +95,15 @@ export class AdminTenantsService {
         name: campaign.name,
         clientId: campaign.clientId ?? null,
         status: campaign.status,
+      })),
+      templates: templateRows.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        languageCode: String(row.language_code),
+        integrationId: String(row.integration_id),
+        integrationName: (row.integration_name as string | null) ?? '',
+        clientId: (row.client_id as string | null) ?? null,
+        effectiveClientId: (row.effective_client_id as string | null) ?? null,
       })),
     };
   }
@@ -223,5 +260,55 @@ export class AdminTenantsService {
       .catch(() => undefined);
 
     return { campaigns: matched };
+  }
+
+  /**
+   * Etiqueta modelos com um tenant (override sobre o tenant da integração).
+   * `clientId` nulo/vazio LIMPA a etiqueta: o modelo volta a herdar o tenant da
+   * conta WABA. O override sobrevive ao re-sync (chaveado por metaTemplateId).
+   */
+  async transferTemplates(
+    templateIds: string[],
+    targetClientId: string | null,
+    actor: UserSession,
+  ): Promise<{ templates: number }> {
+    const ids = [...new Set((templateIds ?? []).filter(Boolean))];
+    if (ids.length === 0) {
+      throw new BadRequestException('Selecione ao menos um modelo');
+    }
+    // resolveTarget devolve null para vazio — aqui isso significa "herdar".
+    const target = await this.resolveTarget(targetClientId);
+
+    // Guardamos o valor ANTERIOR de cada etiqueta: sem ele, uma etiquetagem
+    // errada seria irreversível e invisível no histórico (achado do Téo).
+    const updated = await this.database.postgresQuery<{ id: string; old_client_id: string | null }>(
+      `WITH prev AS (
+         SELECT id, client_id AS old_client_id FROM templates WHERE id = ANY($2::text[])
+       )
+       UPDATE templates t SET client_id = $1
+       FROM prev
+       WHERE t.id = prev.id
+       RETURNING t.id, prev.old_client_id`,
+      [target, ids],
+    );
+    if (updated.length === 0) {
+      throw new NotFoundException('Nenhum modelo encontrado');
+    }
+
+    void this.audit
+      .log({
+        actorUserId: actor.id,
+        action: 'admin.tenant.templates_tagged',
+        entityType: 'template',
+        entityId: ids.join(','),
+        metadata: {
+          targetClientId: target,
+          templates: updated.length,
+          previous: updated.map((row) => ({ id: row.id, clientId: row.old_client_id ?? null })),
+        },
+      })
+      .catch(() => undefined);
+
+    return { templates: updated.length };
   }
 }

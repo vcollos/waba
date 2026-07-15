@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { extractTemplateMediaHeader } from '../database/helpers';
 import { isWithinScope, resolveClientScope } from '../common/scope';
-import { UserSession } from '../database/types';
+import { TemplateCacheRecord, UserSession } from '../database/types';
 
 @Injectable()
 export class LibraryService {
@@ -23,11 +23,31 @@ export class LibraryService {
     );
   }
 
+  /**
+   * Templates visíveis no escopo, pelo tenant EFETIVO de cada template:
+   * `template.clientId` (override por etiqueta) ?? `integration.clientId`.
+   * Uma mesma conta WABA pode servir vários tenants; a etiqueta permite que um
+   * template de integração compartilhada apareça só para o tenant marcado.
+   */
   async templates(actor: UserSession, integrationId?: string, requestedClientId?: string) {
-    const allowed = await this.allowedIntegrationIds(actor, requestedClientId);
+    const scope = resolveClientScope(actor, requestedClientId);
     const templates = await this.database.listTemplatesInDatabase(integrationId);
+    if (scope === null) {
+      return this.decorateTemplates(templates);
+    }
+    const integrations = await this.database.listIntegrationsInDatabase();
+    const integrationClientById = new Map<string, string | null>(
+      integrations.map((integration) => [integration.id, integration.clientId ?? null]),
+    );
+    return this.decorateTemplates(
+      templates.filter((t) =>
+        isWithinScope(scope, t.clientId ?? integrationClientById.get(t.integrationId) ?? null),
+      ),
+    );
+  }
+
+  private decorateTemplates(templates: TemplateCacheRecord[]) {
     return templates
-      .filter((t) => allowed === null || allowed.has(t.integrationId))
       .map((t) => ({ ...t, mediaHeader: extractTemplateMediaHeader(t.components) }))
       .sort((left, right) => right.lastSyncedAt.localeCompare(left.lastSyncedAt));
   }

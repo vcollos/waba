@@ -35,4 +35,17 @@ export class AdminTenantsController {
       request.user,
     );
   }
+
+  // clientId null/vazio limpa a etiqueta: o modelo volta a herdar o tenant da integração.
+  @Post('transfer/templates')
+  transferTemplates(
+    @Body() body: { templateIds?: string[]; clientId?: string | null },
+    @Req() request: { user: UserSession },
+  ) {
+    return this.adminTenants.transferTemplates(
+      body.templateIds ?? [],
+      body.clientId ?? null,
+      request.user,
+    );
+  }
 }
