@@ -69,6 +69,13 @@ interface ApiToken {
   token?: string;
 }
 
+// Resposta de DELETE /lists/:id — contactsDeleted/contactsKept só variam com ?deleteContacts=true.
+interface DeleteListResult {
+  id: string;
+  contactsDeleted: number;
+  contactsKept: number;
+}
+
 const ORIGIN_LABEL: Record<string, string> = { csv: 'CSV', manual: 'Manual', api: 'API' };
 const originBadge = (source: string) =>
   source === 'csv' ? 'info' : source === 'api' ? 'roxo' : 'neutral';
@@ -272,9 +279,9 @@ function ListsContent() {
           list={deleting}
           scopeClientId={scopeClientId}
           onClose={() => setDeleting(null)}
-          onDeleted={() => {
+          onDeleted={(message) => {
             setDeleting(null);
-            push('success', 'Lista excluída.');
+            push('success', message);
             load();
           }}
         />
@@ -841,17 +848,29 @@ function DeleteListModal({
   list: ListRow;
   scopeClientId: string | null;
   onClose: () => void;
-  onDeleted: () => void;
+  onDeleted: (message: string) => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteContacts, setDeleteContacts] = useState(false);
 
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
-      await apiRequest(`/lists/${list.id}${clientQuery(scopeClientId)}`, { method: 'DELETE' });
-      onDeleted();
+      // clientQuery já devolve '?clientId=…' (ou '' quando não há tenant ativo).
+      const base = clientQuery(scopeClientId);
+      const query = deleteContacts ? `${base}${base ? '&' : '?'}deleteContacts=true` : base;
+      const res = await apiRequest<DeleteListResult>(`/lists/${list.id}${query}`, {
+        method: 'DELETE',
+      });
+      onDeleted(
+        deleteContacts
+          ? `Lista excluída. ${fmtInt(res.contactsDeleted)} contato(s) apagado(s), ${fmtInt(
+              res.contactsKept,
+            )} preservado(s).`
+          : 'Lista excluída.',
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao excluir lista.');
       setSaving(false);
@@ -873,16 +892,46 @@ function DeleteListModal({
             Cancelar
           </button>
           <button className="btn danger md" onClick={submit} disabled={saving}>
-            {saving ? 'Excluindo…' : 'Excluir lista'}
+            {saving ? 'Excluindo…' : deleteContacts ? 'Excluir lista e contatos' : 'Excluir lista'}
           </button>
         </>
       }
     >
-      <p style={{ fontSize: 14, lineHeight: 1.5 }}>
-        Excluir a lista <strong>{list.name}</strong> ({fmtInt(list.totalMembers)} contato(s))? Os
-        contatos em si <strong>não</strong> são apagados — apenas a lista e as associações. Esta ação
-        não pode ser desfeita.
-      </p>
+      <div className="stack" style={{ gap: 12 }}>
+        <p style={{ fontSize: 14, lineHeight: 1.5 }}>
+          Excluir a lista <strong>{list.name}</strong> ({fmtInt(list.totalMembers)} contato(s))?{' '}
+          {deleteContacts ? (
+            <>
+              Além da lista e das associações, os contatos elegíveis também serão apagados.
+            </>
+          ) : (
+            <>
+              Os contatos em si <strong>não</strong> são apagados — apenas a lista e as associações.
+            </>
+          )}{' '}
+          Esta ação não pode ser desfeita.
+        </p>
+
+        <label className="check-row" style={{ padding: '6px 8px' }}>
+          <span className={`cbox${deleteContacts ? ' on' : ''}`} />
+          <input
+            type="checkbox"
+            style={{ display: 'none' }}
+            checked={deleteContacts}
+            disabled={saving}
+            onChange={(e) => setDeleteContacts(e.target.checked)}
+          />
+          <span>Apagar também os contatos desta lista</span>
+        </label>
+
+        {deleteContacts ? (
+          <p style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--danger)' }}>
+            Só serão apagados os contatos que <strong>não estão em nenhuma outra lista</strong> e que
+            não têm histórico de campanha, resposta de pesquisa ou opt-out — esses são preservados
+            automaticamente. A exclusão dos contatos elegíveis é <strong>irreversível</strong>.
+          </p>
+        ) : null}
+      </div>
     </Modal>
   );
 }

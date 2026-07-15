@@ -175,8 +175,15 @@ export class ContactsController {
     @Param('id') id: string,
     @Req() request: { user: UserSession },
     @Query('clientId') clientId?: string,
+    @Query('deleteContacts') deleteContacts?: string,
   ) {
-    return this.contactsService.deleteList(id, request.user, clientId ?? null);
+    // Query string chega como texto: opt-in explícito (só 'true' liga a purga).
+    return this.contactsService.deleteList(
+      id,
+      request.user,
+      clientId ?? null,
+      deleteContacts === 'true',
+    );
   }
 
   @Delete('lists/:id/members/:contactId')
