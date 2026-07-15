@@ -376,12 +376,32 @@ export class ContactsService {
     return { ...mapListRow(row), name, description, updatedAt };
   }
 
-  /** Exclui uma lista (e suas associações; os contatos em si são preservados). */
+  /**
+   * Exclui uma lista e suas associações.
+   *
+   * Por padrão os contatos são preservados (só a lista + `list_members` saem).
+   * Com `deleteContacts`, também apaga os contatos que ficariam órfãos: só sai o
+   * contato que é membro DESTA lista e que **não** está em nenhuma outra lista,
+   * **não** tem `campaign_messages`, **não** tem `flow_responses` e **não** tem
+   * opt-out (nem `opt_outs` nem `is_opted_out`). Histórico de campanha/flow
+   * mantém o relatório íntegro (o export CSV por destinatário depende dele) e o
+   * registro de opt-out nunca pode ser perdido — apagá-lo permitiria mensagear de
+   * novo quem pediu para sair.
+   *
+   * Além dessas, uma guarda de tenant: o contato só sai se for do MESMO
+   * `client_id` da lista. Telefone é único por tenant (ADR 0003: índice composto
+   * `(COALESCE(client_id,''), phone_hash)`), então o mesmo número pode existir
+   * como contatos distintos em tenants diferentes — o `client_id` é o dono de
+   * verdade. Sem essa guarda, apagar a lista do tenant A poderia levar junto o
+   * contato do tenant B que estivesse na lista sem outra lista e sem histórico.
+   * Preservar a mais nunca é bug; apagar contato de outro tenant é.
+   */
   async deleteList(
     id: string,
     actor: UserSession,
     requestedClientId: string | null = null,
-  ): Promise<{ id: string }> {
+    deleteContacts = false,
+  ): Promise<{ id: string; contactsDeleted: number; contactsKept: number }> {
     const scope = resolveClientScope(actor, requestedClientId);
     const [row] = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, client_id FROM lists WHERE id = $1`,
@@ -391,7 +411,42 @@ export class ContactsService {
       throw new NotFoundException('Lista não encontrada');
     }
 
+    // Tenant dono da lista, reaproveitado do check de escopo acima (sem re-consultar).
+    const listClientId = (row.client_id ?? null) as string | null;
+    let contactsDeleted = 0;
+    let contactsKept = 0;
+
     await this.database.postgresTransaction(async (client) => {
+      const members = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM list_members WHERE list_id = $1`,
+        [id],
+      );
+      const memberCount = Number(members.rows[0]?.count ?? '0');
+
+      if (deleteContacts) {
+        // Os contatos saem ANTES de `list_members`: as associações desta lista
+        // são justamente o que identifica os candidatos. A FK
+        // list_members.contact_id ON DELETE CASCADE limpa as associações deles.
+        const deleted = await client.query<{ id: string }>(
+          `DELETE FROM contacts c
+             WHERE c.id IN (SELECT lm.contact_id FROM list_members lm WHERE lm.list_id = $1)
+               AND c.client_id IS NOT DISTINCT FROM $2
+               AND NOT EXISTS (
+                 SELECT 1 FROM list_members other
+                  WHERE other.contact_id = c.id AND other.list_id <> $1
+               )
+               AND NOT EXISTS (SELECT 1 FROM campaign_messages cm WHERE cm.contact_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM flow_responses fr WHERE fr.contact_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM opt_outs oo WHERE oo.contact_id = c.id)
+               AND c.is_opted_out = false
+           RETURNING c.id`,
+          [id, listClientId],
+        );
+        contactsDeleted = deleted.rowCount ?? 0;
+      }
+
+      contactsKept = memberCount - contactsDeleted;
+
       await client.query(`DELETE FROM list_members WHERE list_id = $1`, [id]);
       await client.query(`DELETE FROM lists WHERE id = $1`, [id]);
     });
@@ -401,9 +456,10 @@ export class ContactsService {
       action: 'list.deleted',
       entityType: 'list',
       entityId: id,
+      metadata: { deleteContacts, contactsDeleted, contactsKept },
     });
 
-    return { id };
+    return { id, contactsDeleted, contactsKept };
   }
 
   /** Remove um contato de uma lista (sem excluir o contato do tenant). */
