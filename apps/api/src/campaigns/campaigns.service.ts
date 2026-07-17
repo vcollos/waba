@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { buildCsv } from '../common/csv';
+import { campaignFunnel } from '../common/campaign-metrics';
 import { DatabaseService } from '../database/database.service';
 import {
   extractTemplateMediaHeader,
@@ -86,6 +87,9 @@ export class CampaignsService {
       .filter((campaign) => isWithinScope(scope, campaign.clientId))
       .map((campaign) => ({
         ...campaign,
+        // `summary` (baldes por status atual) segue intacto para o drawer de detalhe;
+        // `funnel` é o acumulado para os rótulos de funil da lista.
+        funnel: campaignFunnel(campaign.summary),
         template: state.templates.find((template) => template.id === campaign.templateCacheId) ?? null,
         list: listsById.get(campaign.listId) ?? null,
       }))
@@ -119,6 +123,7 @@ export class CampaignsService {
 
     return {
       ...campaign,
+      funnel: campaignFunnel(campaign.summary),
       template,
       flow,
       list,

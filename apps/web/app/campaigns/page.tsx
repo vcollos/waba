@@ -15,6 +15,7 @@ import {
 } from '../../components/ui';
 import { apiDownload, apiRequest } from '../../lib/api';
 import { CAMPAIGN_STATUS, MESSAGE_STATUS, badgeFor } from '../../lib/badges';
+import { CampaignFunnel, CampaignSummary } from '../../lib/campaign-metrics';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 import { canWrite, isCollosRole } from '../../lib/session';
 
@@ -28,17 +29,6 @@ type CampaignStatus =
   | 'cancelled'
   | 'failed';
 
-interface Summary {
-  total: number;
-  pending: number;
-  accepted: number;
-  sent: number;
-  delivered: number;
-  read: number;
-  failed: number;
-  skipped: number;
-}
-
 interface CampaignItem {
   id: string;
   clientId: string | null;
@@ -50,7 +40,8 @@ interface CampaignItem {
   flowCacheId: string | null;
   listId: string;
   sendRateMps: number;
-  summary: Summary;
+  summary: CampaignSummary;
+  funnel: CampaignFunnel;
   createdAt: string;
   template?: { name: string } | null;
   list?: { name: string } | null;
@@ -249,12 +240,13 @@ function CampaignsContent() {
                     <td>
                       <Badge def={badgeFor(CAMPAIGN_STATUS, c.status)} />
                     </td>
-                    <td className="num">{fmtInt(c.summary.total)}</td>
-                    <td className="num">{fmtInt(c.summary.pending)}</td>
-                    <td className="num">{fmtInt(c.summary.sent)}</td>
-                    <td className="num">{fmtInt(c.summary.delivered)}</td>
-                    <td className="num">{fmtInt(c.summary.read)}</td>
-                    <td className="num">{fmtInt(c.summary.failed)}</td>
+                    {/* Funil acumulado (não os baldes de `summary`): Enviadas >= Entregues >= Lidas. */}
+                    <td className="num">{fmtInt(c.funnel.total)}</td>
+                    <td className="num">{fmtInt(c.funnel.pending)}</td>
+                    <td className="num">{fmtInt(c.funnel.sentTotal)}</td>
+                    <td className="num">{fmtInt(c.funnel.deliveredTotal)}</td>
+                    <td className="num">{fmtInt(c.funnel.readTotal)}</td>
+                    <td className="num">{fmtInt(c.funnel.failed)}</td>
                     <td className="cell-mono">{fmtDateTime(c.createdAt)}</td>
                     <td>
                       <div className="row-actions">
@@ -395,7 +387,10 @@ function CampaignDrawer({
     }
   };
 
-  const s = detail?.summary;
+  const f = detail?.funnel;
+  const pct = (value: number | undefined): string =>
+    `${(value ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% do total`;
+  const sentRate = f && f.total ? Number(((f.sentTotal / f.total) * 100).toFixed(1)) : 0;
 
   return (
     <Drawer
@@ -416,20 +411,45 @@ function CampaignDrawer({
     >
       {error ? <ErrorBanner message={error} /> : null}
       {loading || !detail ? (
-        <div className="kpi-grid k3">
+        <div className="kpi-grid">
           <KpiSkeletonInline />
         </div>
       ) : (
         <>
-          <div className="kpi-grid k3 block">
-            <Kpi label="Total" value={fmtInt(s?.total)} />
-            <Kpi label="Pendentes" value={fmtInt(s?.pending)} />
-            <Kpi label="Aceitas" value={fmtInt(s?.accepted)} />
-            <Kpi label="Enviadas" value={fmtInt(s?.sent)} />
-            <Kpi label="Entregues" value={fmtInt(s?.delivered)} />
-            <Kpi label="Lidas" value={fmtInt(s?.read)} />
-            <Kpi label="Falhas" value={fmtInt(s?.failed)} />
-            <Kpi label="Ignoradas" value={fmtInt(s?.skipped)} />
+          {/*
+            Duas leituras distintas, deliberadamente separadas:
+            - Funil: acumulado. Cada etapa é subconjunto da anterior
+              (Total >= Enviadas >= Entregues >= Lidas). NÃO soma `total`.
+            - Situação atual: baldes de `summary`, mutuamente excludentes.
+            Misturar os dois num grid só (como antes) fazia o cliente somar
+            colunas que não somam e ver "Entregues < Lidas".
+          */}
+          <div className="block">
+            <div className="block-head">
+              <span className="block-title">Funil</span>
+            </div>
+            <div className="kpi-grid">
+              <Kpi label="Total" value={fmtInt(f?.total)} foot="Público da campanha" />
+              <Kpi label="Enviadas" value={fmtInt(f?.sentTotal)} foot={pct(sentRate)} />
+              <Kpi label="Entregues" value={fmtInt(f?.deliveredTotal)} foot={pct(f?.deliveryRate)} />
+              <Kpi label="Lidas" value={fmtInt(f?.readTotal)} foot={pct(f?.readRate)} />
+            </div>
+            <span className="hint">
+              Cada etapa inclui as seguintes: das {fmtInt(f?.total)} mensagens,{' '}
+              {fmtInt(f?.deliveredTotal)} chegaram ao aparelho e {fmtInt(f?.readTotal)} foram lidas.
+            </span>
+          </div>
+
+          <div className="block">
+            <div className="block-head">
+              <span className="block-title">Situação atual</span>
+            </div>
+            <div className="kpi-grid">
+              <Kpi label="Pendentes" value={fmtInt(f?.pending)} foot="Ainda na fila" />
+              <Kpi label="Aceitas" value={fmtInt(f?.accepted)} foot="Na Meta, sem confirmação" />
+              <Kpi label="Falhas" value={fmtInt(f?.failed)} foot="Fora do funil" />
+              <Kpi label="Ignoradas" value={fmtInt(f?.skipped)} foot="Fora do funil" />
+            </div>
           </div>
 
           <div className="block">
@@ -504,7 +524,7 @@ function CampaignDrawer({
 function KpiSkeletonInline() {
   return (
     <>
-      {Array.from({ length: 6 }).map((_, i) => (
+      {Array.from({ length: 4 }).map((_, i) => (
         <div className="kpi" key={i}>
           <span className="skel" style={{ display: 'block', height: 12, width: '60%' }} />
           <span className="skel" style={{ display: 'block', height: 22, width: '40%', marginTop: 6 }} />
