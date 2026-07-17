@@ -4,16 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
 import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
+import {
+  CampaignFunnel,
+  CampaignSummary,
+  addFunnel,
+  zeroFunnelTotals,
+} from '../../lib/campaign-metrics';
 import { fmtBRL, fmtInt } from '../../lib/format';
 import { isCollosRole } from '../../lib/session';
-
-interface CampaignSummary {
-  accepted: number;
-  sent: number;
-  delivered: number;
-  read: number;
-  failed: number;
-}
 
 interface CampaignItem {
   id: string;
@@ -22,6 +20,7 @@ interface CampaignItem {
   integrationId: string;
   createdAt: string;
   summary: CampaignSummary;
+  funnel: CampaignFunnel;
   template?: { name: string } | null;
   list?: { name: string } | null;
 }
@@ -31,7 +30,9 @@ interface Integration {
   name: string;
 }
 
-const zero = () => ({ accepted: 0, sent: 0, delivered: 0, read: 0, failed: 0, campaigns: 0, estimatedAmount: 0 });
+// `estimatedAmount` é placeholder (sempre 0): não há precificação implementada
+// aqui nem no backend (`dashboard.service.ts:77,134`).
+const zero = () => ({ ...zeroFunnelTotals(), estimatedAmount: 0 });
 
 export default function BillingPage() {
   return (
@@ -89,14 +90,8 @@ function BillingContent() {
 
   const kpis = useMemo(() => {
     const acc = zero();
-    for (const c of filtered) {
-      acc.accepted += c.summary.accepted;
-      acc.sent += c.summary.sent;
-      acc.delivered += c.summary.delivered;
-      acc.read += c.summary.read;
-      acc.failed += c.summary.failed;
-      acc.campaigns += 1;
-    }
+    // Funil acumulado (não os baldes de `summary`): Enviadas >= Entregues >= Lidas.
+    for (const c of filtered) addFunnel(acc, c.funnel);
     return acc;
   }, [filtered]);
 
@@ -105,15 +100,10 @@ function BillingContent() {
     for (const c of filtered) {
       const key = c.clientId ?? '__none__';
       const entry = map.get(key) ?? { ...zero(), clientId: c.clientId };
-      entry.accepted += c.summary.accepted;
-      entry.sent += c.summary.sent;
-      entry.delivered += c.summary.delivered;
-      entry.read += c.summary.read;
-      entry.failed += c.summary.failed;
-      entry.campaigns += 1;
+      addFunnel(entry, c.funnel);
       map.set(key, entry);
     }
-    return [...map.values()].sort((a, b) => b.sent - a.sent);
+    return [...map.values()].sort((a, b) => b.sentTotal - a.sentTotal);
   }, [filtered]);
 
   const exportCsv = () => {
@@ -134,11 +124,11 @@ function BillingContent() {
       c.name,
       c.template?.name ?? '',
       c.list?.name ?? '',
-      c.summary.accepted,
-      c.summary.sent,
-      c.summary.delivered,
-      c.summary.read,
-      c.summary.failed,
+      c.funnel.accepted,
+      c.funnel.sentTotal,
+      c.funnel.deliveredTotal,
+      c.funnel.readTotal,
+      c.funnel.failed,
       '0',
     ]);
     const csv = [header, ...rows]
@@ -200,9 +190,9 @@ function BillingContent() {
         ) : (
           <>
             <Kpi label="Aceitas" value={fmtInt(kpis.accepted)} />
-            <Kpi label="Enviadas" value={fmtInt(kpis.sent)} />
-            <Kpi label="Entregues" value={fmtInt(kpis.delivered)} />
-            <Kpi label="Lidas" value={fmtInt(kpis.read)} />
+            <Kpi label="Enviadas" value={fmtInt(kpis.sentTotal)} />
+            <Kpi label="Entregues" value={fmtInt(kpis.deliveredTotal)} />
+            <Kpi label="Lidas" value={fmtInt(kpis.readTotal)} />
             <Kpi label="Falhas" value={fmtInt(kpis.failed)} />
             <Kpi label="Valor estimado" value={fmtBRL(kpis.estimatedAmount)} />
           </>
@@ -244,9 +234,9 @@ function BillingContent() {
                         <td className="cell-strong">{clientName(row.clientId)}</td>
                         <td className="num">{fmtInt(row.campaigns)}</td>
                         <td className="num">{fmtInt(row.accepted)}</td>
-                        <td className="num">{fmtInt(row.sent)}</td>
-                        <td className="num">{fmtInt(row.delivered)}</td>
-                        <td className="num">{fmtInt(row.read)}</td>
+                        <td className="num">{fmtInt(row.sentTotal)}</td>
+                        <td className="num">{fmtInt(row.deliveredTotal)}</td>
+                        <td className="num">{fmtInt(row.readTotal)}</td>
                         <td className="num">{fmtInt(row.failed)}</td>
                         <td className="num">{fmtBRL(row.estimatedAmount)}</td>
                       </tr>
@@ -296,11 +286,12 @@ function BillingContent() {
                       <td className="cell-strong">{c.name}</td>
                       <td className="cell-sub">{c.template?.name ?? '—'}</td>
                       <td className="cell-sub">{c.list?.name ?? '—'}</td>
-                      <td className="num">{fmtInt(c.summary.accepted)}</td>
-                      <td className="num">{fmtInt(c.summary.sent)}</td>
-                      <td className="num">{fmtInt(c.summary.delivered)}</td>
-                      <td className="num">{fmtInt(c.summary.read)}</td>
-                      <td className="num">{fmtInt(c.summary.failed)}</td>
+                      {/* Funil acumulado (não os baldes de `summary`): Enviadas >= Entregues >= Lidas. */}
+                      <td className="num">{fmtInt(c.funnel.accepted)}</td>
+                      <td className="num">{fmtInt(c.funnel.sentTotal)}</td>
+                      <td className="num">{fmtInt(c.funnel.deliveredTotal)}</td>
+                      <td className="num">{fmtInt(c.funnel.readTotal)}</td>
+                      <td className="num">{fmtInt(c.funnel.failed)}</td>
                       <td className="num">{fmtBRL(0)}</td>
                     </tr>
                   ))

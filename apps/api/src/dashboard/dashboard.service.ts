@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { resolveClientScope } from '../common/scope';
+import { campaignFunnel, sumCampaignSummaries } from '../common/campaign-metrics';
 import { CampaignRecord, UserSession, isCollosRole } from '../database/types';
 
 export interface DashboardQuery {
@@ -50,17 +51,9 @@ export class DashboardService {
       (response) => response.campaignId && campaignIds.has(response.campaignId),
     );
 
-    const totals = campaigns.reduce(
-      (acc, campaign) => {
-        acc.total += campaign.summary.total;
-        acc.sent += campaign.summary.sent;
-        acc.delivered += campaign.summary.delivered;
-        acc.read += campaign.summary.read;
-        acc.failed += campaign.summary.failed;
-        return acc;
-      },
-      { total: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
-    );
+    // Soma os baldes brutos e só então deriva o funil: somar funis já derivados
+    // daria o mesmo resultado, mas somar baldes mantém uma única fonte de verdade.
+    const totals = campaignFunnel(sumCampaignSummaries(campaigns.map((campaign) => campaign.summary)));
 
     const activeIntegrations = state.integrations.filter(
       (integration) =>
@@ -76,9 +69,9 @@ export class DashboardService {
         activeIntegrations,
         campaigns: campaigns.length,
         total: totals.total,
-        sent: totals.sent,
-        delivered: totals.delivered,
-        read: totals.read,
+        sent: totals.sentTotal,
+        delivered: totals.deliveredTotal,
+        read: totals.readTotal,
         failed: totals.failed,
         flowResponses: scopeClientId ? scopedFlowResponses.length : flowResponses.length,
         estimatedAmount: 0,
@@ -92,17 +85,18 @@ export class DashboardService {
   }
 
   private toCampaignRow(campaign: CampaignRecord, clientName: string | null) {
+    const funnel = campaignFunnel(campaign.summary);
     return {
       id: campaign.id,
       clientId: campaign.clientId ?? null,
       clientName,
       name: campaign.name,
       status: campaign.status,
-      total: campaign.summary.total,
-      sent: campaign.summary.sent,
-      delivered: campaign.summary.delivered,
-      read: campaign.summary.read,
-      failed: campaign.summary.failed,
+      total: funnel.total,
+      sent: funnel.sentTotal,
+      delivered: funnel.deliveredTotal,
+      read: funnel.readTotal,
+      failed: funnel.failed,
       createdAt: campaign.createdAt,
     };
   }
@@ -126,9 +120,10 @@ export class DashboardService {
         delivered: 0,
         failed: 0,
       };
-      entry.sent += campaign.summary.sent;
-      entry.delivered += campaign.summary.delivered;
-      entry.failed += campaign.summary.failed;
+      const funnel = campaignFunnel(campaign.summary);
+      entry.sent += funnel.sentTotal;
+      entry.delivered += funnel.deliveredTotal;
+      entry.failed += funnel.failed;
       byClient.set(campaign.clientId, entry);
     }
 

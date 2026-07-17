@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { buildCsv } from '../common/csv';
+import { campaignFunnel } from '../common/campaign-metrics';
 import { DatabaseService } from '../database/database.service';
 import type { FlowResponseRecord } from '../database/types';
 
@@ -280,12 +281,9 @@ export class ResultsService {
     const statusDistribution = buildStatusDistribution(currentStatusCounts, totalTrackedMessages);
     const topDeliveryCampaigns = [...scopedCampaigns]
       .map((campaign) => {
-        const total = campaign.summary.total;
-        const pending = campaign.summary.pending;
+        const funnel = campaignFunnel(campaign.summary);
+        const { total, pending, deliveredTotal: delivered, readTotal: read, failed } = funnel;
         const processed = Math.max(total - pending, 0);
-        const delivered = campaign.summary.delivered + campaign.summary.read;
-        const read = campaign.summary.read;
-        const failed = campaign.summary.failed;
         return {
           campaignId: campaign.id,
           campaignName: campaign.name,
@@ -296,8 +294,8 @@ export class ResultsService {
           delivered,
           read,
           failed,
-          successRate: total ? Number(((delivered / total) * 100).toFixed(1)) : 0,
-          readRate: total ? Number(((read / total) * 100).toFixed(1)) : 0,
+          successRate: funnel.deliveryRate,
+          readRate: funnel.readRate,
           failureRate: total ? Number(((failed / total) * 100).toFixed(1)) : 0,
         };
       })
