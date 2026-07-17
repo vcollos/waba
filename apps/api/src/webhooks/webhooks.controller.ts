@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { Public } from '../common/auth';
 import { IntegrationsService } from '../integrations/integrations.service';
+import { WebhookSignatureGuard } from './webhook-signature.guard';
 import { WebhooksService } from './webhooks.service';
 
 @Controller('webhooks/meta/whatsapp')
@@ -27,7 +28,10 @@ export class WebhooksController {
     return response.sendStatus(403);
   }
 
+  // @Public() dispensa o JWT; a autenticidade vem da assinatura HMAC da Meta,
+  // verificada pelo WebhookSignatureGuard ANTES de qualquer processamento.
   @Public()
+  @UseGuards(WebhookSignatureGuard)
   @Post()
   process(@Body() payload: Record<string, unknown>) {
     return this.webhooksService.process(payload);
