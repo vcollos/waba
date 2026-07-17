@@ -56,6 +56,48 @@ export class IntegrationsService {
     return integration;
   }
 
+  /**
+   * Resolve os appSecrets (já decifrados) das integrações referenciadas por um
+   * webhook da Meta, identificadas por waba_id (`entry[].id`) e/ou
+   * phone_number_id (`changes[].value.metadata.phone_number_id`).
+   *
+   * Fail-closed: retorna `[]` se nenhuma referência casar com integração
+   * conhecida OU se as casadas não tiverem appSecret configurado — o guard
+   * então rejeita (401) sem processar. Nunca loga/retorna o segredo em claro
+   * para fora deste fluxo de verificação.
+   */
+  async resolveWebhookAppSecrets(refs: {
+    wabaIds: string[];
+    phoneNumberIds: string[];
+  }): Promise<string[]> {
+    const integrations = await this.database.listIntegrationsInDatabase();
+    const matched = integrations.filter(
+      (integration) =>
+        refs.wabaIds.includes(integration.wabaId) ||
+        refs.phoneNumberIds.includes(integration.phoneNumberId),
+    );
+
+    // Uma entrega da Meta é assinada com UM único appSecret (o do Meta App que
+    // emitiu o webhook), sobre o corpo inteiro. Coletamos os segredos distintos
+    // das integrações referenciadas; o guard aceita se a assinatura casar com
+    // qualquer um deles. Isso cobre o caso de várias WABAs sob o mesmo Meta App
+    // (mesmo segredo) sem afrouxar o fail-closed: todo segredo testado pertence
+    // a uma integração nomeada no próprio corpo.
+    const secrets = new Set<string>();
+    for (const integration of matched) {
+      try {
+        const secret = this.crypto.decrypt(integration.appSecretCiphertext);
+        if (secret) {
+          secrets.add(secret);
+        }
+      } catch {
+        // decrypt falho => ignora esta integração (fail-closed).
+      }
+    }
+
+    return [...secrets];
+  }
+
   async hasVerifyToken(token: string): Promise<boolean> {
     const integrations = await this.database.listIntegrationsInDatabase();
     return integrations.some((integration) => {
