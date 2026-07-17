@@ -61,7 +61,11 @@ export class WebhooksService {
       return;
     }
 
-    const nextMessage = { ...message, status: mapWebhookStatus(nextStatus), updatedAt: receivedAt };
+    const nextMessage = {
+      ...message,
+      status: resolveStatus(message.status, mapWebhookStatus(nextStatus)),
+      updatedAt: receivedAt,
+    };
     if (nextStatus === 'sent') nextMessage.sentAt = receivedAt;
     if (nextStatus === 'delivered') nextMessage.deliveredAt = receivedAt;
     if (nextStatus === 'read') nextMessage.readAt = receivedAt;
@@ -259,6 +263,30 @@ export class WebhooksService {
     return undefined;
   }
 }
+
+type MessageStatus = CampaignMessageRecord['status'];
+
+// Escala total de progresso do ciclo de vida da mensagem. Ranks maiores só
+// avançam, nunca regridem (guarda de monotonia): eventos de webhook podem
+// chegar fora de ordem (ex.: 'delivered' atrasado depois de 'read'). Status
+// fora da escala (skipped/cancelled) têm rank indefinido e preservam o atual.
+const STATUS_RANK: Partial<Record<MessageStatus, number>> = {
+  pending: 0,
+  accepted: 1,
+  sent: 2,
+  failed: 3,
+  delivered: 4,
+  read: 5,
+};
+
+const resolveStatus = (current: MessageStatus, next: MessageStatus): MessageStatus => {
+  const currentRank = STATUS_RANK[current];
+  const nextRank = STATUS_RANK[next];
+  if (currentRank === undefined || nextRank === undefined) {
+    return current;
+  }
+  return nextRank > currentRank ? next : current;
+};
 
 const mapWebhookStatus = (
   status: string,
