@@ -148,7 +148,7 @@ function ContactsContent() {
       if (valid === 'invalid' && c.isValid) return false;
       if (optOut === 'out' && !c.isOptedOut) return false;
       if (optOut === 'in' && c.isOptedOut) return false;
-      if (listFilter && !c.listNames.includes(listFilter)) return false;
+      if (listFilter && !c.listIds.includes(listFilter)) return false;
       if (term) {
         const hay = `${c.name} ${c.phoneE164} ${c.email ?? ''} ${c.clientName ?? ''}`.toLowerCase();
         if (!hay.includes(term)) return false;
@@ -314,7 +314,7 @@ function ContactsContent() {
         <select className="flt" value={listFilter} onChange={(e) => setListFilter(e.target.value)}>
           <option value="">Lista</option>
           {lists.map((l) => (
-            <option key={l.id} value={l.name}>
+            <option key={l.id} value={l.id}>
               {l.name}
             </option>
           ))}

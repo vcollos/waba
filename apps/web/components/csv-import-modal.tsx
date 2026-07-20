@@ -86,6 +86,9 @@ export function CsvImportModal({
   // Contato já existente (mesmo telefone no tenant): sobrescrever com os dados do
   // arquivo (mais novos como principais) ou preservar e apenas vincular à lista.
   const [overwriteExisting, setOverwriteExisting] = useState(true);
+  // Congela a flag usada no job em execução — o rótulo do resultado deve refletir
+  // o que foi enviado ao servidor, não o estado atual do checkbox.
+  const [jobOverwrite, setJobOverwrite] = useState(true);
   const [job, setJob] = useState<ImportJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +140,7 @@ export function CsvImportModal({
       formData.append('mapping', JSON.stringify(mapping));
       formData.append('defaults', JSON.stringify(defaults));
       formData.append('overwriteExisting', String(overwriteExisting));
+      setJobOverwrite(overwriteExisting);
       const started = await apiRequest<ImportJob>('/contacts/imports/csv', {
         method: 'POST',
         body: formData,
@@ -165,15 +169,25 @@ export function CsvImportModal({
         .catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [job, onDone]);
+  }, [job]);
 
   const steps = ['Arquivo', 'Mapeamento', 'Confirmação'];
+
+  // Fechar pelo X após concluir equivale a "Concluir": garante o refresh da
+  // lista na tela que abriu o modal.
+  const handleClose = () => {
+    if (job?.status === 'completed') {
+      onDone(job);
+      return;
+    }
+    onClose();
+  };
 
   return (
     <Modal
       title={title}
       width="xwide"
-      onClose={onClose}
+      onClose={handleClose}
       footer={
         <>
           {error ? (
@@ -199,6 +213,18 @@ export function CsvImportModal({
           {step === 3 && job?.status === 'completed' ? (
             <button className="btn primary md" onClick={() => onDone(job)}>
               Concluir
+            </button>
+          ) : step === 3 && job?.status === 'failed' ? (
+            <button
+              className="btn primary md"
+              disabled={busy}
+              onClick={() => {
+                setJob(null);
+                setError(null);
+                void startImport();
+              }}
+            >
+              Tentar novamente
             </button>
           ) : step === 3 ? (
             <button className="btn primary md" onClick={startImport} disabled={busy || !!job}>
@@ -383,7 +409,7 @@ export function CsvImportModal({
                   </span>
                 </div>
                 <div className="kpi">
-                  <span className="kpi-label">{overwriteExisting ? 'Atualizados' : 'Já existentes'}</span>
+                  <span className="kpi-label">{jobOverwrite ? 'Atualizados' : 'Já existentes'}</span>
                   <span className="kpi-val">{fmtInt(job.importRecord.duplicateRows)}</span>
                 </div>
                 <div className="kpi">

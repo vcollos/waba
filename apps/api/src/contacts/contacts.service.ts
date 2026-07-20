@@ -1257,11 +1257,12 @@ export class ContactsService {
     let mergedContact: ContactRecord | undefined;
 
     await this.database.postgresTransaction(async (client) => {
+      // opted_out_at chega como Date (TIMESTAMPTZ sem type parser customizado).
       const { rows } = await client.query<{
         id: string;
         client_id: string | null;
         is_opted_out: boolean;
-        opted_out_at: string | null;
+        opted_out_at: string | Date | null;
         opt_out_source: string | null;
       }>(
         `SELECT id, client_id, is_opted_out, opted_out_at, opt_out_source
@@ -1318,11 +1319,13 @@ export class ContactsService {
       // keeper permanece/torna-se suprimido (nunca perde um opt-out na mesclagem).
       const optedOut = rows.filter((row) => row.is_opted_out);
       if (optedOut.length > 0) {
-        const earliest =
-          optedOut
-            .map((row) => row.opted_out_at)
-            .filter((value): value is string => Boolean(value))
-            .sort()[0] ?? now;
+        const earliestDate = optedOut
+          .map((row) => row.opted_out_at)
+          .filter((value): value is string | Date => Boolean(value))
+          .map((value) => new Date(value))
+          .filter((date) => !Number.isNaN(date.getTime()))
+          .reduce<Date | null>((min, date) => (!min || date < min ? date : min), null);
+        const earliest = earliestDate ? earliestDate.toISOString() : now;
         const source =
           rows.find((row) => row.id === keeper && row.is_opted_out)?.opt_out_source ??
           optedOut[0].opt_out_source ??
@@ -1735,7 +1738,9 @@ const ensurePhoneIsUniqueInDatabase = (
 const ensureListIdsExistInDatabase = async (
   database: Pick<PoolClient, 'query'>,
   listIds: string[] | undefined,
-  scope: string | null = null,
+  // Obrigatório de propósito: null = sem restrição (só super-admin). Forçar o
+  // chamador a decidir evita reabrir a brecha cross-tenant por omissão.
+  scope: string | null,
 ) => {
   const ids = [...new Set((listIds ?? []).filter(Boolean))];
   if (ids.length === 0) {
