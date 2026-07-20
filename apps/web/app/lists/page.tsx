@@ -12,6 +12,7 @@ import {
   Modal,
   SkeletonRows,
   ToastHost,
+  usePagedRows,
   useToasts,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
@@ -138,6 +139,8 @@ function ListsContent() {
     });
   }, [lists, search, origin]);
 
+  const { pageRows, pager } = usePagedRows(filtered, 'lista(s)');
+
   return (
     <>
       <div className="op-head">
@@ -203,7 +206,7 @@ function ListsContent() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((list) => (
+                pageRows.map((list) => (
                   <tr key={list.id}>
                     <td className="cell-strong">{list.name}</td>
                     <td className="cell-sub">{list.description ?? '—'}</td>
@@ -237,6 +240,7 @@ function ListsContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
 
       {viewing ? (

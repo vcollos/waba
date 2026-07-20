@@ -11,6 +11,7 @@ import {
   Modal,
   SkeletonRows,
   ToastHost,
+  usePagedRows,
   useToasts,
 } from '../../components/ui';
 import { apiDownload, apiRequest } from '../../lib/api';
@@ -143,6 +144,8 @@ function CampaignsContent() {
     });
   }, [campaigns, scopeClientId, statusFilter, templateFilter, listFilter]);
 
+  const { pageRows, pager } = usePagedRows(filtered, 'campanha(s)');
+
   const runAction = async (id: string, path: string, method: string, success: string) => {
     setBusy(`${id}:${path}`);
     try {
@@ -231,7 +234,7 @@ function CampaignsContent() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((c) => (
+                pageRows.map((c) => (
                   <tr key={c.id}>
                     <td className="cell-strong">{c.name}</td>
                     {collos ? <td className="cell-sub">{clientName(c.clientId)}</td> : null}
@@ -262,6 +265,7 @@ function CampaignsContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
 
       {detailId ? (

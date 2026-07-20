@@ -9,6 +9,7 @@ import {
   Forbidden,
   SkeletonRows,
   ToastHost,
+  usePagedRows,
   useToasts,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
@@ -239,6 +240,7 @@ function ListsSection({
   const [busy, setBusy] = useState(false);
   const allIds = useMemo(() => lists.map((l) => l.id), [lists]);
   const allOn = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const { pageRows, pager } = usePagedRows(lists, 'lista(s)');
 
   const transfer = async () => {
     setBusy(true);
@@ -304,7 +306,7 @@ function ListsSection({
                   </td>
                 </tr>
               ) : (
-                lists.map((list) => (
+                pageRows.map((list) => (
                   <tr key={list.id}>
                     <td>
                       <input
@@ -325,6 +327,7 @@ function ListsSection({
             </tbody>
           )}
         </table>
+        {pager}
       </div>
     </div>
   );
@@ -350,6 +353,7 @@ function CampaignsSection({
   const [busy, setBusy] = useState(false);
   const allIds = useMemo(() => campaigns.map((c) => c.id), [campaigns]);
   const allOn = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const { pageRows, pager } = usePagedRows(campaigns, 'campanha(s)');
 
   const transfer = async () => {
     setBusy(true);
@@ -413,7 +417,7 @@ function CampaignsSection({
                   </td>
                 </tr>
               ) : (
-                campaigns.map((campaign) => (
+                pageRows.map((campaign) => (
                   <tr key={campaign.id}>
                     <td>
                       <input
@@ -431,6 +435,7 @@ function CampaignsSection({
             </tbody>
           )}
         </table>
+        {pager}
       </div>
     </div>
   );
@@ -456,6 +461,7 @@ function TemplatesSection({
   const [busy, setBusy] = useState(false);
   const allIds = useMemo(() => templates.map((t) => t.id), [templates]);
   const allOn = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const { pageRows, pager } = usePagedRows(templates, 'modelo(s)');
 
   const assign = async () => {
     setBusy(true);
@@ -526,7 +532,7 @@ function TemplatesSection({
                   </td>
                 </tr>
               ) : (
-                templates.map((template) => (
+                pageRows.map((template) => (
                   <tr key={template.id}>
                     <td>
                       <input
@@ -552,6 +558,7 @@ function TemplatesSection({
             </tbody>
           )}
         </table>
+        {pager}
       </div>
     </div>
   );

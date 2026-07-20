@@ -247,3 +247,83 @@ export function KpiSkeleton({ count = 4 }: { count?: number }) {
     </>
   );
 }
+
+/* ---- Paginação de tabelas -------------------------------------------- */
+
+export type PageSize = number | 'all';
+export const PAGE_SIZE_OPTIONS: number[] = [5, 10, 20, 50, 100, 500, 1000];
+export const DEFAULT_PAGE_SIZE: PageSize = 10;
+
+export function PageSizeSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PageSize;
+  onChange: (size: PageSize) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="pager-size">
+      Linhas
+      <select
+        value={value === 'all' ? 'all' : String(value)}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(event.target.value === 'all' ? 'all' : Number(event.target.value))
+        }
+      >
+        {PAGE_SIZE_OPTIONS.map((size) => (
+          <option key={size} value={size}>
+            {size}
+          </option>
+        ))}
+        <option value="all">Todos</option>
+      </select>
+    </label>
+  );
+}
+
+/* Paginação client-side: recorta as linhas já carregadas/filtradas e
+   devolve o rodapé padrão (quantidade + seletor de linhas + navegação). */
+export function usePagedRows<T>(rows: T[], label: string) {
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
+
+  const total = rows.length;
+  const size = pageSize === 'all' ? Math.max(total, 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = pageSize === 'all' ? rows : rows.slice(safePage * size, (safePage + 1) * size);
+
+  const pager = (
+    <div className="pager">
+      <div className="pager-info">
+        <span>
+          {total.toLocaleString('pt-BR')} {label} · página {safePage + 1} de {totalPages}
+        </span>
+        <PageSizeSelect
+          value={pageSize}
+          onChange={(next) => {
+            setPageSize(next);
+            setPage(0);
+          }}
+        />
+      </div>
+      <div className="pager-btns">
+        <button className="pager-btn" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+          Anterior
+        </button>
+        <button
+          className="pager-btn"
+          disabled={safePage >= totalPages - 1}
+          onClick={() => setPage(safePage + 1)}
+        >
+          Próxima
+        </button>
+      </div>
+    </div>
+  );
+
+  return { pageRows, pager, pageSize, page: safePage };
+}

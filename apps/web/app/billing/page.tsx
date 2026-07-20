@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
-import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
+import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows, usePagedRows } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
 import {
   CampaignFunnel,
@@ -105,6 +105,9 @@ function BillingContent() {
     }
     return [...map.values()].sort((a, b) => b.sentTotal - a.sentTotal);
   }, [filtered]);
+
+  const clientRows = usePagedRows(byClient, 'cliente(s)');
+  const campaignRows = usePagedRows(filtered, 'campanha(s)');
 
   const exportCsv = () => {
     const header = [
@@ -229,7 +232,7 @@ function BillingContent() {
                       </td>
                     </tr>
                   ) : (
-                    byClient.map((row) => (
+                    clientRows.pageRows.map((row) => (
                       <tr key={row.clientId ?? 'none'}>
                         <td className="cell-strong">{clientName(row.clientId)}</td>
                         <td className="num">{fmtInt(row.campaigns)}</td>
@@ -245,6 +248,7 @@ function BillingContent() {
                 </tbody>
               )}
             </table>
+            {clientRows.pager}
           </div>
         </div>
       ) : null}
@@ -280,7 +284,7 @@ function BillingContent() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((c) => (
+                  campaignRows.pageRows.map((c) => (
                     <tr key={c.id}>
                       {collos ? <td className="cell-sub">{clientName(c.clientId)}</td> : null}
                       <td className="cell-strong">{c.name}</td>
@@ -299,6 +303,7 @@ function BillingContent() {
               </tbody>
             )}
           </table>
+          {campaignRows.pager}
         </div>
       </div>
     </>

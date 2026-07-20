@@ -10,6 +10,7 @@ import {
   Modal,
   SkeletonRows,
   ToastHost,
+  usePagedRows,
   useToasts,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
@@ -65,6 +66,8 @@ function IntegrationsContent() {
   useEffect(() => {
     if (isCollosRole(session.role)) load();
   }, [load, session.role]);
+
+  const { pageRows, pager } = usePagedRows(integrations, 'integração(ões)');
 
   const runAction = async (id: string, path: string, success: string) => {
     setPending(`${id}:${path}`);
@@ -128,7 +131,7 @@ function IntegrationsContent() {
                   </td>
                 </tr>
               ) : (
-                integrations.map((integration) => (
+                pageRows.map((integration) => (
                   <tr key={integration.id}>
                     <td className="cell-strong">{integration.name}</td>
                     <td className="cell-sub">{clientName(integration.clientId)}</td>
@@ -183,6 +186,7 @@ function IntegrationsContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
 
       {editing ? (

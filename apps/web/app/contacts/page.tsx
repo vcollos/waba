@@ -6,9 +6,12 @@ import { CsvImportModal } from '../../components/csv-import-modal';
 import {
   Badge,
   BadgeText,
+  DEFAULT_PAGE_SIZE,
   EmptyState,
   ErrorBanner,
   Modal,
+  type PageSize,
+  PageSizeSelect,
   SkeletonRows,
   ToastHost,
   useToasts,
@@ -55,7 +58,8 @@ interface PaginatedContactsResponse {
   offset: number;
 }
 
-const PAGE_SIZE = 50;
+/* "Todos" vira um limit alto no backend (sem cap server-side). */
+const ALL_LIMIT = 1_000_000;
 
 const emptyToNull = (value: string): string | null => {
   const trimmed = value.trim();
@@ -84,6 +88,8 @@ function ContactsContent() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  const limit = pageSize === 'all' ? ALL_LIMIT : pageSize;
   const [lists, setLists] = useState<ListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +116,7 @@ function ContactsContent() {
       const q = scopeClientId ? `&clientId=${encodeURIComponent(scopeClientId)}` : '';
       Promise.all([
         apiRequest<PaginatedContactsResponse>(
-          `/contacts?limit=${PAGE_SIZE}&offset=${nextOffset}${q}`,
+          `/contacts?limit=${limit}&offset=${nextOffset}${q}`,
         ),
         apiRequest<ListItem[]>(`/lists${scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : ''}`),
       ])
@@ -127,7 +133,7 @@ function ContactsContent() {
           setLoading(false);
         });
     },
-    [scopeClientId],
+    [scopeClientId, limit],
   );
 
   useEffect(() => {
@@ -199,8 +205,8 @@ function ContactsContent() {
   const toggleOne = (id: string) =>
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
-  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
     <>
@@ -419,21 +425,24 @@ function ContactsContent() {
           )}
         </table>
         <div className="pager">
-          <span>
-            {fmtInt(total)} contato(s) · página {currentPage} de {totalPages}
-          </span>
+          <div className="pager-info">
+            <span>
+              {fmtInt(total)} contato(s) · página {currentPage} de {totalPages}
+            </span>
+            <PageSizeSelect value={pageSize} disabled={busy || loading} onChange={setPageSize} />
+          </div>
           <div className="pager-btns">
             <button
               className="pager-btn"
               disabled={offset === 0 || busy}
-              onClick={() => load(Math.max(0, offset - PAGE_SIZE))}
+              onClick={() => load(Math.max(0, offset - limit))}
             >
               Anterior
             </button>
             <button
               className="pager-btn"
-              disabled={offset + PAGE_SIZE >= total || busy}
-              onClick={() => load(offset + PAGE_SIZE)}
+              disabled={offset + limit >= total || busy}
+              onClick={() => load(offset + limit)}
             >
               Próxima
             </button>

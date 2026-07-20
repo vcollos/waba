@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
-import { EmptyState, ErrorBanner, Forbidden, SkeletonRows } from '../../components/ui';
+import { EmptyState, ErrorBanner, Forbidden, SkeletonRows, usePagedRows } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
 import { isCollosRole } from '../../lib/session';
@@ -78,6 +78,8 @@ function AuditContent() {
     [entries, actor, action, entity],
   );
 
+  const { pageRows, pager } = usePagedRows(filtered, 'registro(s)');
+
   if (!isCollosRole(session.role)) {
     return <Forbidden />;
   }
@@ -143,7 +145,7 @@ function AuditContent() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((entry) => (
+                pageRows.map((entry) => (
                   <tr key={entry.id}>
                     <td className="cell-mono">{fmtDateTime(entry.createdAt)}</td>
                     <td className="cell-sub">{entry.actorName ?? entry.actorUserId ?? '—'}</td>
@@ -163,6 +165,7 @@ function AuditContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
     </>
   );
