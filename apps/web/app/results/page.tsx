@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
-import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows } from '../../components/ui';
+import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows, usePagedRows } from '../../components/ui';
 import { apiDownload, apiRequest } from '../../lib/api';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 
@@ -341,6 +341,8 @@ function FlowTab() {
     });
   }, [responses, search, flow]);
 
+  const { pageRows, pager } = usePagedRows(filtered, 'resposta(s)');
+
   return (
     <>
       {error ? <ErrorBanner message={error} onRetry={load} /> : null}
@@ -384,7 +386,7 @@ function FlowTab() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => (
+                pageRows.map((r) => (
                   <tr key={r.id}>
                     <td className="cell-sub">{r.campaignName ?? '—'}</td>
                     <td className="cell-sub">{r.templateName ?? '—'}</td>
@@ -399,6 +401,7 @@ function FlowTab() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
     </>
   );

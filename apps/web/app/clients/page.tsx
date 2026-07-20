@@ -9,6 +9,7 @@ import {
   Forbidden,
   Modal,
   SkeletonRows,
+  usePagedRows,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
 import { ENTITY_STATUS, badgeFor } from '../../lib/badges';
@@ -95,6 +96,8 @@ function ClientsContent() {
     });
   }, [clients, search, statusFilter]);
 
+  const { pageRows, pager } = usePagedRows(filtered, 'cliente(s)');
+
   if (!isCollosRole(session.role)) {
     return <Forbidden />;
   }
@@ -157,7 +160,7 @@ function ClientsContent() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((client) => (
+                pageRows.map((client) => (
                   <tr key={client.id}>
                     <td className="cell-strong">{client.name}</td>
                     <td className="cell-sub">{client.legalName ?? '—'}</td>
@@ -182,6 +185,7 @@ function ClientsContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
 
       {editing ? (

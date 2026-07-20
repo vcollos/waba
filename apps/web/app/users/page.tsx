@@ -10,6 +10,7 @@ import {
   Forbidden,
   Modal,
   SkeletonRows,
+  usePagedRows,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
 import { ENTITY_STATUS, badgeFor } from '../../lib/badges';
@@ -92,6 +93,8 @@ function UsersContent() {
     if (isCollosRole(session.role)) load();
   }, [load, session.role]);
 
+  const { pageRows, pager } = usePagedRows(users, 'usuário(s)');
+
   if (!isCollosRole(session.role)) {
     return <Forbidden />;
   }
@@ -169,7 +172,7 @@ function UsersContent() {
                   </td>
                 </tr>
               ) : (
-                users.map((user) => (
+                pageRows.map((user) => (
                   <tr key={user.id}>
                     <td className="cell-strong">{user.name}</td>
                     <td className="cell-mono">{user.email}</td>
@@ -197,6 +200,7 @@ function UsersContent() {
             </tbody>
           )}
         </table>
+        {pager}
       </div>
 
       {editing ? (

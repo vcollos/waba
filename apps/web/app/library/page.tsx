@@ -10,6 +10,7 @@ import {
   ErrorBanner,
   SkeletonRows,
   ToastHost,
+  usePagedRows,
   useToasts,
 } from '../../components/ui';
 import { apiRequest } from '../../lib/api';
@@ -126,6 +127,8 @@ function ModelsContent() {
       return true;
     });
   }, [templates, search, statusFilter, categoryFilter, integrationFilter, flowFilter]);
+
+  const { pageRows, pager } = usePagedRows(filtered, 'modelo(s)');
 
   const syncAll = async () => {
     if (integrations.length === 0) {
@@ -260,7 +263,7 @@ function ModelsContent() {
                       </td>
                     </tr>
                   ) : (
-                    filtered.map((template) => (
+                    pageRows.map((template) => (
                       <tr key={template.id}>
                         <td className="cell-strong">{template.name}</td>
                         <td className="cell-mono">{template.languageCode}</td>
@@ -290,6 +293,7 @@ function ModelsContent() {
                 </tbody>
               )}
             </table>
+            {pager}
           </div>
         </>
       )}
