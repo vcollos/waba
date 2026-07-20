@@ -111,6 +111,7 @@ export class ContactsController {
         | 'opt_in'
         | 'delete'
         | 'assign_list'
+        | 'remove_list'
         | 'set_category'
         | 'set_client';
       contactIds?: string[];
@@ -130,6 +131,15 @@ export class ContactsController {
       },
       request.user,
     );
+  }
+
+  @Post('contacts/merge')
+  @Roles(...CONTACTS_WRITE_ROLES)
+  merge(
+    @Body() body: { keeperId?: string; loserIds?: string[] },
+    @Req() request: { user: UserSession },
+  ) {
+    return this.contactsService.mergeContacts(body.keeperId ?? '', body.loserIds ?? [], request.user);
   }
 
   @Get('lists')
@@ -218,6 +228,7 @@ export class ContactsController {
       clientId?: string;
       mapping?: string;
       defaults?: string;
+      overwriteExisting?: string;
     },
     @Req() request: { user: UserSession },
   ) {
@@ -229,6 +240,8 @@ export class ContactsController {
         clientId: body.clientId ?? null,
         mapping: parseJsonBody(body.mapping),
         defaults: parseJsonBody(body.defaults),
+        // FormData envia string; ausência = manter comportamento atual (sobrescrever).
+        overwriteExisting: body.overwriteExisting !== 'false',
       },
       request.user,
     );

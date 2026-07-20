@@ -38,6 +38,7 @@ interface Contact {
   isOptedOut: boolean;
   validationError?: string | null;
   listNames: string[];
+  listIds: string[];
 }
 
 interface ListItem {
@@ -97,8 +98,10 @@ function ContactsContent() {
   const [listFilter, setListFilter] = useState('');
 
   const [selected, setSelected] = useState<string[]>([]);
+  const [bulkListId, setBulkListId] = useState('');
   const [editing, setEditing] = useState<Contact | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
+  const [merging, setMerging] = useState(false);
 
   const load = useCallback(
     (nextOffset = 0) => {
@@ -145,7 +148,7 @@ function ContactsContent() {
       if (valid === 'invalid' && c.isValid) return false;
       if (optOut === 'out' && !c.isOptedOut) return false;
       if (optOut === 'in' && c.isOptedOut) return false;
-      if (listFilter && !c.listNames.includes(listFilter)) return false;
+      if (listFilter && !c.listIds.includes(listFilter)) return false;
       if (term) {
         const hay = `${c.name} ${c.phoneE164} ${c.email ?? ''} ${c.clientName ?? ''}`.toLowerCase();
         if (!hay.includes(term)) return false;
@@ -234,6 +237,39 @@ function ContactsContent() {
           <button className="btn secondary sm" disabled={busy} onClick={() => runBulk('opt_in')}>
             Opt-in
           </button>
+          <select
+            className="flt"
+            value={bulkListId}
+            disabled={busy}
+            onChange={(e) => setBulkListId(e.target.value)}
+            aria-label="Lista para vincular ou desvincular"
+          >
+            <option value="">Lista…</option>
+            {lists.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn secondary sm"
+            disabled={busy || !bulkListId}
+            onClick={() => runBulk('assign_list', { listId: bulkListId })}
+          >
+            Vincular
+          </button>
+          <button
+            className="btn secondary sm"
+            disabled={busy || !bulkListId}
+            onClick={() => runBulk('remove_list', { listId: bulkListId })}
+          >
+            Desvincular
+          </button>
+          {selected.length >= 2 ? (
+            <button className="btn secondary sm" disabled={busy} onClick={() => setMerging(true)}>
+              Mesclar
+            </button>
+          ) : null}
           <button className="btn secondary sm" disabled={busy} onClick={() => runBulk('delete')}>
             Excluir
           </button>
@@ -278,7 +314,7 @@ function ContactsContent() {
         <select className="flt" value={listFilter} onChange={(e) => setListFilter(e.target.value)}>
           <option value="">Lista</option>
           {lists.map((l) => (
-            <option key={l.id} value={l.name}>
+            <option key={l.id} value={l.id}>
               {l.name}
             </option>
           ))}
@@ -418,13 +454,32 @@ function ContactsContent() {
         />
       ) : null}
 
+      {merging ? (
+        <MergeModal
+          contacts={contacts.filter((c) => selected.includes(c.id))}
+          onClose={() => setMerging(false)}
+          onMerged={(count) => {
+            setMerging(false);
+            setSelected([]);
+            push('success', `${count + 1} contatos mesclados em 1.`);
+            load(offset);
+          }}
+        />
+      ) : null}
+
       {importing ? (
         <CsvImportModal
           clientId={scopeClientId}
           onClose={() => setImporting(false)}
           onDone={(job) => {
             setImporting(false);
-            push('success', `Importação concluída: ${job.processedRows} linha(s).`);
+            const r = job.importRecord;
+            push(
+              'success',
+              r
+                ? `Importação concluída: ${fmtInt(Math.max(0, r.totalRows - r.duplicateRows))} novo(s), ${fmtInt(r.duplicateRows)} já existente(s)${r.invalidRows ? `, ${fmtInt(r.invalidRows)} inválido(s)` : ''}.`
+                : `Importação concluída: ${job.processedRows} linha(s).`,
+            );
             load(0);
           }}
         />
@@ -467,7 +522,7 @@ function ContactModal({
     category: contact?.category ?? '',
     externalRef: contact?.externalRef ?? '',
     recordStatus: contact?.recordStatus ?? 'active',
-    listIds: contact ? lists.filter((l) => contact.listNames.includes(l.name)).map((l) => l.id) : [],
+    listIds: contact?.listIds ?? [],
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -601,6 +656,126 @@ function ContactModal({
       </div>
     </Modal>
   );
+}
+
+/**
+ * Mesclagem manual de contatos duplicados. O usuário escolhe o registro
+ * principal (keeper, "dados corretos"); os demais são absorvidos — listas,
+ * histórico e opt-outs migram para o keeper e os perdedores são removidos.
+ */
+function MergeModal({
+  contacts,
+  onClose,
+  onMerged,
+}: {
+  contacts: Contact[];
+  onClose: () => void;
+  onMerged: (mergedCount: number) => void;
+}) {
+  // Sugestão de keeper: o mais recente (alinha com "usar o mais novo como principal").
+  const newest = useMemo(
+    () =>
+      [...contacts].sort(
+        (a, b) =>
+          new Date(b.updatedAt ?? b.createdAt).getTime() - new Date(a.updatedAt ?? a.createdAt).getTime(),
+      )[0],
+    [contacts],
+  );
+  const [keeperId, setKeeperId] = useState(newest?.id ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const loserIds = contacts.filter((c) => c.id !== keeperId).map((c) => c.id);
+      await apiRequest('/contacts/merge', {
+        method: 'POST',
+        body: JSON.stringify({ keeperId, loserIds }),
+      });
+      onMerged(loserIds.length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao mesclar contatos.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Mesclar contatos"
+      width="wide"
+      onClose={onClose}
+      footer={
+        <>
+          {error ? (
+            <span className="left" style={{ color: 'var(--danger)', fontSize: 13 }}>
+              {error}
+            </span>
+          ) : null}
+          <button className="btn tertiary md" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button className="btn primary md" onClick={submit} disabled={saving || !keeperId}>
+            {saving ? 'Mesclando…' : `Mesclar ${contacts.length} em 1`}
+          </button>
+        </>
+      }
+    >
+      <p className="cell-sub" style={{ marginBottom: 14 }}>
+        Escolha o contato <strong>principal</strong> (dados corretos). Os demais serão removidos, e suas
+        listas, histórico de mensagens e opt-outs passam para o principal. Esta ação não pode ser desfeita.
+      </p>
+      <div className="tbl-wrap">
+        <table className="tbl dense">
+          <thead>
+            <tr>
+              <th style={{ width: 90 }}>Principal</th>
+              <th>Nome</th>
+              <th>WhatsApp</th>
+              <th>Listas</th>
+              <th>Atualizado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {contacts.map((c) => (
+              <tr
+                key={c.id}
+                style={c.id === keeperId ? { background: 'var(--surface-2, rgba(0,0,0,0.04))' } : undefined}
+              >
+                <td>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="keeper"
+                      checked={c.id === keeperId}
+                      onChange={() => setKeeperId(c.id)}
+                    />
+                    {c.id === keeperId ? <BadgeText label="Principal" cls="success" /> : null}
+                  </label>
+                </td>
+                <td className="cell-strong">{c.name}</td>
+                <td className="cell-mono">{c.phoneE164 || c.phoneRaw || '—'}</td>
+                <td className="cell-sub">{c.listNames.length ? c.listNames.join(', ') : '—'}</td>
+                <td className="cell-mono">{fmtDateTime(c.updatedAt ?? c.createdAt)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {contacts.some((c) => c.phoneE164 && c.phoneE164 !== keeperContactPhone(contacts, keeperId)) ? (
+        <div className="toast warning" style={{ marginTop: 12 }}>
+          Os contatos selecionados têm telefones diferentes. Confirme que são a mesma pessoa antes de mesclar —
+          o telefone do principal será mantido.
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
+function keeperContactPhone(contacts: Contact[], keeperId: string): string {
+  const keeper = contacts.find((c) => c.id === keeperId);
+  return keeper?.phoneE164 || keeper?.phoneRaw || '';
 }
 
 function SearchIcon() {

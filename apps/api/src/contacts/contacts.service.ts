@@ -33,6 +33,7 @@ type BulkAction =
   | 'opt_in'
   | 'delete'
   | 'assign_list'
+  | 'remove_list'
   | 'set_category'
   | 'set_client';
 
@@ -135,7 +136,8 @@ export class ContactsService {
         c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
         c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
         c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at,
-        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names
+        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names,
+        COALESCE(ARRAY_AGG(DISTINCT l.id) FILTER (WHERE l.id IS NOT NULL), ARRAY[]::text[]) AS list_ids
        FROM contacts c
        LEFT JOIN list_members lm ON lm.contact_id = c.id
        LEFT JOIN lists l ON l.id = lm.list_id
@@ -148,6 +150,7 @@ export class ContactsService {
     return rows.map((row) => ({
       ...mapContactRow(row),
       listNames: toStringArray(row.list_names),
+      listIds: toStringArray(row.list_ids),
     }));
   }
 
@@ -182,7 +185,8 @@ export class ContactsService {
         c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
         c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
         c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at,
-        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names
+        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names,
+        COALESCE(ARRAY_AGG(DISTINCT l.id) FILTER (WHERE l.id IS NOT NULL), ARRAY[]::text[]) AS list_ids
        FROM contacts c
        LEFT JOIN list_members lm ON lm.contact_id = c.id
        LEFT JOIN lists l ON l.id = lm.list_id
@@ -197,6 +201,7 @@ export class ContactsService {
       items: rows.map((row) => ({
         ...mapContactRow(row),
         listNames: toStringArray(row.list_names),
+        listIds: toStringArray(row.list_ids),
       })),
       total: Number(count ?? 0),
       limit,
@@ -520,6 +525,7 @@ export class ContactsService {
       clientId?: string | null;
       mapping?: Partial<Record<CsvImportField, string | null>>;
       defaults?: CsvImportDefaults;
+      overwriteExisting?: boolean;
     },
     actor: UserSession,
   ): Promise<CsvImportJob> {
@@ -560,6 +566,7 @@ export class ContactsService {
           records,
           mapping,
           defaults,
+          overwriteExisting: params.overwriteExisting !== false,
         },
         actor,
       );
@@ -586,6 +593,7 @@ export class ContactsService {
       records: Array<Record<string, string>>;
       mapping: Record<CsvImportField, string | null>;
       defaults: Required<CsvImportDefaults>;
+      overwriteExisting: boolean;
     },
     actor: UserSession,
   ): Promise<void> {
@@ -726,13 +734,20 @@ export class ContactsService {
             : attributes,
         } satisfies ContactInput & { recordStatus: string };
 
+        // overwriteExisting: quando o telefone já existe no tenant, decide se os
+        // dados do arquivo (mais novos) viram os principais (sobrescreve) ou se o
+        // contato existente é preservado e apenas vinculado à nova lista.
         const contact = existingContact
-          ? updateExistingContact(existingContact, payload, normalized, rowTimestamp)
+          ? params.overwriteExisting
+            ? updateExistingContact(existingContact, payload, normalized, rowTimestamp)
+            : existingContact
           : createNewContact(payload, normalized, rowTimestamp);
 
         if (existingContact) {
           duplicateRows += 1;
-          batchContactsToUpdate.push(contact);
+          if (params.overwriteExisting) {
+            batchContactsToUpdate.push(contact);
+          }
         } else {
           batchContactsToInsert.push(contact);
         }
@@ -849,7 +864,7 @@ export class ContactsService {
 
     await this.database.postgresTransaction(async (client) => {
       await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash, contact.clientId ?? null);
-      await ensureListIdsExistInDatabase(client, input.listIds);
+      await ensureListIdsExistInDatabase(client, input.listIds, resolveClientScope(actor, input.clientId));
       await insertContactPg(client, contact);
       for (const listId of input.listIds ?? []) {
         await client.query(
@@ -1022,7 +1037,7 @@ export class ContactsService {
       await updateContactPg(client, updatedContact);
 
       if (input.listIds) {
-        await ensureListIdsExistInDatabase(client, input.listIds);
+        await ensureListIdsExistInDatabase(client, input.listIds, scope);
         await client.query('DELETE FROM list_members WHERE contact_id = $1', [id]);
         for (const listId of input.listIds) {
           await client.query(
@@ -1107,11 +1122,11 @@ export class ContactsService {
       affected = existingIds.length;
       const timestamp = nowIso();
 
-      if (input.action === 'assign_list') {
+      if (input.action === 'assign_list' || input.action === 'remove_list') {
         if (!input.listId) {
-          throw new BadRequestException('Informe a lista para vincular');
+          throw new BadRequestException('Informe a lista');
         }
-        await ensureListIdsExistInDatabase(client, [input.listId]);
+        await ensureListIdsExistInDatabase(client, [input.listId], scope);
       }
 
       switch (input.action) {
@@ -1154,6 +1169,12 @@ export class ContactsService {
           }
           break;
         }
+        case 'remove_list':
+          await client.query(
+            `DELETE FROM list_members WHERE list_id = $1 AND contact_id = ANY($2::text[])`,
+            [input.listId!, existingIds],
+          );
+          break;
         case 'set_category':
           await client.query(
             `UPDATE contacts SET category = $1, updated_at = $2 WHERE id = ANY($3::text[])`,
@@ -1206,6 +1227,136 @@ export class ContactsService {
     });
 
     return { affected };
+  }
+
+  /**
+   * Mescla contatos duplicados em um único "keeper" (registro principal com os
+   * dados corretos, escolhido pelo usuário). Re-aponta memberships de lista (com
+   * dedup por lista), histórico de mensagens, respostas de flow e opt-outs para o
+   * keeper; consolida o estado de opt-out (nunca perde uma supressão); e remove os
+   * perdedores. Escopado por tenant — não mescla entre tenants diferentes.
+   */
+  async mergeContacts(keeperId: string, loserIds: string[], actor: UserSession) {
+    const keeper = String(keeperId ?? '').trim();
+    const losers = [
+      ...new Set((loserIds ?? []).map((value) => String(value ?? '').trim()).filter(Boolean)),
+    ].filter((id) => id !== keeper);
+
+    if (!keeper) {
+      throw new BadRequestException('Informe o contato principal (keeper)');
+    }
+    if (losers.length === 0) {
+      throw new BadRequestException('Selecione ao menos dois contatos para mesclar');
+    }
+    if (losers.length > 100) {
+      throw new BadRequestException('Máximo de 100 contatos por mesclagem');
+    }
+
+    const scope = resolveClientScope(actor);
+    const allIds = [keeper, ...losers];
+    let mergedContact: ContactRecord | undefined;
+
+    await this.database.postgresTransaction(async (client) => {
+      // opted_out_at chega como Date (TIMESTAMPTZ sem type parser customizado).
+      const { rows } = await client.query<{
+        id: string;
+        client_id: string | null;
+        is_opted_out: boolean;
+        opted_out_at: string | Date | null;
+        opt_out_source: string | null;
+      }>(
+        `SELECT id, client_id, is_opted_out, opted_out_at, opt_out_source
+         FROM contacts
+         WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR client_id = $2)
+         FOR UPDATE`,
+        [allIds, scope],
+      );
+
+      if (rows.length !== allIds.length) {
+        throw new NotFoundException('Um ou mais contatos não foram encontrados');
+      }
+      // Isolamento: todos os contatos precisam ser do mesmo tenant.
+      const tenants = new Set(rows.map((row) => row.client_id ?? ''));
+      if (tenants.size > 1) {
+        throw new BadRequestException('Não é possível mesclar contatos de tenants diferentes');
+      }
+
+      const now = nowIso();
+
+      // 1) list_members: mantém uma membership por lista (preferindo a do keeper),
+      // apaga as demais do grupo e re-aponta as sobreviventes para o keeper, sem
+      // violar UNIQUE(list_id, contact_id).
+      await client.query(
+        `DELETE FROM list_members
+         WHERE contact_id = ANY($1::text[])
+           AND id NOT IN (
+             SELECT DISTINCT ON (list_id) id FROM list_members
+             WHERE contact_id = ANY($1::text[])
+             ORDER BY list_id, (contact_id = $2) DESC, id
+           )`,
+        [allIds, keeper],
+      );
+      await client.query(`UPDATE list_members SET contact_id = $1 WHERE contact_id = ANY($2::text[])`, [
+        keeper,
+        losers,
+      ]);
+
+      // 2) Histórico e supressões (colunas contact_id sem FK): re-aponta ao keeper.
+      await client.query(`UPDATE campaign_messages SET contact_id = $1 WHERE contact_id = ANY($2::text[])`, [
+        keeper,
+        losers,
+      ]);
+      await client.query(`UPDATE flow_responses SET contact_id = $1 WHERE contact_id = ANY($2::text[])`, [
+        keeper,
+        losers,
+      ]);
+      await client.query(`UPDATE opt_outs SET contact_id = $1 WHERE contact_id = ANY($2::text[])`, [
+        keeper,
+        losers,
+      ]);
+
+      // 3) Consolida opt-out: se qualquer contato do grupo estava suprimido, o
+      // keeper permanece/torna-se suprimido (nunca perde um opt-out na mesclagem).
+      const optedOut = rows.filter((row) => row.is_opted_out);
+      if (optedOut.length > 0) {
+        const earliestDate = optedOut
+          .map((row) => row.opted_out_at)
+          .filter((value): value is string | Date => Boolean(value))
+          .map((value) => new Date(value))
+          .filter((date) => !Number.isNaN(date.getTime()))
+          .reduce<Date | null>((min, date) => (!min || date < min ? date : min), null);
+        const earliest = earliestDate ? earliestDate.toISOString() : now;
+        const source =
+          rows.find((row) => row.id === keeper && row.is_opted_out)?.opt_out_source ??
+          optedOut[0].opt_out_source ??
+          'merge';
+        await client.query(
+          `UPDATE contacts
+           SET is_opted_out = true,
+               opted_out_at = COALESCE(opted_out_at, $2),
+               opt_out_source = COALESCE(opt_out_source, $3),
+               updated_at = $4
+           WHERE id = $1`,
+          [keeper, earliest, source, now],
+        );
+      }
+
+      // 4) Remove os perdedores e marca o keeper como atualizado.
+      await client.query(`DELETE FROM contacts WHERE id = ANY($1::text[])`, [losers]);
+      await client.query(`UPDATE contacts SET updated_at = $2 WHERE id = $1`, [keeper, now]);
+
+      mergedContact = (await getContactByIdFromDatabase(client, keeper)) ?? undefined;
+    });
+
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'contacts.merge',
+      entityType: 'contact',
+      entityId: keeper,
+      metadata: { keeperId: keeper, mergedIds: losers, mergedCount: losers.length },
+    });
+
+    return { keeperId: keeper, mergedCount: losers.length, contact: mergedContact };
   }
 
   async setOptOut(contactId: string, actor: UserSession, source: OptOutRecord['source'] = 'manual') {
@@ -1587,15 +1738,20 @@ const ensurePhoneIsUniqueInDatabase = (
 const ensureListIdsExistInDatabase = async (
   database: Pick<PoolClient, 'query'>,
   listIds: string[] | undefined,
+  // Obrigatório de propósito: null = sem restrição (só super-admin). Forçar o
+  // chamador a decidir evita reabrir a brecha cross-tenant por omissão.
+  scope: string | null,
 ) => {
   const ids = [...new Set((listIds ?? []).filter(Boolean))];
   if (ids.length === 0) {
     return;
   }
 
-  const result = await database.query('SELECT COUNT(*)::int AS count FROM lists WHERE id = ANY($1::text[])', [
-    ids,
-  ]);
+  // Escopo por tenant: super-admin (scope null) vê todas; cliente só as próprias.
+  const result = await database.query(
+    'SELECT COUNT(*)::int AS count FROM lists WHERE id = ANY($1::text[]) AND ($2::text IS NULL OR client_id = $2)',
+    [ids, scope],
+  );
   const count = Number(result.rows[0]?.count ?? 0);
 
   if (count !== ids.length) {

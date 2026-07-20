@@ -21,6 +21,13 @@ export interface ImportPreview {
   availableFields: ImportPreviewField[];
 }
 
+export interface ImportResult {
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  duplicateRows: number;
+}
+
 export interface ImportJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed';
@@ -28,6 +35,7 @@ export interface ImportJob {
   listName: string;
   totalRows: number;
   processedRows: number;
+  importRecord?: ImportResult | null;
   error?: string | null;
 }
 
@@ -75,6 +83,12 @@ export function CsvImportModal({
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [defaults, setDefaults] = useState({ clientName: '', category: '', status: 'active' as RecordStatus });
+  // Contato já existente (mesmo telefone no tenant): sobrescrever com os dados do
+  // arquivo (mais novos como principais) ou preservar e apenas vincular à lista.
+  const [overwriteExisting, setOverwriteExisting] = useState(true);
+  // Congela a flag usada no job em execução — o rótulo do resultado deve refletir
+  // o que foi enviado ao servidor, não o estado atual do checkbox.
+  const [jobOverwrite, setJobOverwrite] = useState(true);
   const [job, setJob] = useState<ImportJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +139,8 @@ export function CsvImportModal({
       if (clientId) formData.append('clientId', clientId);
       formData.append('mapping', JSON.stringify(mapping));
       formData.append('defaults', JSON.stringify(defaults));
+      formData.append('overwriteExisting', String(overwriteExisting));
+      setJobOverwrite(overwriteExisting);
       const started = await apiRequest<ImportJob>('/contacts/imports/csv', {
         method: 'POST',
         body: formData,
@@ -142,7 +158,9 @@ export function CsvImportModal({
       void apiRequest<ImportJob>(`/contacts/imports/csv/jobs/${job.id}`)
         .then((next) => {
           setJob(next);
-          if (next.status === 'completed') onDone(next);
+          // Ao concluir, mantém o modal aberto para exibir o resultado; o fechamento
+          // e o refresh da lista acontecem quando o usuário clica em "Concluir".
+          if (next.status === 'completed') setBusy(false);
           if (next.status === 'failed') {
             setError(next.error ?? 'Importação falhou.');
             setBusy(false);
@@ -151,15 +169,25 @@ export function CsvImportModal({
         .catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [job, onDone]);
+  }, [job]);
 
   const steps = ['Arquivo', 'Mapeamento', 'Confirmação'];
+
+  // Fechar pelo X após concluir equivale a "Concluir": garante o refresh da
+  // lista na tela que abriu o modal.
+  const handleClose = () => {
+    if (job?.status === 'completed') {
+      onDone(job);
+      return;
+    }
+    onClose();
+  };
 
   return (
     <Modal
       title={title}
       width="xwide"
-      onClose={onClose}
+      onClose={handleClose}
       footer={
         <>
           {error ? (
@@ -182,7 +210,23 @@ export function CsvImportModal({
               Revisar
             </button>
           ) : null}
-          {step === 3 ? (
+          {step === 3 && job?.status === 'completed' ? (
+            <button className="btn primary md" onClick={() => onDone(job)}>
+              Concluir
+            </button>
+          ) : step === 3 && job?.status === 'failed' ? (
+            <button
+              className="btn primary md"
+              disabled={busy}
+              onClick={() => {
+                setJob(null);
+                setError(null);
+                void startImport();
+              }}
+            >
+              Tentar novamente
+            </button>
+          ) : step === 3 ? (
             <button className="btn primary md" onClick={startImport} disabled={busy || !!job}>
               {job ? 'Importando…' : busy ? 'Iniciando…' : 'Confirmar importação'}
             </button>
@@ -281,6 +325,23 @@ export function CsvImportModal({
               </select>
             </div>
           </div>
+          <label
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 16, cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={overwriteExisting}
+              onChange={(e) => setOverwriteExisting(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              <strong>Atualizar contatos já existentes com os dados do arquivo</strong>
+              <span className="cell-sub" style={{ display: 'block', fontSize: 12 }}>
+                Quando o telefone já existir, usa os dados do arquivo (mais novos) como principais. Desmarque
+                para preservar o contato atual e apenas vinculá-lo a esta lista.
+              </span>
+            </span>
+          </label>
         </>
       ) : null}
 
@@ -330,10 +391,43 @@ export function CsvImportModal({
               </tbody>
             </table>
           </div>
-          {job ? (
+          {job && job.status !== 'completed' ? (
             <div className="toast" style={{ marginTop: 14 }}>
               Processando {fmtInt(job.processedRows)} / {fmtInt(job.totalRows)} — {fileName}
             </div>
+          ) : null}
+          {job?.status === 'completed' && job.importRecord ? (
+            <>
+              <div className="block-title" style={{ margin: '18px 0 10px' }}>
+                Resultado da importação
+              </div>
+              <div className="kpi-grid">
+                <div className="kpi">
+                  <span className="kpi-label">Novos contatos</span>
+                  <span className="kpi-val">
+                    {fmtInt(Math.max(0, job.importRecord.totalRows - job.importRecord.duplicateRows))}
+                  </span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">{jobOverwrite ? 'Atualizados' : 'Já existentes'}</span>
+                  <span className="kpi-val">{fmtInt(job.importRecord.duplicateRows)}</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">Válidos</span>
+                  <span className="kpi-val">{fmtInt(job.importRecord.validRows)}</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">Inválidos</span>
+                  <span className="kpi-val">{fmtInt(job.importRecord.invalidRows)}</span>
+                </div>
+              </div>
+              {job.importRecord.invalidRows > 0 ? (
+                <div className="toast warning" style={{ marginTop: 12 }}>
+                  {fmtInt(job.importRecord.invalidRows)} linha(s) com telefone inválido foram importadas como
+                  inválidas e não recebem envios até correção.
+                </div>
+              ) : null}
+            </>
           ) : null}
         </>
       ) : null}
