@@ -122,9 +122,11 @@ export function AppShell({ title, children }: { title: string; children: React.R
       <div className="app">
         <aside className="sidebar">
           <div className="sidebar-brand">
-            <div className="auth-brand-mark" style={{ width: 36, height: 34, borderRadius: 8 }}>
-              WC
-            </div>
+            <img
+              className="sidebar-brand-mark"
+              src="/brand/simbolo_comando_positivo.svg"
+              alt="Collos"
+            />
             <div className="sidebar-brand-meta">
               <span className="sidebar-brand-title">WABA Collos</span>
               <span className="sidebar-brand-sub">{collos ? 'Operação Collos' : 'Cliente'}</span>
