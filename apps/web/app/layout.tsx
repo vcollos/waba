@@ -1,5 +1,5 @@
 // Ordem importa: legacy.css (telas ainda-não-migradas) carrega antes; o DS
-// Uniodonto em globals.css carrega depois e vence em tudo que é compartilhado.
+// Collos em globals.css carrega depois e vence em tudo que é compartilhado.
 import './legacy.css';
 import './globals.css';
 import { AuthGuard } from '../components/auth-guard';

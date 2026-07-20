@@ -34,9 +34,9 @@ export default function LoginPage() {
     <div className="auth">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-brand-mark">WC</div>
+          <img className="auth-brand-logo" src="/brand/logo_collos_positivo.svg" alt="Collos" />
           <div>
-            <div className="auth-brand-title">WABA Collos</div>
+            <div className="auth-brand-title">WABA</div>
             <div className="auth-brand-sub">Plataforma multi-tenant</div>
           </div>
         </div>

@@ -61,7 +61,7 @@ interface FlowResponse {
 const SERIES: Array<{ key: keyof Omit<TimelinePoint, 'day'>; label: string; color: string }> = [
   { key: 'sent', label: 'Enviadas', color: 'var(--info)' },
   { key: 'delivered', label: 'Entregues', color: 'var(--success)' },
-  { key: 'read', label: 'Lidas', color: 'var(--uni-vinho-medio)' },
+  { key: 'read', label: 'Lidas', color: 'var(--collos-cinza)' },
   { key: 'failed', label: 'Falhas', color: 'var(--danger)' },
 ];
 
