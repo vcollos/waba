@@ -15,3 +15,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0002](0002-inclusao-de-listas-manual-csv-api.md) | Inclusão de contatos em listas: Manual, CSV e API por token de tenant | Aceito |
 | [0003](0003-telefone-unico-por-tenant.md) | Unicidade de telefone por tenant (índice composto client_id, phone_hash) | Aceito |
 | [0004](0004-etiqueta-de-tenant-por-modelo.md) | Etiqueta de tenant por modelo (override sobre o tenant da integração) | Aceito |
+| [0005](0005-disparo-transacional-por-api.md) | Disparo transacional por API pública (envio síncrono fora do poller) | Aceito |
