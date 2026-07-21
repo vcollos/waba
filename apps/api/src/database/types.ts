@@ -304,6 +304,32 @@ export interface CampaignMessageRecord {
   updatedAt: string;
 }
 
+/**
+ * Registro fino de um disparo transacional (API pública `public/v1/messages`).
+ * Guarda a chave de idempotência (para não reenviar OTP/token duplicado) e o
+ * destino de callback de status (webhook de saída para o sistema do cliente).
+ * A mensagem em si vive em `campaign_messages`; aqui só o que é específico do
+ * canal transacional.
+ */
+export interface TransactionalDispatchRecord {
+  id: string;
+  /** Tenant dono do disparo (sempre presente: o token de API carrega o tenant). */
+  clientId?: string | null;
+  integrationId: string;
+  campaignMessageId: string;
+  /** Chave de idempotência por tenant; nula = sem dedupe. */
+  idempotencyKey?: string | null;
+  /** URL https do cliente para receber os status; nula = sem callback. */
+  callbackUrl?: string | null;
+  /** Segredo (HMAC) para assinar o callback; nulo = callback não assinado. */
+  callbackSecret?: string | null;
+  /** Último resultado de entrega do callback (ex.: '200', 'failed'). */
+  callbackStatus?: string | null;
+  callbackAttempts: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MessageEventRecord {
   id: string;
   campaignMessageId?: string | null;

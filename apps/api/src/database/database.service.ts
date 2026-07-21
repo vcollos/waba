@@ -22,6 +22,7 @@ import {
   MessageEventRecord,
   OptOutRecord,
   TemplateCacheRecord,
+  TransactionalDispatchRecord,
   UserRecord,
   emptyState,
 } from './types';
@@ -993,6 +994,23 @@ export class DatabaseService implements OnModuleDestroy {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_api_tokens_client ON api_tokens(client_id);
+      CREATE TABLE IF NOT EXISTS transactional_dispatches (
+        id TEXT PRIMARY KEY,
+        client_id TEXT,
+        integration_id TEXT NOT NULL,
+        campaign_message_id TEXT NOT NULL,
+        idempotency_key TEXT,
+        callback_url TEXT,
+        callback_secret TEXT,
+        callback_status TEXT,
+        callback_attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_transactional_dispatches_idempotency
+        ON transactional_dispatches(client_id, idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_transactional_dispatches_message
+        ON transactional_dispatches(campaign_message_id);
     `);
 
     if (this.metaClient) {
@@ -1018,6 +1036,23 @@ export class DatabaseService implements OnModuleDestroy {
           updated_at TIMESTAMPTZ NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_api_tokens_client ON api_tokens(client_id);
+        CREATE TABLE IF NOT EXISTS transactional_dispatches (
+          id TEXT PRIMARY KEY,
+          client_id TEXT,
+          integration_id TEXT NOT NULL,
+          campaign_message_id TEXT NOT NULL,
+          idempotency_key TEXT,
+          callback_url TEXT,
+          callback_secret TEXT,
+          callback_status TEXT,
+          callback_attempts INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_transactional_dispatches_idempotency
+          ON transactional_dispatches(client_id, idempotency_key);
+        CREATE INDEX IF NOT EXISTS idx_transactional_dispatches_message
+          ON transactional_dispatches(campaign_message_id);
       `);
 
       // Unicidade de telefone POR TENANT: troca o UNIQUE global de phone_hash por
@@ -1491,6 +1526,93 @@ export class DatabaseService implements OnModuleDestroy {
     );
 
     return rows.rows[0] ? mapCampaignMessageRow(rows.rows[0]) : null;
+  }
+
+  // --- Disparo transacional (API pública) ---------------------------------
+  // Feature Postgres-first (como api_tokens). As LEITURAS/updates chamados no
+  // caminho do webhook têm fallback no-op quando não há Postgres (SQLite/CI),
+  // como os vizinhos; o INSERT (caminho de dispatch, que já exige Postgres via
+  // listTemplatesInDatabase) propaga o erro em vez de descartar o registro.
+
+  async insertTransactionalDispatch(record: TransactionalDispatchRecord): Promise<void> {
+    await this.postgresQuery(
+      `INSERT INTO transactional_dispatches (
+        id, client_id, integration_id, campaign_message_id, idempotency_key,
+        callback_url, callback_secret, callback_status, callback_attempts,
+        created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        record.id,
+        record.clientId ?? null,
+        record.integrationId,
+        record.campaignMessageId,
+        record.idempotencyKey ?? null,
+        record.callbackUrl ?? null,
+        record.callbackSecret ?? null,
+        record.callbackStatus ?? null,
+        record.callbackAttempts ?? 0,
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+  }
+
+  async findTransactionalDispatchByIdempotencyKey(
+    clientId: string,
+    idempotencyKey: string,
+  ): Promise<TransactionalDispatchRecord | null> {
+    await this.ensureReady();
+    // Sem Postgres (dev/CI/SQLite) o canal transacional não opera => sem replay.
+    if (!this.metaClient) {
+      return null;
+    }
+    const rows = await this.metaClient.query<Record<string, unknown>>(
+      `SELECT id, client_id, integration_id, campaign_message_id, idempotency_key,
+              callback_url, callback_secret, callback_status, callback_attempts,
+              created_at, updated_at
+       FROM transactional_dispatches
+       WHERE client_id = $1 AND idempotency_key = $2
+       LIMIT 1`,
+      [clientId, idempotencyKey],
+    );
+    return rows.rows[0] ? mapTransactionalDispatchRow(rows.rows[0]) : null;
+  }
+
+  async findTransactionalDispatchByCampaignMessageId(
+    campaignMessageId: string,
+  ): Promise<TransactionalDispatchRecord | null> {
+    await this.ensureReady();
+    // Chamado no caminho crítico do webhook (handleStatus). Sem Postgres não há
+    // dispatches transacionais => null (não pode 500 e travar o refresh).
+    if (!this.metaClient) {
+      return null;
+    }
+    const rows = await this.metaClient.query<Record<string, unknown>>(
+      `SELECT id, client_id, integration_id, campaign_message_id, idempotency_key,
+              callback_url, callback_secret, callback_status, callback_attempts,
+              created_at, updated_at
+       FROM transactional_dispatches
+       WHERE campaign_message_id = $1
+       LIMIT 1`,
+      [campaignMessageId],
+    );
+    return rows.rows[0] ? mapTransactionalDispatchRow(rows.rows[0]) : null;
+  }
+
+  async updateTransactionalCallback(
+    id: string,
+    update: { status: string | null; attempts: number },
+  ): Promise<void> {
+    await this.ensureReady();
+    if (!this.metaClient) {
+      return;
+    }
+    await this.metaClient.query(
+      `UPDATE transactional_dispatches
+       SET callback_status = $1, callback_attempts = $2, updated_at = $3
+       WHERE id = $4`,
+      [update.status ?? null, update.attempts, nowIso(), id],
+    );
   }
 
   async saveCampaignMessageInDatabase(message: CampaignMessageRecord): Promise<void> {
@@ -2835,6 +2957,23 @@ const mapCampaignMessageRow = (row: CampaignMessageRow): CampaignMessageRecord =
     updatedAt: toIsoString(row.updated_at) ?? new Date().toISOString(),
   };
 };
+
+const mapTransactionalDispatchRow = (
+  row: Record<string, unknown>,
+): TransactionalDispatchRecord => ({
+  id: String(row.id),
+  clientId: (row.client_id as string | null) ?? null,
+  integrationId: String(row.integration_id),
+  campaignMessageId: String(row.campaign_message_id),
+  idempotencyKey: (row.idempotency_key as string | null) ?? null,
+  callbackUrl: (row.callback_url as string | null) ?? null,
+  callbackSecret: (row.callback_secret as string | null) ?? null,
+  callbackStatus: (row.callback_status as string | null) ?? null,
+  callbackAttempts: Number(row.callback_attempts ?? 0),
+  // TIMESTAMPTZ chega como Date via pg; normalizamos para ISO string.
+  createdAt: toIsoString(row.created_at as string | Date | null) ?? new Date().toISOString(),
+  updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
+});
 
 const mapMessageEventRow = (row: MessageEventRow): MessageEventRecord => {
   const record = parseJsonObject(row.record_json) as Partial<MessageEventRecord>;

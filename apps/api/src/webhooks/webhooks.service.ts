@@ -4,12 +4,14 @@ import { DatabaseService } from '../database/database.service';
 import { hash, newId, normalizeKeyword, nowIso } from '../database/helpers';
 import { CampaignMessageRecord, ContactRecord, FlowCacheRecord, FlowResponseRecord } from '../database/types';
 import { CampaignsService } from '../campaigns/campaigns.service';
+import { TransactionalCallbackService } from '../transactional/transactional-callback.service';
 
 @Injectable()
 export class WebhooksService {
   constructor(
     private readonly database: DatabaseService,
     private readonly campaignsService: CampaignsService,
+    private readonly transactionalCallbacks: TransactionalCallbackService,
   ) {}
 
   async process(payload: Record<string, unknown>) {
@@ -80,6 +82,30 @@ export class WebhooksService {
     }
 
     await this.database.saveCampaignMessageInDatabase(nextMessage);
+
+    // Callback de saída para mensagens transacionais (OTP/token): best-effort,
+    // fora do caminho crítico do webhook (void + catch).
+    const dispatch = await this.database.findTransactionalDispatchByCampaignMessageId(message.id);
+    if (dispatch?.callbackUrl) {
+      const error =
+        nextStatus === 'failed'
+          ? {
+              code: nextMessage.providerErrorCode ?? null,
+              title: nextMessage.providerErrorTitle ?? null,
+            }
+          : undefined;
+      void this.transactionalCallbacks
+        .notify(dispatch, {
+          messageId: message.id,
+          idempotencyKey: dispatch.idempotencyKey ?? null,
+          to: message.phoneE164,
+          status: nextStatus,
+          providerMessageId,
+          occurredAt,
+          ...(error ? { error } : {}),
+        })
+        .catch(() => undefined);
+    }
 
     await this.campaignsService.refreshCampaignSummary(message.campaignId);
   }

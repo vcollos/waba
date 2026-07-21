@@ -50,9 +50,29 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
 - listas aceitam inclusão de contatos via API externa autenticada por token do
   tenant (`api_tokens`, só hash sha256 persistido; texto puro exibido uma vez)
 - guard: `apps/api/src/api-tokens/api-token.guard.ts` (Authorization: Bearer)
-- rotas sob `/api/public/v1` (`GET/POST /lists`, `POST /lists/:id/contacts`)
+- rotas sob `/api/public/v1`:
+  - `GET/POST /lists`, `POST /lists/:id/contacts` (ingestão de contatos, ADR 0002)
+  - `POST /messages` — **disparo transacional** (OTP/assinatura), envio síncrono
+    fora do poller, categorias `UTILITY`/`AUTHENTICATION` (ADR 0005)
 - o tenant vem **sempre** do token; nunca confiar em `clientId` do corpo
 - gestão de tokens: `/api/api-tokens` (JWT; `super_admin`/`admin`/`client_admin`)
+
+### Disparo transacional (`POST /public/v1/messages`, ADR 0005)
+
+- envio **síncrono**, resposta com `providerMessageId` e `status: accepted`; não
+  passa pelo `DispatchService` (é o 1º caminho de escrita de mensagem fora do
+  poller de lote)
+- rastreio reusa `campaign_messages` numa campanha singleton por integração
+  `svc:<integrationId>` (status `completed`, invisível ao poller) → herda funil,
+  webhook e cobrança
+- `transactional_dispatches` (`UNIQUE(client_id, idempotency_key)`) só para
+  idempotência (`Idempotency-Key`) + callback
+- callback de saída assinado `X-Waba-Signature: sha256=HMAC(corpo,
+  callback_secret)`; `callback_secret` retornado 1x na resposta
+- guarda SSRF do callback em `callback-url.ts` (classificação de IP em bytes,
+  pin do IP no connect, https-only, sem redirect); OTP redigido (`***`) no
+  payload persistido; opt-out do tenant suprime (409); rate-limit por token
+  (10/s + 300/min, in-memory por instância)
 
 ## Rastreamento (Plane)
 
