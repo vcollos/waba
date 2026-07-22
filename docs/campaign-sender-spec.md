@@ -166,7 +166,8 @@ Wireframe textual:
     a guarda de monotonia garante que lida vira 'read')
 
 [Exportar CSV]
-- exporta o conjunto atualmente filtrado (gerado no cliente, com proteção
+- exporta o conjunto atualmente filtrado via `GET /contacts/export` (filtros
+  aplicados no servidor, sem cap; CSV montado no cliente com proteção
   anti-formula-injection); 1ª coluna é o `id` interno do cadastro, além de
   external_ref e as badges situacao_falha/situacao_nao_lida
 
