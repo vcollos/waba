@@ -261,22 +261,27 @@ function ContactsContent() {
       load(offset);
     }, 'Ação em massa concluída.');
 
-  // Exporta o conjunto FILTRADO inteiro (não só a página carregada): busca todos
-  // os contatos do escopo e reaplica os mesmos filtros da tela antes de gerar o CSV.
+  // Exporta o conjunto FILTRADO inteiro. A filtragem/paginação da tela é
+  // client-side sobre a página carregada (e o backend limita a página a 250), então
+  // a exportação usa um endpoint dedicado que aplica os mesmos filtros no servidor,
+  // sem cap — devolve todos os contatos que batem.
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const q = scopeClientId ? `&clientId=${encodeURIComponent(scopeClientId)}` : '';
-      const page = await apiRequest<PaginatedContactsResponse>(
-        `/contacts?limit=${ALL_LIMIT}&offset=0${q}`,
-      );
-      const rows = page.items
-        .filter((c) => matchesContactFilters(c, activeFilters))
-        .map(contactToCsvRow);
-      if (rows.length === 0) {
+      const params = new URLSearchParams();
+      if (scopeClientId) params.set('clientId', scopeClientId);
+      if (search.trim()) params.set('search', search.trim());
+      if (category) params.set('category', category);
+      if (status) params.set('status', status);
+      if (valid) params.set('valid', valid);
+      if (optOut) params.set('optOut', optOut);
+      if (listFilter) params.set('listId', listFilter);
+      const items = await apiRequest<Contact[]>(`/contacts/export?${params.toString()}`);
+      if (items.length === 0) {
         push('warning', 'Nenhum contato para exportar com os filtros atuais.');
         return;
       }
+      const rows = items.map(contactToCsvRow);
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       downloadCsv(`contatos-${stamp}.csv`, [...EXPORT_HEADERS], rows);
       push('success', `${fmtInt(rows.length)} contato(s) exportado(s).`);

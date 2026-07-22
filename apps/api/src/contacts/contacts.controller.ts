@@ -50,6 +50,28 @@ export class ContactsController {
     return this.contactsService.listContacts(scope);
   }
 
+  @Get('contacts/export')
+  exportContacts(
+    @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
+    @Query('search') search?: string,
+    @Query('category') category?: string,
+    @Query('status') status?: string,
+    @Query('valid') valid?: string,
+    @Query('optOut') optOut?: string,
+    @Query('listId') listId?: string,
+  ) {
+    const scope = resolveClientScope(request.user, clientId);
+    return this.contactsService.exportContacts(scope, {
+      search,
+      category,
+      status,
+      valid,
+      optOut,
+      listId,
+    });
+  }
+
   @Post('contacts')
   @Roles(...CONTACTS_WRITE_ROLES)
   createContact(
