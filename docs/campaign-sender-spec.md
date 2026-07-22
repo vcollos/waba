@@ -165,12 +165,21 @@ Wireframe textual:
   - "Não lida" (amarela): há alguma com status='delivered' (entregue e nunca lida;
     a guarda de monotonia garante que lida vira 'read')
 
+[Exportar CSV]
+- exporta o conjunto atualmente filtrado (gerado no cliente, com proteção
+  anti-formula-injection); 1ª coluna é o `id` interno do cadastro, além de
+  external_ref e as badges situacao_falha/situacao_nao_lida
+
 [Importar CSV]
 - upload do arquivo
 - mapear colunas: nome, telefone, email, tags, atributos extras
 - preview de normalização E.164
 - preview de duplicatas
 - confirmar importação
+- modo atualização em massa: quando a coluna `id` é mapeada, casa contatos pelo
+  ID interno (não por telefone — permite trocar o número sem duplicar); dry-run
+  `/contacts/imports/csv/plan` projeta updated/created/unchanged/conflicts/invalid
+  e o wizard só grava após "Sim". Ver ADR 0006.
 
 [Listas]
 - criar lista

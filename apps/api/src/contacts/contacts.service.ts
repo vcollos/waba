@@ -16,6 +16,7 @@ import {
 } from '../database/types';
 
 type CsvImportField =
+  | 'id'
   | 'clientName'
   | 'firstName'
   | 'lastName'
@@ -77,9 +78,20 @@ interface ListCategorySummary {
   totalMembers: number;
 }
 
+interface CsvUpdateSummary {
+  updated: number;
+  created: number;
+  unchanged: number;
+  conflicts: number;
+  invalid: number;
+}
+
 interface CsvImportJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed';
+  // 'insert' = fluxo clássico (cria lista + upsert por telefone); 'update' =
+  // atualização em massa casando por ID do cadastro (não cria lista).
+  mode: 'insert' | 'update';
   fileName: string;
   listName: string;
   totalRows: number;
@@ -87,11 +99,19 @@ interface CsvImportJob {
   createdAt: string;
   updatedAt: string;
   importRecord?: ImportRecord;
+  updateSummary?: CsvUpdateSummary;
   list?: ListRecord;
   error?: string | null;
 }
 
+/** Colunas lidas de `contacts` para reidratar um `ContactRecord` via `mapContactRow`. */
+const CONTACT_COLUMNS = `
+  id, client_id, external_ref, client_name, first_name, last_name, name, category, record_status,
+  phone_raw, phone_e164, phone_hash, email, attributes_json, is_valid, validation_error,
+  is_opted_out, opted_out_at, opt_out_source, imported_at, created_at, updated_at`;
+
 const IMPORTABLE_FIELDS: Array<{ key: CsvImportField; label: string; required: boolean }> = [
+  { key: 'id', label: 'ID do cadastro', required: false },
   { key: 'clientName', label: 'Cliente', required: false },
   { key: 'firstName', label: 'Nome', required: false },
   { key: 'lastName', label: 'Sobrenome', required: false },
@@ -104,6 +124,7 @@ const IMPORTABLE_FIELDS: Array<{ key: CsvImportField; label: string; required: b
 ];
 
 const FIELD_ALIASES: Record<CsvImportField, string[]> = {
+  id: ['id', 'id_cadastro', 'cadastro_id', 'contato_id', 'contact_id'],
   clientName: ['cliente', 'client', 'empresa', 'contratante'],
   firstName: ['nome', 'primeiro_nome', 'primeiro nome', 'first_name', 'first name'],
   lastName: ['sobrenome', 'ultimo_nome', 'último nome', 'last_name', 'last name'],
@@ -112,7 +133,7 @@ const FIELD_ALIASES: Record<CsvImportField, string[]> = {
   category: ['categoria', 'category', 'segmento', 'tag'],
   status: ['status', 'situacao', 'situação', 'ativo', 'inativo'],
   email: ['email', 'e-mail', 'mail'],
-  externalRef: ['id', 'codigo', 'código', 'external_ref', 'referencia', 'referência'],
+  externalRef: ['codigo', 'código', 'external_ref', 'referencia', 'referência'],
 };
 
 @Injectable()
@@ -566,6 +587,146 @@ export class ContactsService {
     };
   }
 
+  /**
+   * Dry-run da importação: sem escrever nada, projeta quantos contatos seriam
+   * atualizados / criados / mantidos. Quando a coluna `id` está mapeada, roda em
+   * MODO ATUALIZAÇÃO (casa por ID do cadastro); senão, é o modo clássico de
+   * inserção (tudo entra como novo, com upsert por telefone no import real).
+   */
+  async planCsvImport(
+    params: {
+      fileName: string;
+      content: Buffer;
+      clientId?: string | null;
+      mapping?: Partial<Record<CsvImportField, string | null>>;
+    },
+    actor: UserSession,
+  ): Promise<{ mode: 'insert' | 'update'; total: number } & Partial<CsvUpdateSummary>> {
+    const matrix = parseCsvMatrix(params.content);
+    const { headers, records } = toColumnRecords(matrix);
+    if (records.length === 0) {
+      throw new BadRequestException('CSV sem linhas para importar');
+    }
+
+    const mapping = normalizeMapping(params.mapping, headers);
+    const total = records.length;
+    if (!mapping.id) {
+      return { mode: 'insert', total };
+    }
+
+    const importClientId = writeClientId(actor, params.clientId ?? null);
+    // Mesma classificação usada pelo job real => o "XXX a atualizar" do dry-run
+    // bate exatamente com o resultado (inclui dedup de ID repetido e conflitos
+    // de telefone).
+    const { summary } = await this.classifyCsvUpdate(records, mapping, importClientId);
+    return { mode: 'update', total, ...summary };
+  }
+
+  /**
+   * Passada única de classificação do modo atualização, compartilhada pelo dry-run
+   * (`planCsvImport`) e pelo job real (`processCsvUpdateJob`) — garante que a
+   * projeção e o resultado nunca divirjam. Não escreve nada: só lê contatos por ID,
+   * resolve o registro final de cada linha e decide atualizar / criar / manter /
+   * pular por conflito. Reserva os `phone_hash` novos num set único (nada foi
+   * persistido ainda) para prever colisões com a UNIQUE (client_id, phone_hash).
+   */
+  private async classifyCsvUpdate(
+    records: Array<Record<string, string>>,
+    mapping: Record<CsvImportField, string | null>,
+    importClientId: string | null,
+  ): Promise<{ summary: CsvUpdateSummary; inserts: ContactRecord[]; updates: ContactRecord[] }> {
+    const existingById = await this.loadContactsById(records, mapping.id as string, importClientId);
+    const inserts: ContactRecord[] = [];
+    const updates: ContactRecord[] = [];
+    const reserved = new Set<string>();
+    let updated = 0;
+    let created = 0;
+    let unchanged = 0;
+    let conflicts = 0;
+    let invalid = 0;
+
+    const phoneHashTaken = async (phoneHash: string, excludeId: string | null): Promise<boolean> => {
+      if (reserved.has(phoneHash)) {
+        return true;
+      }
+      const rows = await this.database.postgresQuery<{ id: string }>(
+        `SELECT id FROM contacts
+         WHERE phone_hash = $1 AND COALESCE(client_id, '') = COALESCE($2, '')
+           ${excludeId ? 'AND id <> $3' : ''}
+         LIMIT 1`,
+        excludeId ? [phoneHash, importClientId, excludeId] : [phoneHash, importClientId],
+      );
+      return rows.length > 0;
+    };
+
+    for (const row of records) {
+      const timestamp = nowIso();
+      const id = pickMappedValue(row, mapping.id);
+      const existing = id ? existingById.get(id) : undefined;
+
+      if (!existing) {
+        // Linha órfã (ID em branco ou inexistente no tenant) => novo contato.
+        const contact = createNewContact(
+          buildCreateInputFromRow(row, mapping, importClientId),
+          normalizePhone(pickMappedValue(row, mapping.phone)),
+          timestamp,
+        );
+        // Guarda de colisão para TODOS (inclusive inválidos): várias linhas sem
+        // telefone compartilham hash('') e violariam a UNIQUE, abortando o lote.
+        if (await phoneHashTaken(contact.phoneHash, null)) {
+          conflicts += 1;
+        } else {
+          reserved.add(contact.phoneHash);
+          inserts.push(contact);
+          created += 1;
+          if (!contact.isValid) invalid += 1;
+        }
+      } else {
+        const next = buildUpdatedContactFromRow(existing, row, mapping, timestamp);
+        if (!contactBusinessFieldsChanged(existing, next)) {
+          unchanged += 1;
+        } else if (
+          next.phoneHash !== existing.phoneHash &&
+          (await phoneHashTaken(next.phoneHash, existing.id))
+        ) {
+          conflicts += 1;
+        } else {
+          reserved.add(next.phoneHash);
+          updates.push(next);
+          // Reidrata o mapa: se o mesmo ID reaparecer, diferencia contra a versão
+          // já atualizada (2ª ocorrência idêntica => "sem mudança").
+          existingById.set(existing.id, next);
+          updated += 1;
+          if (!next.isValid) invalid += 1;
+        }
+      }
+    }
+
+    return { summary: { updated, created, unchanged, conflicts, invalid }, inserts, updates };
+  }
+
+  /** Carrega os contatos existentes (por ID) do arquivo, escopados ao tenant do import. */
+  private async loadContactsById(
+    records: Array<Record<string, string>>,
+    idHeader: string,
+    importClientId: string | null,
+  ): Promise<Map<string, ContactRecord>> {
+    const ids = [...new Set(records.map((row) => pickMappedValue(row, idHeader)).filter(Boolean))];
+    const map = new Map<string, ContactRecord>();
+    if (ids.length === 0) {
+      return map;
+    }
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT ${CONTACT_COLUMNS} FROM contacts
+       WHERE id = ANY($1::text[]) AND COALESCE(client_id, '') = COALESCE($2, '')`,
+      [ids, importClientId],
+    );
+    for (const contact of rows.map(mapContactRow)) {
+      map.set(contact.id, contact);
+    }
+    return map;
+  }
+
   async startCsvImport(
     params: {
       listName: string;
@@ -585,7 +746,13 @@ export class ContactsService {
     }
 
     const mapping = normalizeMapping(params.mapping, headers);
-    if ((!mapping.firstName && !mapping.name) || !mapping.phone) {
+    // Coluna `id` mapeada => atualização em massa (casa por ID do cadastro).
+    const mode: 'insert' | 'update' = mapping.id ? 'update' : 'insert';
+    if (mode === 'update') {
+      if (!mapping.id) {
+        throw new BadRequestException('Mapeie a coluna de ID do cadastro para atualizar em massa');
+      }
+    } else if ((!mapping.firstName && !mapping.name) || !mapping.phone) {
       throw new BadRequestException('Mapeie telefone e pelo menos nome ou nome completo antes de importar');
     }
 
@@ -594,6 +761,7 @@ export class ContactsService {
     const job: CsvImportJob = {
       id: jobId,
       status: 'queued',
+      mode,
       fileName: params.fileName,
       listName: params.listName.trim() || params.fileName.replace(/\.[^.]+$/, ''),
       totalRows: records.length,
@@ -604,14 +772,29 @@ export class ContactsService {
     };
 
     this.importJobs.set(jobId, job);
+    const fileSha256 = createHash('sha256').update(params.content).digest('hex');
     queueMicrotask(() => {
+      if (mode === 'update') {
+        void this.processCsvUpdateJob(
+          jobId,
+          {
+            fileName: params.fileName,
+            clientId: params.clientId ?? null,
+            fileSha256,
+            records,
+            mapping,
+          },
+          actor,
+        );
+        return;
+      }
       void this.processCsvImportJob(
         jobId,
         {
           fileName: params.fileName,
           listName: job.listName,
           clientId: params.clientId ?? null,
-          fileSha256: createHash('sha256').update(params.content).digest('hex'),
+          fileSha256,
           records,
           mapping,
           defaults,
@@ -899,6 +1082,91 @@ export class ContactsService {
       updateImportJob(job, {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Falha ao importar CSV',
+        updatedAt: nowIso(),
+      });
+    }
+  }
+
+  /**
+   * MODO ATUALIZAÇÃO EM MASSA: casa cada linha pelo ID do cadastro (estável mesmo
+   * quando o telefone muda). Contato existente => atualiza só os campos presentes;
+   * linha órfã (ID em branco ou inexistente no tenant) => cria como novo contato.
+   * Não cria lista nem grava em `imports` (não há lista associada). Colisões de
+   * telefone (constraint UNIQUE por tenant) são puladas e contadas, sem abortar.
+   */
+  private async processCsvUpdateJob(
+    jobId: string,
+    params: {
+      fileName: string;
+      clientId?: string | null;
+      fileSha256: string;
+      records: Array<Record<string, string>>;
+      mapping: Record<CsvImportField, string | null>;
+    },
+    actor: UserSession,
+  ): Promise<void> {
+    const job = this.importJobs.get(jobId);
+    if (!job) {
+      return;
+    }
+
+    updateImportJob(job, { status: 'running', processedRows: 0, updatedAt: nowIso() });
+
+    const importClientId = writeClientId(actor, params.clientId ?? null);
+
+    try {
+      // Mesma classificação do dry-run: garante que o resultado bate com o que foi
+      // prometido ao usuário. Já resolve colisões de phone_hash e ID repetido.
+      const { summary, inserts, updates } = await this.classifyCsvUpdate(
+        params.records,
+        params.mapping,
+        importClientId,
+      );
+
+      const BATCH = 500;
+      let processed = 0;
+      const writeInBatches = async (
+        contacts: ContactRecord[],
+        write: (client: PoolClient, contact: ContactRecord) => Promise<void>,
+      ) => {
+        for (let i = 0; i < contacts.length; i += BATCH) {
+          const chunk = contacts.slice(i, i + BATCH);
+          await this.database.postgresTransaction(async (client) => {
+            for (const contact of chunk) {
+              await write(client, contact);
+            }
+          });
+          processed += chunk.length;
+          updateImportJob(job, { processedRows: processed, updatedAt: nowIso() });
+          await yieldToEventLoop();
+        }
+      };
+
+      await writeInBatches(inserts, insertContactPg);
+      await writeInBatches(updates, updateContactPg);
+
+      updateImportJob(job, {
+        status: 'completed',
+        processedRows: params.records.length,
+        updateSummary: summary,
+        updatedAt: nowIso(),
+      });
+
+      try {
+        await this.audit.log({
+          actorUserId: actor.id,
+          action: 'contacts.updated_csv',
+          entityType: 'contact',
+          entityId: jobId,
+          metadata: { fileName: params.fileName, total: params.records.length, ...summary },
+        });
+      } catch {
+        // Auditoria não bloqueia a conclusão da atualização.
+      }
+    } catch (error) {
+      updateImportJob(job, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Falha ao atualizar contatos por CSV',
         updatedAt: nowIso(),
       });
     }
@@ -1514,8 +1782,19 @@ const recommendMapping = (
   }));
 
   return IMPORTABLE_FIELDS.reduce<Record<CsvImportField, string | null>>((accumulator, field) => {
+    // Campos com alias curto exigem igualdade EXATA do header, senão capturam
+    // colunas por substring: `id` pegaria "cidade"/"validade"; `firstName` (alias
+    // "nome") pegaria "nome_completo" e corromperia o round-trip export→import
+    // (nome completo duplicado como firstName). O `name` continua por substring
+    // para casar "nome completo", "contato", etc.
+    const exactMatchFields: CsvImportField[] = ['id', 'firstName', 'lastName'];
     const match = normalizedHeaders.find(({ normalized }) =>
-      FIELD_ALIASES[field.key].some((alias) => normalized.includes(normalizeHeaderAlias(alias))),
+      FIELD_ALIASES[field.key].some((alias) => {
+        const normalizedAlias = normalizeHeaderAlias(alias);
+        return exactMatchFields.includes(field.key)
+          ? normalized === normalizedAlias
+          : normalized.includes(normalizedAlias);
+      }),
     );
     accumulator[field.key] = match?.original ?? null;
     return accumulator;
@@ -1616,6 +1895,17 @@ const resolveContactNames = (
   };
 };
 
+// Colunas derivadas/somente-leitura emitidas pela exportação de contatos. Não têm
+// campo de destino na importação: precisam ser IGNORADAS (e não viram atributos),
+// senão um round-trip export→import poluiria `attributes_json` e marcaria todo
+// contato como "alterado". Mantido em sincronia com EXPORT_HEADERS do frontend
+// (apps/web/app/contacts/page.tsx).
+const RESERVED_EXPORT_HEADERS = new Set(
+  ['valido', 'opt_out', 'situacao_falha', 'situacao_nao_lida', 'listas', 'criado_em', 'atualizado_em'].map(
+    normalizeHeaderAlias,
+  ),
+);
+
 const collectAttributes = (
   row: Record<string, string>,
   mapping: Record<CsvImportField, string | null>,
@@ -1623,7 +1913,12 @@ const collectAttributes = (
   const mappedHeaders = new Set(Object.values(mapping).filter(Boolean));
   return Object.fromEntries(
     Object.entries(row)
-      .filter(([key, value]) => !mappedHeaders.has(key) && value.trim() !== '')
+      .filter(
+        ([key, value]) =>
+          !mappedHeaders.has(key) &&
+          !RESERVED_EXPORT_HEADERS.has(normalizeHeaderAlias(key)) &&
+          value.trim() !== '',
+      )
       .map(([key, value]) => [key, value.trim()]),
   );
 };
@@ -1696,6 +1991,86 @@ const sanitizeAttributes = (attributes?: Record<string, string>): Record<string,
       .map(([key, value]) => [key.trim(), String(value).trim()])
       .filter(([key, value]) => key && value),
   );
+
+/**
+ * Monta o `ContactInput` de uma linha CSV no MODO ATUALIZAÇÃO: só carrega valores
+ * de colunas efetivamente preenchidas (célula vazia => `undefined`), para que o
+ * `updateExistingContact` preserve o dado atual em vez de zerá-lo. `attributes`
+ * mescla os extras da linha sobre os já existentes.
+ */
+const buildUpdateInputFromRow = (
+  existing: ContactRecord,
+  row: Record<string, string>,
+  mapping: Record<CsvImportField, string | null>,
+): ContactInput => {
+  const pick = (field: CsvImportField): string | undefined =>
+    pickMappedValue(row, mapping[field]) || undefined;
+  const extraAttributes = collectAttributes(row, mapping);
+
+  return {
+    clientName: pick('clientName'),
+    firstName: pick('firstName'),
+    lastName: pick('lastName'),
+    name: pick('name'),
+    phone: pick('phone'),
+    category: pick('category'),
+    email: pick('email'),
+    externalRef: pick('externalRef'),
+    recordStatus: pick('status'),
+    attributes: Object.keys(extraAttributes).length
+      ? { ...existing.attributes, ...extraAttributes }
+      : undefined,
+  };
+};
+
+/** `ContactInput` de uma linha órfã (ID não encontrado) no modo atualização: vira novo contato. */
+const buildCreateInputFromRow = (
+  row: Record<string, string>,
+  mapping: Record<CsvImportField, string | null>,
+  importClientId: string | null,
+): ContactInput => ({
+  clientId: importClientId,
+  clientName: pickMappedValue(row, mapping.clientName) || null,
+  firstName: pickMappedValue(row, mapping.firstName) || undefined,
+  lastName: pickMappedValue(row, mapping.lastName) || null,
+  name: pickMappedValue(row, mapping.name) || undefined,
+  phone: pickMappedValue(row, mapping.phone) || '',
+  category: pickMappedValue(row, mapping.category) || null,
+  email: pickMappedValue(row, mapping.email) || null,
+  externalRef: pickMappedValue(row, mapping.externalRef) || null,
+  recordStatus: pickMappedValue(row, mapping.status) || 'active',
+  attributes: collectAttributes(row, mapping),
+});
+
+/** Aplica uma linha CSV sobre um contato existente e devolve o registro atualizado. */
+const buildUpdatedContactFromRow = (
+  existing: ContactRecord,
+  row: Record<string, string>,
+  mapping: Record<CsvImportField, string | null>,
+  timestamp: string,
+): ContactRecord => {
+  const rawPhone = pickMappedValue(row, mapping.phone);
+  const normalized = normalizePhone(rawPhone || existing.phoneRaw);
+  return updateExistingContact(existing, buildUpdateInputFromRow(existing, row, mapping), normalized, timestamp);
+};
+
+/**
+ * Compara os campos de negócio de dois contatos (ignora `importedAt`/`updatedAt`,
+ * que mudam sempre). Usado para contar quantos contatos de fato foram alterados.
+ */
+const contactBusinessFieldsChanged = (before: ContactRecord, after: ContactRecord): boolean =>
+  (before.externalRef ?? null) !== (after.externalRef ?? null) ||
+  (before.clientName ?? null) !== (after.clientName ?? null) ||
+  before.firstName !== after.firstName ||
+  (before.lastName ?? null) !== (after.lastName ?? null) ||
+  before.name !== after.name ||
+  (before.category ?? null) !== (after.category ?? null) ||
+  before.recordStatus !== after.recordStatus ||
+  before.phoneE164 !== after.phoneE164 ||
+  before.phoneHash !== after.phoneHash ||
+  (before.email ?? null) !== (after.email ?? null) ||
+  before.isValid !== after.isValid ||
+  JSON.stringify(before.attributes ?? {}) !== JSON.stringify(after.attributes ?? {});
 
 const cleanText = (value: string | undefined, fallback: string): string => {
   const nextValue = String(value ?? '').trim();
