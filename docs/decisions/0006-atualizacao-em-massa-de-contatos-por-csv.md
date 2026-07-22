@@ -23,13 +23,18 @@ primeiro **extrair** o cadastro atual num CSV, mexer nele e reenviar.
 
 ## Decisão
 
-### 1. Exportação em CSV do conjunto filtrado, gerada no cliente
+### 1. Exportação em CSV do conjunto filtrado, via endpoint dedicado
 
-A tela Contatos exporta o **conjunto atualmente filtrado** para CSV, gerado
-**client-side** (`apps/web/lib/csv.ts` + `apps/web/app/contacts/page.tsx`). São
-**15 colunas**, com a **1ª sendo o `id`** (ID interno do cadastro — a chave de
-reimportação), incluindo `external_ref` e as badges de situação
-`situacao_falha`/`situacao_nao_lida`:
+A tela Contatos exporta o **conjunto atualmente filtrado** para CSV. A filtragem
+e a paginação da tela são client-side sobre a página carregada, e o
+`listContactsPage` **limita a página a 250** (`Math.min(250, ...)`) — então
+exportar do estado da UI só enxergaria a página. Por isso a exportação usa um
+**endpoint dedicado `GET /contacts/export`** que aplica os **mesmos filtros no
+servidor (SQL), sem o cap**, calcula as badges de entrega e devolve todos os
+contatos que batem; o CSV é montado no cliente a partir do retorno
+(`apps/web/lib/csv.ts`). São **15 colunas**, com a **1ª sendo o `id`** (ID interno
+do cadastro — a chave de reimportação), incluindo `external_ref` e as badges de
+situação `situacao_falha`/`situacao_nao_lida`:
 
 `id, external_ref, nome_completo, telefone, email, cliente_legado, categoria,
 status, valido, opt_out, situacao_falha, situacao_nao_lida, listas, criado_em,
@@ -104,10 +109,10 @@ export→import marcaria todo contato como "alterado". O set fica em sincronia c
 - **Novo eixo de escrita de contato**: além de criar (ADR 0002), o CSV agora
   **atualiza** cadastro existente. Quem raciocinar sobre "de onde vêm mudanças de
   contato" precisa considerar este modo, disparado pela presença da coluna `id`.
-- A exportação busca **todos os contatos do escopo** (via `limit` alto) e reaplica
-  os **filtros ativos no cliente** — cobre o conjunto filtrado inteiro, não só a
-  página visível. A filtragem é client-side (no navegador), não em SQL; para
-  volumes muito grandes isso carrega toda a base do escopo na memória do browser.
+- A exportação aplica os filtros no **servidor** (`GET /contacts/export`), sem o
+  cap de 250 de `listContactsPage`, e cobre o conjunto filtrado inteiro (teto de
+  segurança 200k linhas). Corrige o bug da 1ª versão, que filtrava no cliente
+  sobre uma página limitada a 250 e exportava um subconjunto (ex.: 19 de 1494).
 - **Fora de escopo:** sincronização de membership de listas via CSV — a coluna
   `listas` é **informativa** no export e ignorada na reimportação.
 - **Segurança/QA:** isolamento por tenant garantido via `writeClientId` +
