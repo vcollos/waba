@@ -28,14 +28,35 @@ export interface ImportResult {
   duplicateRows: number;
 }
 
+export interface UpdateSummary {
+  updated: number;
+  created: number;
+  unchanged: number;
+  conflicts: number;
+  invalid: number;
+}
+
+/** Projeção (dry-run) da importação, antes de confirmar. */
+export interface ImportPlan {
+  mode: 'insert' | 'update';
+  total: number;
+  updated?: number;
+  created?: number;
+  unchanged?: number;
+  conflicts?: number;
+  invalid?: number;
+}
+
 export interface ImportJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed';
+  mode: 'insert' | 'update';
   fileName: string;
   listName: string;
   totalRows: number;
   processedRows: number;
   importRecord?: ImportResult | null;
+  updateSummary?: UpdateSummary | null;
   error?: string | null;
 }
 
@@ -92,15 +113,16 @@ export function CsvImportModal({
   const [job, setJob] = useState<ImportJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Modo atualização em massa: ligado quando a coluna "ID do cadastro" está
+  // mapeada. Casa por ID (estável mesmo com troca de telefone) e não cria lista.
+  const updateMode = Boolean(mapping.id);
+  const [plan, setPlan] = useState<ImportPlan | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);
 
   const readColumns = async () => {
     const file = fileRef.current?.files?.[0];
     if (!file) {
       setError('Selecione um arquivo CSV.');
-      return;
-    }
-    if (!listName.trim()) {
-      setError('Informe o nome da lista.');
       return;
     }
     setBusy(true);
@@ -124,10 +146,44 @@ export function CsvImportModal({
     }
   };
 
+  // Projeção (dry-run) da atualização em massa: quantos contatos seriam
+  // alterados/criados/mantidos, para confirmar antes de aplicar.
+  const loadPlan = async () => {
+    const file = csvFile ?? fileRef.current?.files?.[0];
+    if (!file) return;
+    setPlanBusy(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (clientId) formData.append('clientId', clientId);
+      formData.append('mapping', JSON.stringify(mapping));
+      const result = await apiRequest<ImportPlan>('/contacts/imports/csv/plan', {
+        method: 'POST',
+        body: formData,
+      });
+      setPlan(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao projetar a atualização.');
+    } finally {
+      setPlanBusy(false);
+    }
+  };
+
+  const goToReview = () => {
+    setPlan(null);
+    setStep(3);
+    if (updateMode) void loadPlan();
+  };
+
   const startImport = async () => {
     const file = csvFile ?? fileRef.current?.files?.[0];
     if (!file) {
       setError('Arquivo perdido. Recomece o assistente.');
+      return;
+    }
+    if (!updateMode && !listName.trim()) {
+      setError('Informe o nome da lista.');
       return;
     }
     setBusy(true);
@@ -206,7 +262,7 @@ export function CsvImportModal({
             </button>
           ) : null}
           {step === 2 ? (
-            <button className="btn primary md" onClick={() => setStep(3)}>
+            <button className="btn primary md" onClick={goToReview}>
               Revisar
             </button>
           ) : null}
@@ -227,8 +283,20 @@ export function CsvImportModal({
               Tentar novamente
             </button>
           ) : step === 3 ? (
-            <button className="btn primary md" onClick={startImport} disabled={busy || !!job}>
-              {job ? 'Importando…' : busy ? 'Iniciando…' : 'Confirmar importação'}
+            <button
+              className="btn primary md"
+              onClick={startImport}
+              disabled={busy || !!job || (updateMode && (planBusy || !plan))}
+            >
+              {job
+                ? updateMode
+                  ? 'Atualizando…'
+                  : 'Importando…'
+                : busy
+                  ? 'Iniciando…'
+                  : updateMode
+                    ? `Sim, atualizar ${fmtInt(plan?.updated ?? 0)} contato(s)`
+                    : 'Confirmar importação'}
             </button>
           ) : null}
         </>
@@ -253,10 +321,12 @@ export function CsvImportModal({
       {step === 1 ? (
         <div className="form-grid">
           <div className="field col-2">
-            <label>
-              Nome da lista <span className="req">*</span>
-            </label>
+            <label>Nome da lista</label>
             <input className="input" value={listName} onChange={(e) => setListName(e.target.value)} />
+            <span className="cell-sub" style={{ fontSize: 12 }}>
+              Usado ao importar contatos novos. Se o CSV tiver a coluna <strong>id</strong>, o
+              assistente entra em modo de atualização em massa e nenhuma lista é criada.
+            </span>
           </div>
           <div className="field col-2">
             <label>
@@ -269,6 +339,14 @@ export function CsvImportModal({
 
       {step === 2 && preview ? (
         <>
+          {updateMode ? (
+            <div className="toast" style={{ marginBottom: 14 }}>
+              <strong>Modo atualização em massa.</strong> A coluna <strong>ID do cadastro</strong> está
+              mapeada: os contatos serão casados por ID (mesmo que o telefone tenha mudado) e
+              atualizados. Linhas com ID em branco ou inexistente viram contatos novos. Nenhuma lista é
+              criada.
+            </div>
+          ) : null}
           <div className="block-title" style={{ marginBottom: 12 }}>
             Mapeamento de colunas
           </div>
@@ -293,74 +371,113 @@ export function CsvImportModal({
               </div>
             ))}
           </div>
-          <div className="block-title" style={{ margin: '20px 0 12px' }}>
-            Valores padrão
-          </div>
-          <div className="form-grid">
-            <div className="field">
-              <label>Cliente legado</label>
-              <input
-                className="input"
-                value={defaults.clientName}
-                onChange={(e) => setDefaults((c) => ({ ...c, clientName: e.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label>Categoria</label>
-              <input
-                className="input"
-                value={defaults.category}
-                onChange={(e) => setDefaults((c) => ({ ...c, category: e.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label>Status</label>
-              <select
-                className="input"
-                value={defaults.status}
-                onChange={(e) => setDefaults((c) => ({ ...c, status: e.target.value as RecordStatus }))}
+          {!updateMode ? (
+            <>
+              <div className="block-title" style={{ margin: '20px 0 12px' }}>
+                Valores padrão
+              </div>
+              <div className="form-grid">
+                <div className="field">
+                  <label>Cliente legado</label>
+                  <input
+                    className="input"
+                    value={defaults.clientName}
+                    onChange={(e) => setDefaults((c) => ({ ...c, clientName: e.target.value }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Categoria</label>
+                  <input
+                    className="input"
+                    value={defaults.category}
+                    onChange={(e) => setDefaults((c) => ({ ...c, category: e.target.value }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Status</label>
+                  <select
+                    className="input"
+                    value={defaults.status}
+                    onChange={(e) => setDefaults((c) => ({ ...c, status: e.target.value as RecordStatus }))}
+                  >
+                    <option value="active">Ativo</option>
+                    <option value="inactive">Inativo</option>
+                  </select>
+                </div>
+              </div>
+              <label
+                style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 16, cursor: 'pointer' }}
               >
-                <option value="active">Ativo</option>
-                <option value="inactive">Inativo</option>
-              </select>
-            </div>
-          </div>
-          <label
-            style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 16, cursor: 'pointer' }}
-          >
-            <input
-              type="checkbox"
-              checked={overwriteExisting}
-              onChange={(e) => setOverwriteExisting(e.target.checked)}
-              style={{ marginTop: 3 }}
-            />
-            <span>
-              <strong>Atualizar contatos já existentes com os dados do arquivo</strong>
-              <span className="cell-sub" style={{ display: 'block', fontSize: 12 }}>
-                Quando o telefone já existir, usa os dados do arquivo (mais novos) como principais. Desmarque
-                para preservar o contato atual e apenas vinculá-lo a esta lista.
-              </span>
-            </span>
-          </label>
+                <input
+                  type="checkbox"
+                  checked={overwriteExisting}
+                  onChange={(e) => setOverwriteExisting(e.target.checked)}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <strong>Atualizar contatos já existentes com os dados do arquivo</strong>
+                  <span className="cell-sub" style={{ display: 'block', fontSize: 12 }}>
+                    Quando o telefone já existir, usa os dados do arquivo (mais novos) como principais.
+                    Desmarque para preservar o contato atual e apenas vinculá-lo a esta lista.
+                  </span>
+                </span>
+              </label>
+            </>
+          ) : null}
         </>
       ) : null}
 
       {step === 3 && preview ? (
         <>
-          <div className="kpi-grid k3" style={{ marginBottom: 18 }}>
-            <div className="kpi">
-              <span className="kpi-label">Total de linhas</span>
-              <span className="kpi-val">{fmtInt(preview.totalRows)}</span>
+          {updateMode ? (
+            <div style={{ marginBottom: 18 }}>
+              {planBusy || !plan ? (
+                <div className="toast">Analisando alterações…</div>
+              ) : (
+                <>
+                  <div
+                    className="toast"
+                    style={{ marginBottom: 12, fontSize: 15 }}
+                  >
+                    Deseja atualizar <strong>{fmtInt(plan.updated ?? 0)}</strong> contato(s) alterado(s)?
+                  </div>
+                  <div className="kpi-grid">
+                    <div className="kpi">
+                      <span className="kpi-label">A atualizar</span>
+                      <span className="kpi-val">{fmtInt(plan.updated ?? 0)}</span>
+                    </div>
+                    <div className="kpi">
+                      <span className="kpi-label">Novos</span>
+                      <span className="kpi-val">{fmtInt(plan.created ?? 0)}</span>
+                    </div>
+                    <div className="kpi">
+                      <span className="kpi-label">Sem mudança</span>
+                      <span className="kpi-val">{fmtInt(plan.unchanged ?? 0)}</span>
+                    </div>
+                    <div className="kpi">
+                      <span className="kpi-label">Total no arquivo</span>
+                      <span className="kpi-val">{fmtInt(plan.total)}</span>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="kpi">
-              <span className="kpi-label">Lista</span>
-              <span className="kpi-val sm">{listName}</span>
+          ) : (
+            <div className="kpi-grid k3" style={{ marginBottom: 18 }}>
+              <div className="kpi">
+                <span className="kpi-label">Total de linhas</span>
+                <span className="kpi-val">{fmtInt(preview.totalRows)}</span>
+              </div>
+              <div className="kpi">
+                <span className="kpi-label">Lista</span>
+                <span className="kpi-val sm">{listName}</span>
+              </div>
+              <div className="kpi">
+                <span className="kpi-label">Campos mapeados</span>
+                <span className="kpi-val">{fmtInt(Object.values(mapping).filter(Boolean).length)}</span>
+              </div>
             </div>
-            <div className="kpi">
-              <span className="kpi-label">Campos mapeados</span>
-              <span className="kpi-val">{fmtInt(Object.values(mapping).filter(Boolean).length)}</span>
-            </div>
-          </div>
+          )}
           {preview.totalRows > 50000 ? (
             <div className="toast warning" style={{ marginBottom: 14 }}>
               Lote grande: a importação roda em segundo plano e pode levar alguns minutos.
@@ -425,6 +542,37 @@ export function CsvImportModal({
                 <div className="toast warning" style={{ marginTop: 12 }}>
                   {fmtInt(job.importRecord.invalidRows)} linha(s) com telefone inválido foram importadas como
                   inválidas e não recebem envios até correção.
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {job?.status === 'completed' && job.updateSummary ? (
+            <>
+              <div className="block-title" style={{ margin: '18px 0 10px' }}>
+                Resultado da atualização
+              </div>
+              <div className="kpi-grid">
+                <div className="kpi">
+                  <span className="kpi-label">Atualizados</span>
+                  <span className="kpi-val">{fmtInt(job.updateSummary.updated)}</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">Novos</span>
+                  <span className="kpi-val">{fmtInt(job.updateSummary.created)}</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">Sem mudança</span>
+                  <span className="kpi-val">{fmtInt(job.updateSummary.unchanged)}</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-label">Inválidos</span>
+                  <span className="kpi-val">{fmtInt(job.updateSummary.invalid)}</span>
+                </div>
+              </div>
+              {job.updateSummary.conflicts > 0 ? (
+                <div className="toast warning" style={{ marginTop: 12 }}>
+                  {fmtInt(job.updateSummary.conflicts)} linha(s) puladas por conflito de telefone (número já
+                  usado por outro contato do mesmo cliente).
                 </div>
               ) : null}
             </>

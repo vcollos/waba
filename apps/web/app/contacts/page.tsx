@@ -19,6 +19,7 @@ import {
 import { apiRequest } from '../../lib/api';
 import { ENTITY_STATUS, badgeFor } from '../../lib/badges';
 import { fmtDateTime, fmtInt } from '../../lib/format';
+import { downloadCsv } from '../../lib/csv';
 
 type RecordStatus = 'active' | 'inactive';
 
@@ -76,6 +77,72 @@ const stripDefaultCountryCode = (value: string): string => {
   return digits || value;
 };
 
+interface ContactFilters {
+  search: string;
+  category: string;
+  status: string;
+  valid: string;
+  optOut: string;
+  listFilter: string;
+}
+
+/**
+ * Predicado dos filtros da tela. Fonte única usada tanto pela tabela quanto pela
+ * exportação — assim o CSV exportado reflete exatamente o que está filtrado.
+ */
+const matchesContactFilters = (c: Contact, f: ContactFilters): boolean => {
+  if (f.category && c.category !== f.category) return false;
+  if (f.status && c.recordStatus !== f.status) return false;
+  if (f.valid === 'valid' && !c.isValid) return false;
+  if (f.valid === 'invalid' && c.isValid) return false;
+  if (f.optOut === 'out' && !c.isOptedOut) return false;
+  if (f.optOut === 'in' && c.isOptedOut) return false;
+  if (f.listFilter && !c.listIds.includes(f.listFilter)) return false;
+  const term = f.search.trim().toLowerCase();
+  if (term) {
+    const hay = `${c.name} ${c.phoneE164} ${c.email ?? ''} ${c.clientName ?? ''}`.toLowerCase();
+    if (!hay.includes(term)) return false;
+  }
+  return true;
+};
+
+/** Cabeçalho do CSV de exportação — mesmo contrato de nomes lido na importação. */
+const EXPORT_HEADERS = [
+  'id',
+  'external_ref',
+  'nome_completo',
+  'telefone',
+  'email',
+  'cliente_legado',
+  'categoria',
+  'status',
+  'valido',
+  'opt_out',
+  'situacao_falha',
+  'situacao_nao_lida',
+  'listas',
+  'criado_em',
+  'atualizado_em',
+] as const;
+
+const contactToCsvRow = (c: Contact): Array<unknown> => [
+  c.id,
+  c.externalRef ?? '',
+  c.name,
+  c.phoneE164 || c.phoneRaw || '',
+  c.email ?? '',
+  c.clientName ?? '',
+  c.category ?? '',
+  c.recordStatus === 'active' ? 'Ativo' : 'Inativo',
+  c.isValid ? 'Válido' : 'Inválido',
+  c.isOptedOut ? 'Sim' : 'Não',
+  c.hasFailedMessage ? 'Sim' : 'Não',
+  c.hasDeliveredUnread ? 'Sim' : 'Não',
+  c.listNames.join('; '),
+  c.createdAt,
+  c.updatedAt ?? c.createdAt,
+];
+
 export default function ContactsPage() {
   return (
     <AppShell title="Contatos">
@@ -110,6 +177,7 @@ function ContactsContent() {
   const [editing, setEditing] = useState<Contact | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(
     (nextOffset = 0) => {
@@ -147,23 +215,15 @@ function ContactsContent() {
     [contacts],
   );
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return contacts.filter((c) => {
-      if (category && c.category !== category) return false;
-      if (status && c.recordStatus !== status) return false;
-      if (valid === 'valid' && !c.isValid) return false;
-      if (valid === 'invalid' && c.isValid) return false;
-      if (optOut === 'out' && !c.isOptedOut) return false;
-      if (optOut === 'in' && c.isOptedOut) return false;
-      if (listFilter && !c.listIds.includes(listFilter)) return false;
-      if (term) {
-        const hay = `${c.name} ${c.phoneE164} ${c.email ?? ''} ${c.clientName ?? ''}`.toLowerCase();
-        if (!hay.includes(term)) return false;
-      }
-      return true;
-    });
-  }, [contacts, search, category, status, valid, optOut, listFilter]);
+  const activeFilters = useMemo<ContactFilters>(
+    () => ({ search, category, status, valid, optOut, listFilter }),
+    [search, category, status, valid, optOut, listFilter],
+  );
+
+  const filtered = useMemo(
+    () => contacts.filter((c) => matchesContactFilters(c, activeFilters)),
+    [contacts, activeFilters],
+  );
 
   const runAction = async (fn: () => Promise<void>, success?: string) => {
     setBusy(true);
@@ -201,6 +261,32 @@ function ContactsContent() {
       load(offset);
     }, 'Ação em massa concluída.');
 
+  // Exporta o conjunto FILTRADO inteiro (não só a página carregada): busca todos
+  // os contatos do escopo e reaplica os mesmos filtros da tela antes de gerar o CSV.
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const q = scopeClientId ? `&clientId=${encodeURIComponent(scopeClientId)}` : '';
+      const page = await apiRequest<PaginatedContactsResponse>(
+        `/contacts?limit=${ALL_LIMIT}&offset=0${q}`,
+      );
+      const rows = page.items
+        .filter((c) => matchesContactFilters(c, activeFilters))
+        .map(contactToCsvRow);
+      if (rows.length === 0) {
+        push('warning', 'Nenhum contato para exportar com os filtros atuais.');
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      downloadCsv(`contatos-${stamp}.csv`, [...EXPORT_HEADERS], rows);
+      push('success', `${fmtInt(rows.length)} contato(s) exportado(s).`);
+    } catch (err) {
+      push('danger', err instanceof Error ? err.message : 'Falha ao exportar CSV.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const allChecked = filtered.length > 0 && filtered.every((c) => selected.includes(c.id));
   const toggleAll = () =>
     setSelected(allChecked ? [] : filtered.map((c) => c.id));
@@ -218,6 +304,9 @@ function ContactsContent() {
           <p className="op-sub">Base operacional de destinatários do WhatsApp.</p>
         </div>
         <div className="op-actions">
+          <button className="btn tertiary md" onClick={exportCsv} disabled={exporting || loading}>
+            {exporting ? 'Exportando…' : 'Exportar CSV'}
+          </button>
           <button className="btn secondary md" onClick={() => setImporting(true)}>
             Importar CSV
           </button>

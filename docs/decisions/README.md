@@ -16,3 +16,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0003](0003-telefone-unico-por-tenant.md) | Unicidade de telefone por tenant (índice composto client_id, phone_hash) | Aceito |
 | [0004](0004-etiqueta-de-tenant-por-modelo.md) | Etiqueta de tenant por modelo (override sobre o tenant da integração) | Aceito |
 | [0005](0005-disparo-transacional-por-api.md) | Disparo transacional por API pública (envio síncrono fora do poller) | Aceito |
+| [0006](0006-atualizacao-em-massa-de-contatos-por-csv.md) | Atualização em massa de contatos por CSV (export filtrado + reimport por ID) | Aceito |

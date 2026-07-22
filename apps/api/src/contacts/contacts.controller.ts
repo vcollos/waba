@@ -217,6 +217,25 @@ export class ContactsController {
     });
   }
 
+  @Post('contacts/imports/csv/plan')
+  @Roles(...CONTACTS_WRITE_ROLES)
+  @UseInterceptors(FileInterceptor('file'))
+  planCsv(
+    @UploadedFile() file: { originalname: string; buffer: Buffer },
+    @Body() body: { clientId?: string; mapping?: string },
+    @Req() request: { user: UserSession },
+  ) {
+    return this.contactsService.planCsvImport(
+      {
+        fileName: file.originalname,
+        content: file.buffer,
+        clientId: body.clientId ?? null,
+        mapping: parseJsonBody(body.mapping),
+      },
+      request.user,
+    );
+  }
+
   @Post('contacts/imports/csv')
   @Roles(...CONTACTS_WRITE_ROLES)
   @UseInterceptors(FileInterceptor('file'))
