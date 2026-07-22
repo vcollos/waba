@@ -160,6 +160,10 @@ Wireframe textual:
 [Contatos]
 - busca por nome, telefone, tag, status
 - indicadores: válido, inválido, opt-out, bloqueado, duplicado
+- coluna "Situação": badges de entrega agregadas sobre todo o histórico do contato
+  - "Falha" (vermelha): há alguma campaign_message com status='failed'
+  - "Não lida" (amarela): há alguma com status='delivered' (entregue e nunca lida;
+    a guarda de monotonia garante que lida vira 'read')
 
 [Importar CSV]
 - upload do arquivo

@@ -147,11 +147,53 @@ export class ContactsService {
       args,
     );
 
-    return rows.map((row) => ({
-      ...mapContactRow(row),
-      listNames: toStringArray(row.list_names),
-      listIds: toStringArray(row.list_ids),
-    }));
+    const deliveryFlags = await this.fetchDeliveryFlags(rows.map((row) => String(row.id)));
+    return rows.map((row) => {
+      const id = String(row.id);
+      const flags = deliveryFlags.get(id);
+      return {
+        ...mapContactRow(row),
+        listNames: toStringArray(row.list_names),
+        listIds: toStringArray(row.list_ids),
+        hasFailedMessage: flags?.hasFailedMessage ?? false,
+        hasDeliveredUnread: flags?.hasDeliveredUnread ?? false,
+      };
+    });
+  }
+
+  /**
+   * Agrega o histórico de entrega das mensagens por contato numa única query
+   * (evita o JOIN de campaign_messages na consulta principal, que multiplicaria
+   * as linhas junto ao join de list_members). O escopo por tenant já está
+   * garantido: os contactIds recebidos já vêm filtrados pelo escopo do chamador.
+   */
+  private async fetchDeliveryFlags(
+    contactIds: string[],
+  ): Promise<Map<string, { hasFailedMessage: boolean; hasDeliveredUnread: boolean }>> {
+    const flags = new Map<string, { hasFailedMessage: boolean; hasDeliveredUnread: boolean }>();
+    if (contactIds.length === 0) {
+      return flags;
+    }
+    const rows = await this.database.postgresQuery<{
+      contact_id: string;
+      has_failed: boolean;
+      has_delivered_unread: boolean;
+    }>(
+      `SELECT contact_id,
+        bool_or(status = 'failed')    AS has_failed,
+        bool_or(status = 'delivered') AS has_delivered_unread
+       FROM campaign_messages
+       WHERE contact_id = ANY($1::text[])
+       GROUP BY contact_id`,
+      [contactIds],
+    );
+    for (const row of rows) {
+      flags.set(String(row.contact_id), {
+        hasFailedMessage: Boolean(row.has_failed),
+        hasDeliveredUnread: Boolean(row.has_delivered_unread),
+      });
+    }
+    return flags;
   }
 
   async listContactsPage(
@@ -197,12 +239,19 @@ export class ContactsService {
       rowArgs,
     );
 
+    const deliveryFlags = await this.fetchDeliveryFlags(rows.map((row) => String(row.id)));
     return {
-      items: rows.map((row) => ({
-        ...mapContactRow(row),
-        listNames: toStringArray(row.list_names),
-        listIds: toStringArray(row.list_ids),
-      })),
+      items: rows.map((row) => {
+        const id = String(row.id);
+        const flags = deliveryFlags.get(id);
+        return {
+          ...mapContactRow(row),
+          listNames: toStringArray(row.list_names),
+          listIds: toStringArray(row.list_ids),
+          hasFailedMessage: flags?.hasFailedMessage ?? false,
+          hasDeliveredUnread: flags?.hasDeliveredUnread ?? false,
+        };
+      }),
       total: Number(count ?? 0),
       limit,
       offset,
@@ -1681,6 +1730,8 @@ const mapContactRow = (row: Record<string, unknown>): ContactRecord => ({
   importedAt: cleanNullableText(toOptionalString(row.imported_at)),
   createdAt: String(row.created_at ?? nowIso()),
   updatedAt: String(row.updated_at ?? nowIso()),
+  hasFailedMessage: false,
+  hasDeliveredUnread: false,
 });
 
 const mapListRow = (row: Record<string, unknown>): ListRecord => ({
