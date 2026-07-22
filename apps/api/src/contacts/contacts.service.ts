@@ -279,6 +279,103 @@ export class ContactsService {
     };
   }
 
+  /**
+   * Exporta contatos aplicando os MESMOS filtros da tela, porém no servidor e SEM
+   * o cap de 250 do `listContactsPage`. É o caminho correto para exportar o
+   * conjunto filtrado inteiro (a filtragem da UI é client-side sobre a página, o
+   * que só enxergaria a página carregada). Teto de segurança em 200k linhas.
+   */
+  async exportContacts(
+    scope: string | null,
+    filters: {
+      search?: string | null;
+      category?: string | null;
+      status?: string | null;
+      valid?: string | null;
+      optOut?: string | null;
+      listId?: string | null;
+    },
+  ): Promise<
+    Array<
+      ContactRecord & {
+        listNames: string[];
+        listIds: string[];
+        hasFailedMessage: boolean;
+        hasDeliveredUnread: boolean;
+      }
+    >
+  > {
+    const args: unknown[] = [];
+    const conds: string[] = [];
+    if (scope !== null) {
+      args.push(scope);
+      conds.push(`c.client_id = $${args.length}`);
+    }
+    if (filters.category) {
+      args.push(filters.category);
+      conds.push(`c.category = $${args.length}`);
+    }
+    if (filters.status) {
+      args.push(filters.status);
+      conds.push(`c.record_status = $${args.length}`);
+    }
+    if (filters.valid === 'valid') {
+      conds.push('c.is_valid = true');
+    } else if (filters.valid === 'invalid') {
+      conds.push('c.is_valid = false');
+    }
+    if (filters.optOut === 'out') {
+      conds.push('c.is_opted_out = true');
+    } else if (filters.optOut === 'in') {
+      conds.push('c.is_opted_out = false');
+    }
+    if (filters.listId) {
+      args.push(filters.listId);
+      conds.push(
+        `EXISTS (SELECT 1 FROM list_members lmf WHERE lmf.contact_id = c.id AND lmf.list_id = $${args.length})`,
+      );
+    }
+    const term = String(filters.search ?? '').trim();
+    if (term) {
+      args.push(`%${term}%`);
+      const p = args.length;
+      conds.push(
+        `(c.name ILIKE $${p} OR c.phone_e164 ILIKE $${p} OR c.email ILIKE $${p} OR c.client_name ILIKE $${p})`,
+      );
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.id, c.external_ref, c.client_name, c.first_name, c.last_name, c.name, c.category, c.record_status,
+        c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
+        c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at,
+        COALESCE(ARRAY_AGG(DISTINCT l.name ORDER BY l.name) FILTER (WHERE l.name IS NOT NULL), ARRAY[]::text[]) AS list_names,
+        COALESCE(ARRAY_AGG(DISTINCT l.id) FILTER (WHERE l.id IS NOT NULL), ARRAY[]::text[]) AS list_ids
+       FROM contacts c
+       LEFT JOIN list_members lm ON lm.contact_id = c.id
+       LEFT JOIN lists l ON l.id = lm.list_id
+       ${where}
+       GROUP BY c.id
+       ORDER BY c.name ASC
+       LIMIT 200000`,
+      args,
+    );
+
+    const deliveryFlags = await this.fetchDeliveryFlags(rows.map((row) => String(row.id)));
+    return rows.map((row) => {
+      const id = String(row.id);
+      const flags = deliveryFlags.get(id);
+      return {
+        ...mapContactRow(row),
+        listNames: toStringArray(row.list_names),
+        listIds: toStringArray(row.list_ids),
+        hasFailedMessage: flags?.hasFailedMessage ?? false,
+        hasDeliveredUnread: flags?.hasDeliveredUnread ?? false,
+      };
+    });
+  }
+
   async listLists(scope: string | null = null) {
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
