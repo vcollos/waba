@@ -82,6 +82,10 @@ export interface ContactRecord {
   importedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Histórico: possui alguma mensagem com status 'failed'. */
+  hasFailedMessage?: boolean;
+  /** Histórico: possui alguma mensagem entregue e nunca lida (status 'delivered'). */
+  hasDeliveredUnread?: boolean;
 }
 
 export interface ListRecord {

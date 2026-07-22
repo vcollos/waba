@@ -40,6 +40,8 @@ interface Contact {
   isValid: boolean;
   isOptedOut: boolean;
   validationError?: string | null;
+  hasFailedMessage?: boolean;
+  hasDeliveredUnread?: boolean;
   listNames: string[];
   listIds: string[];
 }
@@ -346,7 +348,7 @@ function ContactsContent() {
               <th>Categoria</th>
               <th>Status</th>
               <th>Válido</th>
-              <th>Opt-out</th>
+              <th>Situação</th>
               <th>Listas</th>
               <th>Atualizado em</th>
               <th></th>
@@ -389,7 +391,22 @@ function ContactsContent() {
                       )}
                     </td>
                     <td>
-                      {contact.isOptedOut ? <BadgeText label="Opt-out" cls="warning" /> : <span className="cell-sub">—</span>}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {contact.isOptedOut ? <BadgeText label="Opt-out" cls="warning" /> : null}
+                        {contact.hasFailedMessage ? (
+                          <span title="Alguma mensagem falhou no envio">
+                            <BadgeText label="Falha" cls="danger" />
+                          </span>
+                        ) : null}
+                        {contact.hasDeliveredUnread ? (
+                          <span title="Entregue mas nunca lida">
+                            <BadgeText label="Não lida" cls="warning" />
+                          </span>
+                        ) : null}
+                        {!contact.isOptedOut && !contact.hasFailedMessage && !contact.hasDeliveredUnread ? (
+                          <span className="cell-sub">—</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="cell-sub">
                       {contact.listNames.length ? contact.listNames.join(', ') : '—'}
