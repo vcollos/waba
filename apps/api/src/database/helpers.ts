@@ -101,6 +101,10 @@ export const extractVariableDescriptors = (
         }
         const example = Array.isArray(button.example) ? String(button.example[0] ?? '') : '';
         const buttonText = typeof button.text === 'string' ? button.text : '';
+        // A Meta usa `http://business.facebook.com/{{1}}` como base-placeholder
+        // para botões de URL TOTALMENTE dinâmica: o valor enviado é a URL de
+        // destino inteira (com esquema), não um sufixo — não há base fixa real.
+        const isFullUrl = /(^|\/\/)(www\.)?business\.facebook\.com\//i.test(url);
         descriptors.push({
           componentType: 'button',
           // `index` do botão no array (é o `index` que a Meta exige no envio).
@@ -109,7 +113,8 @@ export const extractVariableDescriptors = (
           example: example || null,
           label: `Botão${buttonText ? ` · ${buttonText}` : ''}`,
           buttonSubType: 'url',
-          buttonUrlBase: url,
+          buttonUrlBase: isFullUrl ? null : url,
+          buttonFullUrl: isFullUrl,
         });
       });
       continue;

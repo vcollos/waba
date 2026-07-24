@@ -75,6 +75,7 @@ interface Template {
     paramName?: string | null;
     example?: string | null;
     buttonUrlBase?: string | null;
+    buttonFullUrl?: boolean;
   }>;
   mediaHeader?: { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: string | null } | null;
 }
@@ -863,6 +864,14 @@ function CampaignWizard({
                 const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
                 const source = mapping[key];
                 const isButton = descriptor.componentType === 'button';
+                // URL totalmente dinâmica: base-placeholder da Meta
+                // (business.facebook.com) OU flag do sync. Nesse caso o valor é a
+                // URL de destino inteira, não um sufixo — não há base fixa a mostrar.
+                const isFullUrl =
+                  isButton &&
+                  (!!descriptor.buttonFullUrl ||
+                    /business\.facebook\.com/i.test(descriptor.buttonUrlBase ?? ''));
+                const hasFixedBase = isButton && !isFullUrl && !!descriptor.buttonUrlBase;
                 const varName = descriptor.paramName
                   ? `{{${descriptor.paramName}}}`
                   : `{{${descriptor.placeholderIndex}}}`;
@@ -873,7 +882,12 @@ function CampaignWizard({
                   <div key={key} className="form-grid" style={{ alignItems: 'end' }}>
                     <div className="field">
                       <label>{fieldLabel}</label>
-                      {isButton && descriptor.buttonUrlBase ? (
+                      {isFullUrl ? (
+                        <span className="hint">
+                          Cole o link completo de destino do botão (começando com{' '}
+                          <code>https://</code>).
+                        </span>
+                      ) : hasFixedBase ? (
                         <span className="hint">
                           Link do botão. A base é fixa no template (
                           <code>{descriptor.buttonUrlBase}</code>) — informe apenas o valor da
@@ -904,7 +918,13 @@ function CampaignWizard({
                         <label>Valor</label>
                         <input
                           className="input"
-                          placeholder={isButton ? 'valor da variável do link' : descriptor.example ?? ''}
+                          placeholder={
+                            isFullUrl
+                              ? descriptor.example ?? 'https://...'
+                              : isButton
+                                ? 'valor da variável do link'
+                                : descriptor.example ?? ''
+                          }
                           value={source.value}
                           onChange={(e) => setVar(key, { type: 'static', value: e.target.value })}
                         />

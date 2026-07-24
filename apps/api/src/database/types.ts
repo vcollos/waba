@@ -137,8 +137,12 @@ export interface TemplateVariableDescriptor {
   label: string;
   /** Só p/ componentType 'button': subtipo do botão (hoje apenas 'url'). */
   buttonSubType?: 'url';
-  /** Só p/ componentType 'button': URL base do template, com o placeholder {{n}}. */
+  /** Só p/ componentType 'button': URL base do template, com o placeholder {{n}}.
+   * Nulo quando é URL totalmente dinâmica (o valor é a URL de destino inteira). */
   buttonUrlBase?: string | null;
+  /** Só p/ componentType 'button': true quando o botão é de URL totalmente
+   * dinâmica (base-placeholder da Meta); o valor enviado é a URL completa. */
+  buttonFullUrl?: boolean;
 }
 
 /** Header de mídia (IMAGE/VIDEO/DOCUMENT) que exige uma URL no envio. */
