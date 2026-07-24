@@ -74,6 +74,7 @@ interface Template {
     label: string;
     paramName?: string | null;
     example?: string | null;
+    buttonUrlBase?: string | null;
   }>;
   mediaHeader?: { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: string | null } | null;
 }
@@ -595,7 +596,12 @@ function CampaignWizard({
       const next = { ...current };
       for (const d of template.variableDescriptors) {
         const key = `${d.componentType}:${d.placeholderIndex}`;
-        if (!next[key]) {
+        if (next[key]) continue;
+        if (d.componentType === 'button') {
+          // O exemplo da Meta para botão de URL é a URL completa (base+sufixo);
+          // pré-preencher quebraria o envio. Deixa vazio p/ o usuário informar o sufixo.
+          next[key] = { type: 'static', value: '' };
+        } else {
           next[key] = d.example ? { type: 'static', value: d.example } : { type: 'contact_name' };
         }
       }
@@ -856,15 +862,24 @@ function CampaignWizard({
             ? template.variableDescriptors.map((descriptor) => {
                 const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
                 const source = mapping[key];
+                const isButton = descriptor.componentType === 'button';
                 const varName = descriptor.paramName
                   ? `{{${descriptor.paramName}}}`
                   : `{{${descriptor.placeholderIndex}}}`;
+                const fieldLabel = isButton
+                  ? descriptor.label || 'Botão'
+                  : `${descriptor.componentType === 'header' ? 'Cabeçalho' : 'Corpo'} · ${varName}`;
                 return (
                   <div key={key} className="form-grid" style={{ alignItems: 'end' }}>
                     <div className="field">
-                      <label>
-                        {descriptor.componentType === 'header' ? 'Cabeçalho' : 'Corpo'} · {varName}
-                      </label>
+                      <label>{fieldLabel}</label>
+                      {isButton && descriptor.buttonUrlBase ? (
+                        <span className="hint">
+                          Link do botão. A base é fixa no template (
+                          <code>{descriptor.buttonUrlBase}</code>) — informe apenas o valor da
+                          variável, que a Meta concatena ao final da URL.
+                        </span>
+                      ) : null}
                       <select
                         className="input"
                         value={source?.type ?? 'static'}
@@ -873,7 +888,7 @@ function CampaignWizard({
                           setVar(
                             key,
                             type === 'static'
-                              ? { type: 'static', value: descriptor.example ?? '' }
+                              ? { type: 'static', value: isButton ? '' : descriptor.example ?? '' }
                               : ({ type } as ParamSource),
                           );
                         }}
@@ -889,7 +904,7 @@ function CampaignWizard({
                         <label>Valor</label>
                         <input
                           className="input"
-                          placeholder={descriptor.example ?? ''}
+                          placeholder={isButton ? 'valor da variável do link' : descriptor.example ?? ''}
                           value={source.value}
                           onChange={(e) => setVar(key, { type: 'static', value: e.target.value })}
                         />

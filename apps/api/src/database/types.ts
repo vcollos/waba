@@ -123,13 +123,22 @@ export interface ImportRecord {
 }
 
 export interface TemplateVariableDescriptor {
-  componentType: 'body' | 'header';
+  componentType: 'body' | 'header' | 'button';
+  /**
+   * body/header: índice do placeholder no texto ({{1}} → 1).
+   * button: posição 0-based do botão no array `buttons` do componente BUTTONS
+   * (é o `index` exigido pela Meta ao enviar o parâmetro do botão).
+   */
   placeholderIndex: number;
   /** Nome da variável em templates de formato NAMED (ex.: "link"); null p/ POSITIONAL. */
   paramName?: string | null;
   /** Valor de exemplo aprovado na Meta (usado como sugestão/pré-preenchimento). */
   example?: string | null;
   label: string;
+  /** Só p/ componentType 'button': subtipo do botão (hoje apenas 'url'). */
+  buttonSubType?: 'url';
+  /** Só p/ componentType 'button': URL base do template, com o placeholder {{n}}. */
+  buttonUrlBase?: string | null;
 }
 
 /** Header de mídia (IMAGE/VIDEO/DOCUMENT) que exige uma URL no envio. */
