@@ -93,6 +93,11 @@ export const collectMissingVariables = (
 ): string[] => {
   const missing: string[] = [];
   for (const descriptor of template.variableDescriptors) {
+    // Botões de URL dinâmica são um conceito de campanha; no fluxo transacional o
+    // botão (copy_code) é resolvido pelo caso AUTHENTICATION, não por descritor.
+    if (descriptor.componentType === 'button') {
+      continue;
+    }
     const named = descriptor.paramName ? variables[descriptor.paramName] : undefined;
     const positional = variables[String(descriptor.placeholderIndex)];
     const value = named != null ? named : positional;

@@ -253,7 +253,13 @@ export class CampaignsService {
     if (template) {
       for (const descriptor of template.variableDescriptors) {
         const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
-        if (!mapping[key]) {
+        if (mapping[key]) continue;
+        if (descriptor.componentType === 'button') {
+          // Botão de URL: o exemplo da Meta é a URL completa (base+sufixo); usá-lo
+          // como default concatenaria à base e quebraria o link. Fica vazio até o
+          // usuário informar o sufixo no wizard.
+          mapping[key] = { type: 'static', value: '' };
+        } else {
           // Padrão inteligente: usa o exemplo aprovado na Meta quando existe
           // (ex.: {{link}} -> URL do vídeo); senão o nome do contato.
           mapping[key] = descriptor.example
@@ -621,6 +627,26 @@ export class CampaignsService {
     if (bodyParameters.length > 0) {
       components.push({ type: 'body', parameters: bodyParameters });
     }
+
+    // Botões de URL dinâmica: um componente `button`/`url` por botão, com o valor
+    // da variável (o sufixo que a Meta concatena à URL base do template).
+    template.variableDescriptors
+      .filter((descriptor) => descriptor.componentType === 'button')
+      .sort((left, right) => left.placeholderIndex - right.placeholderIndex)
+      .forEach((descriptor) => {
+        const key = `button:${descriptor.placeholderIndex}`;
+        const value = resolveParameterValue(campaign.parameterMapping[key], contact);
+        if (!value) {
+          return;
+        }
+        components.push({
+          type: 'button',
+          sub_type: descriptor.buttonSubType ?? 'url',
+          index: String(descriptor.placeholderIndex),
+          parameters: [{ type: 'text', text: value }],
+        });
+      });
+
     const flowButtonComponent = buildFlowButtonComponent(template, flowToken);
     if (flowButtonComponent) {
       components.push(flowButtonComponent);

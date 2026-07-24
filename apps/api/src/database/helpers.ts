@@ -85,6 +85,36 @@ export const extractVariableDescriptors = (
 
   for (const component of components as Array<Record<string, unknown>>) {
     const type = String(component.type ?? '').toLowerCase();
+
+    // BUTTONS: botões de URL dinâmica (url com {{n}}) exigem um parâmetro no envio.
+    // Botão de URL estático (sem placeholder) não precisa de nada e é ignorado.
+    if (type === 'buttons') {
+      const buttons = Array.isArray(component.buttons) ? component.buttons : [];
+      buttons.forEach((raw, index) => {
+        const button = (raw ?? {}) as Record<string, unknown>;
+        if (String(button.type ?? '').toUpperCase() !== 'URL') {
+          return;
+        }
+        const url = typeof button.url === 'string' ? button.url : '';
+        if (!url.includes('{{')) {
+          return;
+        }
+        const example = Array.isArray(button.example) ? String(button.example[0] ?? '') : '';
+        const buttonText = typeof button.text === 'string' ? button.text : '';
+        descriptors.push({
+          componentType: 'button',
+          // `index` do botão no array (é o `index` que a Meta exige no envio).
+          placeholderIndex: index,
+          paramName: null,
+          example: example || null,
+          label: `Botão${buttonText ? ` · ${buttonText}` : ''}`,
+          buttonSubType: 'url',
+          buttonUrlBase: url,
+        });
+      });
+      continue;
+    }
+
     if (type !== 'body' && type !== 'header') {
       continue;
     }
