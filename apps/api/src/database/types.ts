@@ -328,9 +328,10 @@ export interface CampaignMessageRecord {
 }
 
 /**
- * Tarifa unitária (BRL) por categoria de mensagem WABA, versionada no tempo.
- * `clientId` nulo = tarifa global/pool (fallback quando o tenant não tem tarifa
- * própria). A tarifa vigente é a de maior `effectiveFrom` <= data de referência.
+ * Tarifa unitária (BRL) por categoria de mensagem WABA. Há UM valor atual por
+ * (clientId, category): alterar sobrescreve e vale para todos os relatórios
+ * (passado e futuro). `clientId` nulo = tarifa global/pool (fallback quando o
+ * tenant não tem tarifa própria). Sem vigência por data.
  */
 export interface PricingRateRecord {
   id: string;
@@ -340,8 +341,8 @@ export interface PricingRateRecord {
   category: string;
   /** Preço unitário em BRL da conversa/mensagem cobrada. */
   unitPriceBrl: number;
-  /** ISO: a partir de quando esta tarifa vale. */
-  effectiveFrom: string;
+  /** ISO: quando esta tarifa foi definida (apenas auditoria; não usado no cálculo). */
+  effectiveFrom?: string | null;
   createdAt: string;
   updatedAt: string;
 }

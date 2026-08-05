@@ -416,9 +416,6 @@ function ReportTab({
                       <td className="num">
                         {line.missingRate ? (
                           <span className="badge warning">Sem tarifa</span>
-                        ) : line.unitPriceBrl === null ? (
-                          // Tarifa mudou dentro do período: sem preço único, mas há custo.
-                          <span className="cell-sub">Tarifa variável</span>
                         ) : (
                           fmtBRL(line.unitPriceBrl)
                         )}
@@ -510,33 +507,38 @@ function ReportTab({
 
 /* ---- Aba: tarifas e nota fiscal ------------------------------------------ */
 
+const emptyPrices = (): Record<RateCategory, string> => ({
+  MARKETING: '',
+  UTILITY: '',
+  AUTHENTICATION: '',
+  SERVICE: '',
+});
+
 function RatesTab() {
-  const { scopeClientId } = useShell();
   const { toasts, push } = useToasts();
-  const [rates, setRates] = useState<PricingRate[]>([]);
-  const [settings, setSettings] = useState<ReportSettings | null>(null);
+  const [priceByCat, setPriceByCat] = useState<Record<RateCategory, string>>(emptyPrices);
+  const [nfPct, setNfPct] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [savingCat, setSavingCat] = useState<RateCategory | null>(null);
+  const [savingNf, setSavingNf] = useState(false);
 
-  const [category, setCategory] = useState<RateCategory>('MARKETING');
-  const [unitPrice, setUnitPrice] = useState('');
-  const [effectiveFrom, setEffectiveFrom] = useState<string>(() => toDateInput(new Date()));
-
-  const [nfPct, setNfPct] = useState('');
-
-  const clientQuery = scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : '';
-
+  // Modelo simplificado (WABA-23): UM valor por categoria, GLOBAL. Carregamos e
+  // gravamos SEM clientId — a edição ignora o seletor de tenant da topbar.
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
     Promise.all([
-      apiRequest<PricingRate[]>(`/reports/rates${clientQuery}`),
-      apiRequest<ReportSettings>(`/reports/settings${clientQuery}`),
+      apiRequest<PricingRate[]>('/reports/rates'),
+      apiRequest<ReportSettings>('/reports/settings'),
     ])
       .then(([rateList, cfg]) => {
-        setRates(rateList);
-        setSettings(cfg);
+        const next = emptyPrices();
+        for (const rate of rateList) {
+          const cat = rate.category as RateCategory;
+          if (cat in next) next[cat] = String(rate.unitPriceBrl);
+        }
+        setPriceByCat(next);
         setNfPct(String(cfg.notaFiscalPct ?? ''));
         setLoading(false);
       })
@@ -544,45 +546,32 @@ function RatesTab() {
         setError(err instanceof Error ? err.message : 'Falha ao carregar tarifas.');
         setLoading(false);
       });
-  }, [clientQuery]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const saveRate = () => {
-    const price = Number(unitPrice.replace(',', '.'));
+  const saveRate = (category: RateCategory) => {
+    const price = Number((priceByCat[category] ?? '').replace(',', '.'));
     if (!Number.isFinite(price) || price < 0) {
       push('danger', 'Informe um preço unitário válido.');
       return;
     }
-    setSaving(true);
+    setSavingCat(category);
     void apiRequest<PricingRate>('/reports/rates', {
       method: 'POST',
-      body: JSON.stringify({
-        category,
-        unitPriceBrl: price,
-        effectiveFrom: effectiveFrom || undefined,
-        clientId: scopeClientId ?? undefined,
-      }),
+      // Sempre global: sem clientId (a tarifa vale para todos os clientes).
+      body: JSON.stringify({ category, unitPriceBrl: price }),
     })
-      .then(() => {
-        push('success', `Tarifa de ${catLabel(category)} salva.`);
-        setUnitPrice('');
-        load();
+      .then((rate) => {
+        setPriceByCat((cur) => ({ ...cur, [category]: String(rate.unitPriceBrl) }));
+        push('success', `Tarifa de ${catLabel(category)} atualizada para todos os clientes.`);
       })
       .catch((err) => {
         push('danger', err instanceof Error ? err.message : 'Falha ao salvar a tarifa.');
       })
-      .finally(() => setSaving(false));
-  };
-
-  const editRate = (rate: PricingRate) => {
-    setCategory((RATE_CATEGORIES as readonly string[]).includes(rate.category)
-      ? (rate.category as RateCategory)
-      : 'MARKETING');
-    setUnitPrice(String(rate.unitPriceBrl));
-    setEffectiveFrom(rate.effectiveFrom.slice(0, 10));
+      .finally(() => setSavingCat(null));
   };
 
   const saveSettings = () => {
@@ -591,20 +580,20 @@ function RatesTab() {
       push('danger', 'Informe um percentual de NF válido.');
       return;
     }
-    setSaving(true);
+    setSavingNf(true);
     void apiRequest<ReportSettings>('/reports/settings', {
       method: 'PUT',
-      body: JSON.stringify({ notaFiscalPct: pct, clientId: scopeClientId ?? undefined }),
+      // Global: sem clientId.
+      body: JSON.stringify({ notaFiscalPct: pct }),
     })
       .then((cfg) => {
-        setSettings(cfg);
         setNfPct(String(cfg.notaFiscalPct));
-        push('success', 'Percentual de nota fiscal atualizado.');
+        push('success', 'Percentual de nota fiscal atualizado para todos os clientes.');
       })
       .catch((err) => {
         push('danger', err instanceof Error ? err.message : 'Falha ao salvar a configuração.');
       })
-      .finally(() => setSaving(false));
+      .finally(() => setSavingNf(false));
   };
 
   return (
@@ -612,131 +601,86 @@ function RatesTab() {
       <ToastHost toasts={toasts} />
       {error ? <ErrorBanner message={error} onRetry={load} /> : null}
 
-      <p className="op-sub" style={{ marginBottom: 16 }}>
-        {scopeClientId
-          ? 'Tarifas e nota fiscal do cliente em foco.'
-          : 'Tarifas e nota fiscal globais (padrão para todos os clientes).'}
-      </p>
-
-      <div className="dash-cols">
-        <div className="block">
-          <div className="block-head">
-            <span className="block-title">Nova tarifa / atualizar</span>
-          </div>
-          <div className="panel">
-            <div className="form-grid">
-              <div className="field">
-                <label>Categoria</label>
-                <select
-                  className="input"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value as RateCategory)}
-                >
-                  {RATE_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {catLabel(c)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Preço unitário (BRL)</label>
-                <input
-                  className="input"
-                  inputMode="decimal"
-                  placeholder="0,00"
-                  value={unitPrice}
-                  onChange={(e) => setUnitPrice(e.target.value)}
-                />
-              </div>
-              <div className="field col-2">
-                <label>Vigente a partir de</label>
-                <input
-                  className="input"
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="row" style={{ marginTop: 12 }}>
-              <button className="btn primary md" onClick={saveRate} disabled={saving}>
-                Salvar tarifa
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="block">
-          <div className="block-head">
-            <span className="block-title">Nota fiscal</span>
-          </div>
-          <div className="panel">
-            <div className="field">
-              <label>Percentual sobre o subtotal (%)</label>
-              <input
-                className="input"
-                inputMode="decimal"
-                placeholder="10,98"
-                value={nfPct}
-                onChange={(e) => setNfPct(e.target.value)}
-              />
-            </div>
-            <p className="op-sub" style={{ marginTop: 8 }}>
-              Imposto aditivo: total = subtotal + subtotal × percentual.
-            </p>
-            <div className="row" style={{ marginTop: 12 }}>
-              <button className="btn primary md" onClick={saveSettings} disabled={saving || loading}>
-                Salvar percentual
-              </button>
-            </div>
-          </div>
-        </div>
+      <div className="toast warning" style={{ marginBottom: 16 }}>
+        <span style={{ flex: 1 }}>
+          Estas tarifas e o percentual de nota fiscal são <strong>globais</strong>: valem para
+          todos os clientes e só o ADM Master pode alterá-los. A mudança passa a valer em todos os
+          relatórios imediatamente. O seletor de tenant afeta apenas a leitura do relatório.
+        </span>
       </div>
 
       <div className="block">
         <div className="block-head">
-          <span className="block-title">Tarifas cadastradas</span>
+          <span className="block-title">Tarifas padrão (valem para todos os clientes)</span>
         </div>
         <div className="tbl-wrap">
           <table className="tbl dense">
             <thead>
               <tr>
                 <th>Categoria</th>
-                <th className="num">Preço unitário</th>
-                <th>Vigente a partir de</th>
-                <th>Escopo</th>
+                <th className="num">Preço unitário (BRL)</th>
                 <th></th>
               </tr>
             </thead>
             {loading ? (
-              <SkeletonRows rows={4} cols={5} />
+              <SkeletonRows rows={4} cols={3} />
             ) : (
               <tbody>
-                {rates.length === 0 ? (
-                  <tr>
-                    <td colSpan={5}>
-                      <EmptyState title="Nenhuma tarifa cadastrada" />
+                {RATE_CATEGORIES.map((cat) => (
+                  <tr key={cat}>
+                    <td className="cell-strong">{catLabel(cat)}</td>
+                    <td className="num">
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        style={{ maxWidth: 140, marginLeft: 'auto', textAlign: 'right' }}
+                        value={priceByCat[cat]}
+                        onChange={(e) =>
+                          setPriceByCat((cur) => ({ ...cur, [cat]: e.target.value }))
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        className="btn secondary sm"
+                        disabled={savingCat === cat}
+                        onClick={() => saveRate(cat)}
+                      >
+                        Salvar
+                      </button>
                     </td>
                   </tr>
-                ) : (
-                  rates.map((rate) => (
-                    <tr key={rate.id}>
-                      <td className="cell-strong">{catLabel(rate.category)}</td>
-                      <td className="num">{fmtBRL(rate.unitPriceBrl)}</td>
-                      <td className="cell-mono">{fmtDateTime(rate.effectiveFrom)}</td>
-                      <td className="cell-sub">{rate.clientId ? 'Cliente' : 'Global'}</td>
-                      <td>
-                        <button className="btn tertiary sm" onClick={() => editRate(rate)}>
-                          Editar
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
+                ))}
               </tbody>
             )}
           </table>
+        </div>
+      </div>
+
+      <div className="block">
+        <div className="block-head">
+          <span className="block-title">Nota fiscal (global)</span>
+        </div>
+        <div className="panel">
+          <div className="field" style={{ maxWidth: 260 }}>
+            <label>Percentual sobre o subtotal (%)</label>
+            <input
+              className="input"
+              inputMode="decimal"
+              placeholder="10,98"
+              value={nfPct}
+              onChange={(e) => setNfPct(e.target.value)}
+            />
+          </div>
+          <p className="op-sub" style={{ marginTop: 8 }}>
+            Imposto aditivo: total = subtotal + subtotal × percentual. Vale para todos os clientes.
+          </p>
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className="btn primary md" onClick={saveSettings} disabled={savingNf || loading}>
+              Salvar percentual
+            </button>
+          </div>
         </div>
       </div>
     </>

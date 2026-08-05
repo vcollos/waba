@@ -98,13 +98,14 @@ export class ReportsService {
     const resolveRate = async (
       clientId: string | null,
       category: string,
-      atDate: string,
     ): Promise<PricingRateRecord | null> => {
-      const key = `${clientId ?? ''}|${category}|${atDate}`;
+      // Tarifa = um valor atual por categoria (tenant sobrepõe global); sem
+      // vigência por data. Alterar a tarifa reflete em todos os relatórios.
+      const key = `${clientId ?? ''}|${category}`;
       if (rateCache.has(key)) {
         return rateCache.get(key) ?? null;
       }
-      const rate = await this.database.resolvePricingRate(clientId, category, atDate);
+      const rate = await this.database.resolvePricingRate(clientId, category);
       rateCache.set(key, rate);
       return rate;
     };
@@ -125,7 +126,6 @@ export class ReportsService {
       if (!campaign) {
         continue;
       }
-      const refDate = campaignRefDate(campaign, to);
       const sends = buildSendBuckets(messages);
       const funnel = campaignFunnel(buildSummary(messages));
 
@@ -141,7 +141,7 @@ export class ReportsService {
 
       const billableByCategory: BillableCategoryLine[] = [];
       for (const [category, count] of [...billableCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-        const rate = await resolveRate(campaign.clientId ?? null, category, refDate);
+        const rate = await resolveRate(campaign.clientId ?? null, category);
         const unitPriceBrl = rate?.unitPriceBrl ?? null;
         const subtotalBrl = round2(count * (unitPriceBrl ?? 0));
         billableByCategory.push({
@@ -190,7 +190,7 @@ export class ReportsService {
 
     // Consolidado do período: soma de envios + cobráveis por categoria e dinheiro.
     const totalsSends = emptyBuckets();
-    const totalsCategory = new Map<string, { count: number; subtotal: number; missing: boolean; prices: Set<number> }>();
+    const totalsCategory = new Map<string, { count: number; subtotal: number; missing: boolean }>();
     let subtotalBrl = 0;
     let notaFiscalValorBrl = 0;
     let totalBrl = 0;
@@ -202,35 +202,30 @@ export class ReportsService {
       totalBrl += campaign.cost.totalBrl;
       hasMissingRate = hasMissingRate || campaign.cost.hasMissingRate;
       for (const line of campaign.billableByCategory) {
-        const acc = totalsCategory.get(line.category) ?? {
-          count: 0,
-          subtotal: 0,
-          missing: false,
-          prices: new Set<number>(),
-        };
+        const acc = totalsCategory.get(line.category) ?? { count: 0, subtotal: 0, missing: false };
         acc.count += line.billableCount;
         acc.subtotal += line.subtotalBrl;
         acc.missing = acc.missing || line.missingRate;
-        if (line.unitPriceBrl !== null) {
-          acc.prices.add(line.unitPriceBrl);
-        }
         totalsCategory.set(line.category, acc);
       }
     }
 
-    const headerSettings = await resolveSettings(scope === null ? null : scope);
+    const headerClientId = scope === null ? null : scope;
+    const headerSettings = await resolveSettings(headerClientId);
 
-    const consolidatedCategories: BillableCategoryLine[] = [...totalsCategory.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([category, acc]) => ({
+    // Tarifa única por categoria: o unitPriceBrl consolidado é a tarifa atual do
+    // escopo (tenant sobrepõe global). Sem lógica de variância por período.
+    const consolidatedCategories: BillableCategoryLine[] = [];
+    for (const [category, acc] of [...totalsCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const rate = await resolveRate(headerClientId, category);
+      consolidatedCategories.push({
         category,
         billableCount: acc.count,
-        // unitPriceBrl consolidado só faz sentido quando a tarifa foi uniforme no
-        // período/tenants; caso contrário, null (use subtotalBrl agregado).
-        unitPriceBrl: acc.prices.size === 1 ? [...acc.prices][0] : null,
+        unitPriceBrl: rate?.unitPriceBrl ?? null,
         missingRate: acc.missing,
         subtotalBrl: round2(acc.subtotal),
-      }));
+      });
+    }
 
     return {
       period: { from: from ?? null, to: to ?? null },
@@ -371,7 +366,8 @@ export class ReportsService {
     if (!Number.isFinite(unitPriceBrl) || unitPriceBrl < 0) {
       throw new BadRequestException('unitPriceBrl inválido.');
     }
-    const effectiveFrom = (input.effectiveFrom ?? '').trim() || nowIso();
+    // Modelo novo (WABA-23): UM valor atual por categoria, sem vigência por data.
+    // `effectiveFrom` do body é ignorado no cálculo/upsert (upsert por client+categoria).
 
     // Tenant a gravar: Collos pode global/qualquer tenant; papel de cliente é
     // forçado ao próprio tenant por writeClientId (não dá p/ burlar via body).
@@ -380,10 +376,10 @@ export class ReportsService {
       throw new ForbiddenException('Sem tenant válido para gravar a tarifa.');
     }
 
-    // Defesa em profundidade (Samuel): o upsert é ON CONFLICT(id). Um chamador
-    // não-Collos que envie o `id` de uma tarifa global ou de outro tenant
-    // conseguiria reatribuir a linha para o próprio tenant. Bloqueamos: com `id`,
-    // a tarifa existente tem de pertencer exatamente ao tenant resolvido da sessão.
+    // Defesa em profundidade (Samuel): o upsert é por (client_id, category). Um
+    // chamador não-Collos que envie o `id` de uma tarifa global ou de outro tenant
+    // não pode acabar sobrescrevendo linha alheia. Bloqueamos: com `id`, a tarifa
+    // existente tem de pertencer exatamente ao tenant resolvido da sessão.
     if (!isCollosRole(session.role) && (input.id ?? '').trim()) {
       const existing = (await this.database.listPricingRates(clientId)).find(
         (rate) => rate.id === input.id,
@@ -393,15 +389,7 @@ export class ReportsService {
       }
     }
 
-    return this.database.upsertPricingRate({
-      id: input.id ?? '',
-      clientId,
-      category,
-      unitPriceBrl,
-      effectiveFrom,
-      createdAt: '',
-      updatedAt: '',
-    });
+    return this.database.upsertPricingRate({ clientId, category, unitPriceBrl });
   }
 
   // --- Configuração de relatórios (nota fiscal) -----------------------------
@@ -437,9 +425,6 @@ const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 
 
 const messageRefDate = (message: CampaignMessageRecord): string =>
   message.sentAt ?? message.createdAt;
-
-const campaignRefDate = (campaign: CampaignRecord, to: string | null): string =>
-  campaign.finishedAt ?? campaign.startedAt ?? to ?? nowIso();
 
 /** `from` date-only vira início do dia; ISO completo passa direto. */
 const normalizeFromBound = (value?: string | null): string | null => {

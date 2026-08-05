@@ -1022,12 +1022,13 @@ export class DatabaseService implements OnModuleDestroy {
         client_id TEXT,
         category TEXT NOT NULL,
         unit_price_brl REAL NOT NULL,
-        effective_from TEXT NOT NULL,
+        effective_from TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_pricing_rates_scope
-        ON pricing_rates(client_id, category, effective_from DESC);
+      DROP INDEX IF EXISTS idx_pricing_rates_scope;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rates_client_category
+        ON pricing_rates(COALESCE(client_id, ''), category);
       CREATE TABLE IF NOT EXISTS report_settings (
         id TEXT PRIMARY KEY,
         client_id TEXT,
@@ -1088,12 +1089,14 @@ export class DatabaseService implements OnModuleDestroy {
           client_id TEXT,
           category TEXT NOT NULL,
           unit_price_brl NUMERIC NOT NULL,
-          effective_from TIMESTAMPTZ NOT NULL,
+          effective_from TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_pricing_rates_scope
-          ON pricing_rates(client_id, category, effective_from DESC);
+        ALTER TABLE pricing_rates ALTER COLUMN effective_from DROP NOT NULL;
+        DROP INDEX IF EXISTS idx_pricing_rates_scope;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rates_client_category
+          ON pricing_rates(COALESCE(client_id, ''), category);
         CREATE TABLE IF NOT EXISTS report_settings (
           id TEXT PRIMARY KEY,
           client_id TEXT,
@@ -1752,7 +1755,7 @@ export class DatabaseService implements OnModuleDestroy {
           `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
            FROM pricing_rates
            ${scope === null ? '' : 'WHERE client_id = ? OR client_id IS NULL'}
-           ORDER BY category ASC, effective_from DESC`,
+           ORDER BY category ASC, client_id NULLS LAST`,
         )
         .all(...(scope === null ? [] : [scope])) as Array<Record<string, unknown>>;
       return rows.map(mapPricingRateRow);
@@ -1768,21 +1771,31 @@ export class DatabaseService implements OnModuleDestroy {
       `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
        FROM pricing_rates
        ${where}
-       ORDER BY category ASC, effective_from DESC`,
+       ORDER BY category ASC, client_id NULLS LAST`,
       params,
     );
     return rows.rows.map(mapPricingRateRow);
   }
 
-  async upsertPricingRate(record: PricingRateRecord): Promise<PricingRateRecord> {
+  /**
+   * Cria/atualiza a tarifa única de (clientId, category). Sobrescreve o valor
+   * atual (upsert pelo índice único COALESCE(client_id,'') + category); não gera
+   * múltiplas linhas por categoria. `id` é PK mas o conflito resolve por escopo.
+   */
+  async upsertPricingRate(record: {
+    clientId?: string | null;
+    category: string;
+    unitPriceBrl: number;
+  }): Promise<PricingRateRecord> {
     await this.ensureReady();
     const now = nowIso();
     const complete: PricingRateRecord = {
-      ...record,
-      id: record.id || newId(),
+      id: newId(),
       clientId: (record.clientId ?? null) || null,
       category: record.category.trim().toUpperCase(),
-      createdAt: record.createdAt || now,
+      unitPriceBrl: record.unitPriceBrl,
+      effectiveFrom: now,
+      createdAt: now,
       updatedAt: now,
     };
 
@@ -1792,11 +1805,8 @@ export class DatabaseService implements OnModuleDestroy {
           `INSERT INTO pricing_rates
              (id, client_id, category, unit_price_brl, effective_from, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             client_id = excluded.client_id,
-             category = excluded.category,
+           ON CONFLICT (COALESCE(client_id, ''), category) DO UPDATE SET
              unit_price_brl = excluded.unit_price_brl,
-             effective_from = excluded.effective_from,
              updated_at = excluded.updated_at`,
         )
         .run(
@@ -1804,23 +1814,21 @@ export class DatabaseService implements OnModuleDestroy {
           complete.clientId ?? null,
           complete.category,
           complete.unitPriceBrl,
-          complete.effectiveFrom,
+          complete.effectiveFrom ?? null,
           complete.createdAt,
           complete.updatedAt,
         );
-      return complete;
+      return this.readPricingRate(complete.clientId ?? null, complete.category) ?? complete;
     }
 
-    await this.metaClient.query(
+    const result = await this.metaClient.query<Record<string, unknown>>(
       `INSERT INTO pricing_rates
          (id, client_id, category, unit_price_brl, effective_from, created_at, updated_at)
        VALUES ($1, $2, $3, $4::numeric, $5::timestamptz, $6::timestamptz, $7::timestamptz)
-       ON CONFLICT (id) DO UPDATE SET
-         client_id = EXCLUDED.client_id,
-         category = EXCLUDED.category,
+       ON CONFLICT (COALESCE(client_id, ''), category) DO UPDATE SET
          unit_price_brl = EXCLUDED.unit_price_brl,
-         effective_from = EXCLUDED.effective_from,
-         updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at
+       RETURNING id, client_id, category, unit_price_brl, effective_from, created_at, updated_at`,
       [
         complete.id,
         complete.clientId,
@@ -1831,40 +1839,44 @@ export class DatabaseService implements OnModuleDestroy {
         complete.updatedAt,
       ],
     );
-    return complete;
+    return result.rows[0] ? mapPricingRateRow(result.rows[0]) : complete;
+  }
+
+  private readPricingRate(clientId: string | null, category: string): PricingRateRecord | null {
+    const row = this.database!
+      .prepare(
+        `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
+         FROM pricing_rates
+         WHERE COALESCE(client_id, '') = COALESCE(?, '') AND category = ?
+         LIMIT 1`,
+      )
+      .get(clientId, category) as Record<string, unknown> | undefined;
+    return row ? mapPricingRateRow(row) : null;
   }
 
   /**
-   * Tarifa vigente para (tenant, categoria) numa data: maior `effective_from`
-   * <= `atDate`. Cai para a tarifa global (client_id NULL) quando o tenant não
-   * tem tarifa específica. Retorna null se não houver nenhuma aplicável.
+   * Tarifa única para (tenant, categoria). Retorna a do tenant se existir; senão
+   * a global (client_id NULL); senão null. Sem vigência por data — o valor atual
+   * vale para todos os relatórios.
    */
   async resolvePricingRate(
     clientId: string | null | undefined,
     category: string,
-    atDate: string,
   ): Promise<PricingRateRecord | null> {
     await this.ensureReady();
     const scope = (clientId ?? '').trim() || null;
     const cat = category.trim().toUpperCase();
     const rates = await this.listPricingRates(scope);
-    const applicable = rates.filter(
-      (rate) => rate.category === cat && rate.effectiveFrom <= atDate,
-    );
+    const applicable = rates.filter((rate) => rate.category === cat);
     if (applicable.length === 0) {
       return null;
     }
-    // Prefere tarifa específica do tenant sobre a global; dentro do mesmo escopo,
-    // a de maior effective_from (mais recente) <= atDate.
-    applicable.sort((left, right) => {
-      const leftSpecific = left.clientId === scope && scope !== null ? 1 : 0;
-      const rightSpecific = right.clientId === scope && scope !== null ? 1 : 0;
-      if (leftSpecific !== rightSpecific) {
-        return rightSpecific - leftSpecific;
-      }
-      return right.effectiveFrom.localeCompare(left.effectiveFrom);
-    });
-    return applicable[0];
+    // Prefere a tarifa específica do tenant sobre a global (client_id NULL).
+    return (
+      applicable.find((rate) => scope !== null && rate.clientId === scope) ??
+      applicable.find((rate) => (rate.clientId ?? null) === null) ??
+      applicable[0]
+    );
   }
 
   async getReportSettings(clientId?: string | null): Promise<ReportSettingsRecord> {
@@ -3321,8 +3333,8 @@ const mapPricingRateRow = (row: Record<string, unknown>): PricingRateRecord => (
   category: String(row.category),
   // NUMERIC chega como string via pg; REAL como number via sqlite.
   unitPriceBrl: Number(row.unit_price_brl),
-  effectiveFrom:
-    toIsoString(row.effective_from as string | Date | null) ?? new Date().toISOString(),
+  // Auditoria: quando a tarifa foi definida; não usado no cálculo.
+  effectiveFrom: toIsoString(row.effective_from as string | Date | null),
   createdAt: toIsoString(row.created_at as string | Date | null) ?? new Date().toISOString(),
   updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
 });

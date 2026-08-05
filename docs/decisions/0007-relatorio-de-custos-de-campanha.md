@@ -36,10 +36,16 @@ ausente ou malformado, o status continua sendo aplicado normalmente.
 
 ### 2. Preço em BRL vem de uma tabela de tarifas da Collos, não da Meta
 
-Nova tabela `pricing_rates` (categoria → preço BRL). `client_id` **null = tarifa
-global**; uma linha por tenant sobrepõe a global. `effective_from` dá vigência
-(permite reajuste sem perder o histórico). O custo de uma mensagem = tarifa da
-sua `pricing_category` vigente para o tenant.
+Nova tabela `pricing_rates` (categoria → preço BRL), com **UNIQUE `(client_id,
+category)`**. É **um valor atual por categoria**, sem vigência por data: o upsert
+por `(client_id, category)` **sobrescreve** `unit_price_brl`. `client_id`
+**null = tarifa global** que vale para **todos os clientes**. `resolvePricingRate
+(clientId, category)` resolve sem data — usa a linha do tenant se existir, senão
+a global. O custo de uma mensagem = tarifa atual da sua `pricing_category`.
+
+**Não há histórico por data:** ao alterar uma tarifa, o novo valor passa a valer
+para **todos os relatórios, passados e futuros** — um relatório de um período
+antigo é recalculado com o preço vigente hoje.
 
 Só a Collos edita tarifa: **preço é decisão comercial** — o tenant não edita a
 própria fatura (ver item 5).
@@ -112,6 +118,12 @@ para funil e contagens — não reimplementa agregação.
 - **Tenant edita a própria tarifa**: rejeitada — preço é decisão comercial da
   Collos; tenant editar a própria fatura é conflito de interesse. Edição é
   Collos-only.
+- **Vigência histórica de tarifa por data (`effective_from`)**: considerada e
+  **descartada a pedido do usuário**. Manter preço por período permitiria
+  recompor a fatura de um mês com a tarifa daquela época, mas o usuário preferiu
+  **simplicidade**: um único valor atual por categoria, global, que vale para
+  todos os relatórios (passados e futuros). Consequência aceita: alterar a tarifa
+  recalcula relatórios antigos; não há reconstrução histórica de preço.
 
 ## Consequências
 

@@ -282,9 +282,12 @@ decisão completa.
 - exportar CSV; exportar PDF = HTML print-ready (Ctrl+P), não binário
 
 [Tarifas / NF]
-- tabela de tarifas por categoria em BRL (tarifa global ou por tenant, com vigência)
+- um valor atual por categoria em BRL, global (vale para todos os clientes); sem
+  vigência por data — alterar a tarifa recalcula todos os relatórios, passados e
+  futuros
 - percentual de nota fiscal (default 10.98%)
-- edição restrita à Collos (super_admin/admin)
+- edição restrita à Collos (super_admin/admin); a tela de tarifas é sempre
+  global e ignora o seletor de tenant (o seletor afeta só a leitura do relatório)
 ```
 
 Origem do custo:
@@ -294,7 +297,8 @@ Origem do custo:
   persistido em `campaign_messages` (`pricing_category`/`pricing_billable`/
   `pricing_model`)
 - o **valor em BRL** vem de uma tabela de tarifas mantida pela Collos
-  (`pricing_rates`), não da Meta — a Meta não envia valor monetário
+  (`pricing_rates`, um valor atual por categoria, global), não da Meta — a Meta
+  não envia valor monetário
 - o **total** é gross-up: `total = subtotal + subtotal * nota_fiscal_pct / 100`
 
 Papéis:
