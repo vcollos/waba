@@ -21,12 +21,15 @@ import {
   ListRecord,
   MessageEventRecord,
   OptOutRecord,
+  PricingRateRecord,
+  ReportSettingsRecord,
+  DEFAULT_NOTA_FISCAL_PCT,
   TemplateCacheRecord,
   TransactionalDispatchRecord,
   UserRecord,
   emptyState,
 } from './types';
-import { nowIso } from './helpers';
+import { newId, nowIso } from './helpers';
 import { getEnv } from '../common/env';
 import { hashPassword } from '../common/password';
 
@@ -835,6 +838,9 @@ export class DatabaseService implements OnModuleDestroy {
           flow_token TEXT,
           status TEXT NOT NULL,
           next_attempt_at TIMESTAMPTZ,
+          pricing_category TEXT,
+          pricing_billable BOOLEAN,
+          pricing_model TEXT,
           created_at TIMESTAMPTZ NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL,
           record_json JSONB NOT NULL
@@ -1011,6 +1017,26 @@ export class DatabaseService implements OnModuleDestroy {
         ON transactional_dispatches(client_id, idempotency_key);
       CREATE INDEX IF NOT EXISTS idx_transactional_dispatches_message
         ON transactional_dispatches(campaign_message_id);
+      CREATE TABLE IF NOT EXISTS pricing_rates (
+        id TEXT PRIMARY KEY,
+        client_id TEXT,
+        category TEXT NOT NULL,
+        unit_price_brl REAL NOT NULL,
+        effective_from TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      DROP INDEX IF EXISTS idx_pricing_rates_scope;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rates_client_category
+        ON pricing_rates(COALESCE(client_id, ''), category);
+      CREATE TABLE IF NOT EXISTS report_settings (
+        id TEXT PRIMARY KEY,
+        client_id TEXT,
+        nota_fiscal_pct REAL NOT NULL DEFAULT 10.98,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_report_settings_client
+        ON report_settings(COALESCE(client_id, ''));
     `);
 
     if (this.metaClient) {
@@ -1053,6 +1079,32 @@ export class DatabaseService implements OnModuleDestroy {
           ON transactional_dispatches(client_id, idempotency_key);
         CREATE INDEX IF NOT EXISTS idx_transactional_dispatches_message
           ON transactional_dispatches(campaign_message_id);
+        ALTER TABLE campaign_messages ADD COLUMN IF NOT EXISTS pricing_category TEXT;
+        ALTER TABLE campaign_messages ADD COLUMN IF NOT EXISTS pricing_billable BOOLEAN;
+        ALTER TABLE campaign_messages ADD COLUMN IF NOT EXISTS pricing_model TEXT;
+        CREATE INDEX IF NOT EXISTS idx_campaign_messages_pricing_category
+          ON campaign_messages(pricing_category);
+        CREATE TABLE IF NOT EXISTS pricing_rates (
+          id TEXT PRIMARY KEY,
+          client_id TEXT,
+          category TEXT NOT NULL,
+          unit_price_brl NUMERIC NOT NULL,
+          effective_from TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+        ALTER TABLE pricing_rates ALTER COLUMN effective_from DROP NOT NULL;
+        DROP INDEX IF EXISTS idx_pricing_rates_scope;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pricing_rates_client_category
+          ON pricing_rates(COALESCE(client_id, ''), category);
+        CREATE TABLE IF NOT EXISTS report_settings (
+          id TEXT PRIMARY KEY,
+          client_id TEXT,
+          nota_fiscal_pct NUMERIC NOT NULL DEFAULT 10.98,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_report_settings_client
+          ON report_settings(COALESCE(client_id, ''));
       `);
 
       // Unicidade de telefone POR TENANT: troca o UNIQUE global de phone_hash por
@@ -1398,6 +1450,9 @@ export class DatabaseService implements OnModuleDestroy {
       flow_token,
       status,
       next_attempt_at,
+      pricing_category,
+      pricing_billable,
+      pricing_model,
       created_at,
       updated_at,
       record_json
@@ -1452,6 +1507,9 @@ export class DatabaseService implements OnModuleDestroy {
         flow_token,
         status,
         next_attempt_at,
+        pricing_category,
+        pricing_billable,
+        pricing_model,
         created_at,
         updated_at,
         record_json
@@ -1485,6 +1543,9 @@ export class DatabaseService implements OnModuleDestroy {
         flow_token,
         status,
         next_attempt_at,
+        pricing_category,
+        pricing_billable,
+        pricing_model,
         created_at,
         updated_at,
         record_json
@@ -1515,6 +1576,9 @@ export class DatabaseService implements OnModuleDestroy {
         flow_token,
         status,
         next_attempt_at,
+        pricing_category,
+        pricing_billable,
+        pricing_model,
         created_at,
         updated_at,
         record_json
@@ -1627,6 +1691,270 @@ export class DatabaseService implements OnModuleDestroy {
     await this.upsertCampaignMessagesBatch(this.metaClient, [message]);
   }
 
+  /**
+   * Persiste a precificação (pricing) de uma mensagem, casando por
+   * `provider_message_id` (wamid). Idempotente e não-destrutivo: só grava um
+   * campo se veio valor (COALESCE preserva o existente), então reprocessar o
+   * mesmo webhook não apaga dados. Chamado pelo webhook de status (Rafa).
+   */
+  async setCampaignMessagePricing(
+    providerMessageId: string,
+    pricing: { category?: string | null; billable?: boolean | null; model?: string | null },
+  ): Promise<void> {
+    await this.ensureReady();
+    const category = normalizeOptionalString(pricing.category);
+    const model = normalizeOptionalString(pricing.model);
+    const billable = typeof pricing.billable === 'boolean' ? pricing.billable : null;
+    const wamid = providerMessageId.trim();
+    if (!wamid || (category === null && model === null && billable === null)) {
+      return;
+    }
+
+    if (!this.metaClient) {
+      await this.write((state) => {
+        for (const message of state.campaignMessages) {
+          if (message.providerMessageId !== wamid) {
+            continue;
+          }
+          if (category !== null) {
+            message.pricingCategory = category;
+          }
+          if (billable !== null) {
+            message.pricingBillable = billable;
+          }
+          if (model !== null) {
+            message.pricingModel = model;
+          }
+        }
+      });
+      return;
+    }
+
+    await this.metaClient.query(
+      `UPDATE campaign_messages
+       SET pricing_category = COALESCE($2, pricing_category),
+           pricing_billable = COALESCE($3::boolean, pricing_billable),
+           pricing_model = COALESCE($4, pricing_model)
+       WHERE provider_message_id = $1`,
+      [wamid, category, billable, model],
+    );
+  }
+
+  // --- Tarifas e configuração de relatórios (WABA-23) ----------------------
+  // Feature Postgres-first como as demais tabelas relacionais; há fallback
+  // SQLite (legado/CI) via prepared statements sobre as tabelas criadas em
+  // migrateTenantSchema.
+
+  async listPricingRates(clientScope?: string | null): Promise<PricingRateRecord[]> {
+    await this.ensureReady();
+    const scope = (clientScope ?? '').trim() || null;
+
+    if (!this.metaClient) {
+      const rows = this.database!
+        .prepare(
+          `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
+           FROM pricing_rates
+           ${scope === null ? '' : 'WHERE client_id = ? OR client_id IS NULL'}
+           ORDER BY category ASC, client_id NULLS LAST`,
+        )
+        .all(...(scope === null ? [] : [scope])) as Array<Record<string, unknown>>;
+      return rows.map(mapPricingRateRow);
+    }
+
+    const params: unknown[] = [];
+    let where = '';
+    if (scope !== null) {
+      params.push(scope);
+      where = 'WHERE client_id = $1 OR client_id IS NULL';
+    }
+    const rows = await this.metaClient.query<Record<string, unknown>>(
+      `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
+       FROM pricing_rates
+       ${where}
+       ORDER BY category ASC, client_id NULLS LAST`,
+      params,
+    );
+    return rows.rows.map(mapPricingRateRow);
+  }
+
+  /**
+   * Cria/atualiza a tarifa única de (clientId, category). Sobrescreve o valor
+   * atual (upsert pelo índice único COALESCE(client_id,'') + category); não gera
+   * múltiplas linhas por categoria. `id` é PK mas o conflito resolve por escopo.
+   */
+  async upsertPricingRate(record: {
+    clientId?: string | null;
+    category: string;
+    unitPriceBrl: number;
+  }): Promise<PricingRateRecord> {
+    await this.ensureReady();
+    const now = nowIso();
+    const complete: PricingRateRecord = {
+      id: newId(),
+      clientId: (record.clientId ?? null) || null,
+      category: record.category.trim().toUpperCase(),
+      unitPriceBrl: record.unitPriceBrl,
+      effectiveFrom: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (!this.metaClient) {
+      this.database!
+        .prepare(
+          `INSERT INTO pricing_rates
+             (id, client_id, category, unit_price_brl, effective_from, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (COALESCE(client_id, ''), category) DO UPDATE SET
+             unit_price_brl = excluded.unit_price_brl,
+             updated_at = excluded.updated_at`,
+        )
+        .run(
+          complete.id,
+          complete.clientId ?? null,
+          complete.category,
+          complete.unitPriceBrl,
+          complete.effectiveFrom ?? null,
+          complete.createdAt,
+          complete.updatedAt,
+        );
+      return this.readPricingRate(complete.clientId ?? null, complete.category) ?? complete;
+    }
+
+    const result = await this.metaClient.query<Record<string, unknown>>(
+      `INSERT INTO pricing_rates
+         (id, client_id, category, unit_price_brl, effective_from, created_at, updated_at)
+       VALUES ($1, $2, $3, $4::numeric, $5::timestamptz, $6::timestamptz, $7::timestamptz)
+       ON CONFLICT (COALESCE(client_id, ''), category) DO UPDATE SET
+         unit_price_brl = EXCLUDED.unit_price_brl,
+         updated_at = EXCLUDED.updated_at
+       RETURNING id, client_id, category, unit_price_brl, effective_from, created_at, updated_at`,
+      [
+        complete.id,
+        complete.clientId,
+        complete.category,
+        complete.unitPriceBrl,
+        complete.effectiveFrom,
+        complete.createdAt,
+        complete.updatedAt,
+      ],
+    );
+    return result.rows[0] ? mapPricingRateRow(result.rows[0]) : complete;
+  }
+
+  private readPricingRate(clientId: string | null, category: string): PricingRateRecord | null {
+    const row = this.database!
+      .prepare(
+        `SELECT id, client_id, category, unit_price_brl, effective_from, created_at, updated_at
+         FROM pricing_rates
+         WHERE COALESCE(client_id, '') = COALESCE(?, '') AND category = ?
+         LIMIT 1`,
+      )
+      .get(clientId, category) as Record<string, unknown> | undefined;
+    return row ? mapPricingRateRow(row) : null;
+  }
+
+  /**
+   * Tarifa única para (tenant, categoria). Retorna a do tenant se existir; senão
+   * a global (client_id NULL); senão null. Sem vigência por data — o valor atual
+   * vale para todos os relatórios.
+   */
+  async resolvePricingRate(
+    clientId: string | null | undefined,
+    category: string,
+  ): Promise<PricingRateRecord | null> {
+    await this.ensureReady();
+    const scope = (clientId ?? '').trim() || null;
+    const cat = category.trim().toUpperCase();
+    const rates = await this.listPricingRates(scope);
+    const applicable = rates.filter((rate) => rate.category === cat);
+    if (applicable.length === 0) {
+      return null;
+    }
+    // Prefere a tarifa específica do tenant sobre a global (client_id NULL).
+    return (
+      applicable.find((rate) => scope !== null && rate.clientId === scope) ??
+      applicable.find((rate) => (rate.clientId ?? null) === null) ??
+      applicable[0]
+    );
+  }
+
+  async getReportSettings(clientId?: string | null): Promise<ReportSettingsRecord> {
+    await this.ensureReady();
+    const scope = (clientId ?? '').trim() || null;
+
+    const readRow = async (
+      target: string | null,
+    ): Promise<ReportSettingsRecord | null> => {
+      if (!this.metaClient) {
+        const row = this.database!
+          .prepare(
+            `SELECT client_id, nota_fiscal_pct, updated_at
+             FROM report_settings
+             WHERE COALESCE(client_id, '') = COALESCE(?, '')
+             LIMIT 1`,
+          )
+          .get(target) as Record<string, unknown> | undefined;
+        return row ? mapReportSettingsRow(row) : null;
+      }
+      const rows = await this.metaClient.query<Record<string, unknown>>(
+        `SELECT client_id, nota_fiscal_pct, updated_at
+         FROM report_settings
+         WHERE COALESCE(client_id, '') = COALESCE($1, '')
+         LIMIT 1`,
+        [target],
+      );
+      return rows.rows[0] ? mapReportSettingsRow(rows.rows[0]) : null;
+    };
+
+    const specific = scope !== null ? await readRow(scope) : null;
+    const resolved = specific ?? (await readRow(null));
+    return (
+      resolved ?? {
+        clientId: scope,
+        notaFiscalPct: DEFAULT_NOTA_FISCAL_PCT,
+        updatedAt: nowIso(),
+      }
+    );
+  }
+
+  async upsertReportSettings(record: {
+    clientId?: string | null;
+    notaFiscalPct: number;
+  }): Promise<ReportSettingsRecord> {
+    await this.ensureReady();
+    const now = nowIso();
+    const scope = (record.clientId ?? null) || null;
+    const complete: ReportSettingsRecord = {
+      clientId: scope,
+      notaFiscalPct: record.notaFiscalPct,
+      updatedAt: now,
+    };
+
+    if (!this.metaClient) {
+      this.database!
+        .prepare(
+          `INSERT INTO report_settings (id, client_id, nota_fiscal_pct, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (COALESCE(client_id, '')) DO UPDATE SET
+             nota_fiscal_pct = excluded.nota_fiscal_pct,
+             updated_at = excluded.updated_at`,
+        )
+        .run(newId(), scope, complete.notaFiscalPct, complete.updatedAt);
+      return complete;
+    }
+
+    await this.metaClient.query(
+      `INSERT INTO report_settings (id, client_id, nota_fiscal_pct, updated_at)
+       VALUES ($1, $2, $3::numeric, $4::timestamptz)
+       ON CONFLICT (COALESCE(client_id, '')) DO UPDATE SET
+         nota_fiscal_pct = EXCLUDED.nota_fiscal_pct,
+         updated_at = EXCLUDED.updated_at`,
+      [newId(), scope, complete.notaFiscalPct, complete.updatedAt],
+    );
+    return complete;
+  }
+
   async replaceCampaignMessagesForCampaignInDatabase(
     campaignId: string,
     messages: CampaignMessageRecord[],
@@ -1703,6 +2031,9 @@ export class DatabaseService implements OnModuleDestroy {
           target.flow_token,
           target.status,
           target.next_attempt_at,
+          target.pricing_category,
+          target.pricing_billable,
+          target.pricing_model,
           target.created_at,
           target.updated_at,
           target.record_json`,
@@ -2196,6 +2527,9 @@ export class DatabaseService implements OnModuleDestroy {
           flow_token,
           status,
           next_attempt_at,
+          pricing_category,
+          pricing_billable,
+          pricing_model,
           created_at,
           updated_at,
           record_json
@@ -2208,6 +2542,9 @@ export class DatabaseService implements OnModuleDestroy {
           NULLIF(item->>'flowToken', ''),
           item->>'status',
           NULLIF(item->>'nextAttemptAt', '')::timestamptz,
+          NULLIF(item->>'pricingCategory', ''),
+          (item->>'pricingBillable')::boolean,
+          NULLIF(item->>'pricingModel', ''),
           COALESCE(NULLIF(item->>'createdAt', '')::timestamptz, NOW()),
           COALESCE(NULLIF(item->>'updatedAt', '')::timestamptz, NOW()),
           item
@@ -2219,6 +2556,11 @@ export class DatabaseService implements OnModuleDestroy {
           flow_token = EXCLUDED.flow_token,
           status = EXCLUDED.status,
           next_attempt_at = EXCLUDED.next_attempt_at,
+          -- pricing chega assíncrono pelo webhook (setCampaignMessagePricing);
+          -- COALESCE evita que um re-upsert de status apague a tarifa já gravada.
+          pricing_category = COALESCE(EXCLUDED.pricing_category, campaign_messages.pricing_category),
+          pricing_billable = COALESCE(EXCLUDED.pricing_billable, campaign_messages.pricing_billable),
+          pricing_model = COALESCE(EXCLUDED.pricing_model, campaign_messages.pricing_model),
           created_at = EXCLUDED.created_at,
           updated_at = EXCLUDED.updated_at,
           record_json = EXCLUDED.record_json`,
@@ -2662,6 +3004,9 @@ type CampaignMessageRow = {
   flow_token: string | null;
   status: string;
   next_attempt_at: string | Date | null;
+  pricing_category: string | null;
+  pricing_billable: boolean | null;
+  pricing_model: string | null;
   created_at: string | Date;
   updated_at: string | Date;
   record_json: unknown;
@@ -2953,6 +3298,13 @@ const mapCampaignMessageRow = (row: CampaignMessageRow): CampaignMessageRecord =
     deliveredAt: toIsoString(asDateValue(record.deliveredAt)),
     readAt: toIsoString(asDateValue(record.readAt)),
     failedAt: toIsoString(asDateValue(record.failedAt)),
+    // Pricing: colunas dedicadas são a fonte de verdade; cai no record_json para
+    // linhas legadas ainda não backfilladas nas colunas.
+    pricingCategory: row.pricing_category ?? normalizeOptionalString(record.pricingCategory),
+    pricingBillable:
+      row.pricing_billable ??
+      (typeof record.pricingBillable === 'boolean' ? record.pricingBillable : null),
+    pricingModel: row.pricing_model ?? normalizeOptionalString(record.pricingModel),
     createdAt: toIsoString(row.created_at) ?? new Date().toISOString(),
     updatedAt: toIsoString(row.updated_at) ?? new Date().toISOString(),
   };
@@ -2972,6 +3324,24 @@ const mapTransactionalDispatchRow = (
   callbackAttempts: Number(row.callback_attempts ?? 0),
   // TIMESTAMPTZ chega como Date via pg; normalizamos para ISO string.
   createdAt: toIsoString(row.created_at as string | Date | null) ?? new Date().toISOString(),
+  updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
+});
+
+const mapPricingRateRow = (row: Record<string, unknown>): PricingRateRecord => ({
+  id: String(row.id),
+  clientId: (row.client_id as string | null) ?? null,
+  category: String(row.category),
+  // NUMERIC chega como string via pg; REAL como number via sqlite.
+  unitPriceBrl: Number(row.unit_price_brl),
+  // Auditoria: quando a tarifa foi definida; não usado no cálculo.
+  effectiveFrom: toIsoString(row.effective_from as string | Date | null),
+  createdAt: toIsoString(row.created_at as string | Date | null) ?? new Date().toISOString(),
+  updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
+});
+
+const mapReportSettingsRow = (row: Record<string, unknown>): ReportSettingsRecord => ({
+  clientId: (row.client_id as string | null) ?? null,
+  notaFiscalPct: Number(row.nota_fiscal_pct),
   updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
 });
 

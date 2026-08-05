@@ -313,9 +313,55 @@ export interface CampaignMessageRecord {
   deliveredAt?: string | null;
   readAt?: string | null;
   failedAt?: string | null;
+  /**
+   * Precificação da Meta (WABA) extraída do `pricing` do status do webhook.
+   * `pricingCategory`: utility | marketing | authentication | service (etc.).
+   * `pricingBillable`: se a conversa/mensagem foi cobrada (pode ser false, ex.
+   * free_customer_service). `pricingModel`: modelo de cobrança (ex.: PMP).
+   * Preenchido de forma assíncrona pelo webhook; nulo até chegar o status.
+   */
+  pricingCategory?: string | null;
+  pricingBillable?: boolean | null;
+  pricingModel?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/**
+ * Tarifa unitária (BRL) por categoria de mensagem WABA. Há UM valor atual por
+ * (clientId, category): alterar sobrescreve e vale para todos os relatórios
+ * (passado e futuro). `clientId` nulo = tarifa global/pool (fallback quando o
+ * tenant não tem tarifa própria). Sem vigência por data.
+ */
+export interface PricingRateRecord {
+  id: string;
+  /** Tenant dono da tarifa; nulo = tarifa global (fallback). */
+  clientId?: string | null;
+  /** MARKETING | UTILITY | AUTHENTICATION | SERVICE (normalizado em maiúsculas). */
+  category: string;
+  /** Preço unitário em BRL da conversa/mensagem cobrada. */
+  unitPriceBrl: number;
+  /** ISO: quando esta tarifa foi definida (apenas auditoria; não usado no cálculo). */
+  effectiveFrom?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Configuração por-tenant (ou global) de relatórios. Hoje guarda apenas o
+ * percentual de nota fiscal aplicado sobre o custo. `clientId` nulo = default
+ * global. Tabela minimalista, criada por não haver settings pré-existentes.
+ */
+export interface ReportSettingsRecord {
+  /** Tenant dono da config; nulo = default global. */
+  clientId?: string | null;
+  /** Percentual de nota fiscal (ex.: 10.98 = 10,98%). */
+  notaFiscalPct: number;
+  updatedAt: string;
+}
+
+/** Percentual de nota fiscal padrão quando não há config específica nem global. */
+export const DEFAULT_NOTA_FISCAL_PCT = 10.98;
 
 /**
  * Registro fino de um disparo transacional (API pública `public/v1/messages`).

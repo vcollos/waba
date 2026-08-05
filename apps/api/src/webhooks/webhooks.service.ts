@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { getEnv } from '../common/env';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, normalizeKeyword, nowIso } from '../database/helpers';
@@ -8,6 +8,8 @@ import { TransactionalCallbackService } from '../transactional/transactional-cal
 
 @Injectable()
 export class WebhooksService {
+  private readonly logger = new Logger(WebhooksService.name);
+
   constructor(
     private readonly database: DatabaseService,
     private readonly campaignsService: CampaignsService,
@@ -58,6 +60,27 @@ export class WebhooksService {
       receivedAt,
       dedupeKey,
     });
+
+    // Precificação da Meta (WABA-23): o objeto `pricing` chega junto ao status
+    // ('sent'/'delivered'...). Persistimos de forma idempotente (UPDATE por
+    // provider_message_id) sem depender de o campaign_message já existir localmente
+    // e sem tocar na guarda de status abaixo. Ausência de pricing é no-op.
+    if (persisted) {
+      const pricing = extractPricing(status);
+      if (pricing) {
+        // Robustez (Débora): pricing é dado secundário — uma falha ao gravá-lo
+        // não pode derrubar o processamento do status. Loga e segue.
+        try {
+          await this.database.setCampaignMessagePricing(providerMessageId, pricing);
+        } catch (error) {
+          this.logger.warn(
+            `Falha ao gravar pricing de ${providerMessageId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
 
     if (!persisted || !message) {
       return;
@@ -421,6 +444,27 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+
+/**
+ * Extrai o bloco `pricing` do status do webhook Meta
+ * (`{ type, billable, category, pricing_model }`). Retorna `null` quando não há
+ * pricing ou nenhum campo útil, para o chamador pular o UPDATE.
+ */
+const extractPricing = (
+  status: Record<string, unknown>,
+): { category?: string | null; billable?: boolean | null; model?: string | null } | null => {
+  const pricing = asRecord(status.pricing);
+  if (!pricing) {
+    return null;
+  }
+  const category = normalizeOptionalValue(pricing.category);
+  const model = normalizeOptionalValue(pricing.pricing_model);
+  const billable = typeof pricing.billable === 'boolean' ? pricing.billable : null;
+  if (category === null && model === null && billable === null) {
+    return null;
+  }
+  return { category, billable, model };
+};
 
 const upsertFlowResponse = (
   responses: FlowResponseRecord[],

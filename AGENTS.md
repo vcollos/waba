@@ -113,6 +113,26 @@ cd /opt/apps/waba
 docker compose up -d --build api web
 ```
 
+## Backfill de pricing (passo único pós-deploy do relatório de custos)
+
+As colunas `pricing_category`/`pricing_billable`/`pricing_model` de
+`campaign_messages` nascem na **migração de boot** do backend (ADR 0007). Logo, o
+histórico anterior à mudança só é preenchido rodando o backfill **uma vez, APÓS o
+deploy**:
+
+```bash
+ssh oracle
+cd /opt/apps/waba
+node scripts/backfill-pricing.mjs            # dry-run (default), só relata
+node scripts/backfill-pricing.mjs --execute  # aplica
+```
+
+- casa `message_events` → `campaign_messages` por `provider_message_id`, dedup
+  por wamid preferindo `billable=true`/evento mais recente
+- **idempotente**: só toca linhas com `pricing_category IS NULL` — rodar de novo
+  não sobrescreve
+- sem isso, campanhas antigas aparecem no relatório sem custo
+
 ## Deploy automatizado por GitHub
 
 Branch de produção:
@@ -169,6 +189,7 @@ Com token válido, validar:
 - `GET /api/api-tokens`
 - `GET /api/dashboard/summary`
 - `GET /api/results/summary`
+- `GET /api/reports/campaigns` (relatório de custos; ver ADR 0007)
 - `POST /api/integrations/{id}/test`
 - `POST /api/integrations/{id}/sync/flows`
 
@@ -182,7 +203,13 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
 - assistente CSV compartilhado (fonte única): `apps/web/components/csv-import-modal.tsx`
 - dispatch de campanha: `apps/api/src/campaigns/dispatch.service.ts`
 - agregação/resumo de campanha: `apps/api/src/campaigns/campaigns.service.ts`
-- webhook Meta: `apps/api/src/webhooks/webhooks.service.ts`
+- webhook Meta: `apps/api/src/webhooks/webhooks.service.ts` — além do status,
+  agora **extrai o `pricing`** de `statuses[].pricing` e grava
+  `pricing_category`/`pricing_billable`/`pricing_model` em `campaign_messages`
+  (try/catch, não bloqueia o status; base do relatório de custos, ADR 0007)
+- relatório de custos: `apps/api/src/reports/` (`/reports/campaigns`,
+  `export.csv`, `export.pdf` como HTML print-ready, `/reports/rates`,
+  `/reports/settings`; reusa `results.service.ts`/`campaign-metrics.ts`)
 - resultados: `apps/api/src/results/results.service.ts`
 - wrapper HTTP do frontend: `apps/web/lib/api.ts`
 
