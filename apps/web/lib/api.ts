@@ -110,3 +110,50 @@ export async function apiDownload(path: string, fileName: string): Promise<void>
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Abre um recurso autenticado (ex.: HTML print-ready) em nova aba via blob.
+ * O Bearer fica no localStorage, então uma URL crua em `window.open` não
+ * carrega o header — buscamos com auth e servimos o blob na aba já aberta.
+ */
+export async function apiOpenBlob(path: string): Promise<void> {
+  // Abre a aba de forma síncrona (evita bloqueio de pop-up após o await).
+  const tab = typeof window !== 'undefined' ? window.open('', '_blank') : null;
+
+  const headers = new Headers();
+  const token = readToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { headers });
+  } catch (error) {
+    tab?.close();
+    throw error;
+  }
+
+  if (response.status === 401) {
+    clearToken();
+    tab?.close();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    return;
+  }
+  if (!response.ok) {
+    tab?.close();
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(String((payload as { message?: string }).message ?? `Erro ${response.status}`));
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  if (tab) {
+    tab.location.href = url;
+  } else if (typeof window !== 'undefined') {
+    window.open(url, '_blank');
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

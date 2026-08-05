@@ -13,6 +13,7 @@ import { CoreModule } from './core.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { LibraryModule } from './library/library.module';
+import { ReportsModule } from './reports/reports.module';
 import { ResultsModule } from './results/results.module';
 import { UsersModule } from './users/users.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -30,6 +31,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     DashboardModule,
     IntegrationsModule,
     LibraryModule,
+    ReportsModule,
     ResultsModule,
     UsersModule,
     WebhooksModule,

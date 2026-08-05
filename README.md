@@ -30,6 +30,8 @@ Incidente resolvido em `2026-04-02`:
   - criação de campanhas
   - dispatch inline com rate limit simples
   - webhook de status e opt-out por palavra-chave
+  - relatório de custos de campanha em BRL (classificação do `pricing` da Meta +
+    tabela de tarifas da Collos + imposto de NF aditivo; ver ADR 0007)
   - persistência operacional em `PostgreSQL`
   - compactação de `app_state` para evitar crescimento explosivo em produção
 
@@ -40,6 +42,7 @@ Incidente resolvido em `2026-04-02`:
   - importação de contatos/listas
   - biblioteca de templates/flows
   - criação e monitoramento básico de campanhas
+  - página `/reports` (relatório de custos + tarifas/NF), restrita por papel
   - retry leve para `GET` em `502/503/504`
   - polling reduzido nas telas operacionais
 

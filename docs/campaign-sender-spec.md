@@ -269,6 +269,42 @@ Wizard recomendado:
 - exportar resultado
 ```
 
+### 3.7 Relatórios de custo (`/reports`)
+
+Relatório financeiro de campanhas por período e tenant. Ver ADR 0007 para a
+decisão completa.
+
+```text
+[Relatório]
+- filtros: período (from/to) e cliente
+- por campanha: funil + classificação de cobrança (utility/marketing/auth) + custo
+- subtotal em BRL, imposto de nota fiscal (aditivo) e total
+- exportar CSV; exportar PDF = HTML print-ready (Ctrl+P), não binário
+
+[Tarifas / NF]
+- tabela de tarifas por categoria em BRL (tarifa global ou por tenant, com vigência)
+- percentual de nota fiscal (default 10.98%)
+- edição restrita à Collos (super_admin/admin)
+```
+
+Origem do custo:
+
+- a **classificação** de cobrança vem do objeto `pricing` que a Meta envia no
+  webhook de status (`statuses[].pricing`: categoria, billable, pricing_model),
+  persistido em `campaign_messages` (`pricing_category`/`pricing_billable`/
+  `pricing_model`)
+- o **valor em BRL** vem de uma tabela de tarifas mantida pela Collos
+  (`pricing_rates`), não da Meta — a Meta não envia valor monetário
+- o **total** é gross-up: `total = subtotal + subtotal * nota_fiscal_pct / 100`
+
+Papéis:
+
+- **ver** o relatório: `super_admin`/`admin`/`client_admin`
+- **editar** tarifas e NF: `super_admin`/`admin` (Collos-only)
+
+Fora de escopo: câmbio USD→BRL/IOF (custo já entra em BRL), relatórios
+agendados/persistidos e reconciliação com a fatura real da Meta.
+
 ## 4. Integração com APIs oficiais
 
 ### 4.1 Conceitos mínimos
@@ -1110,6 +1146,18 @@ GET  /api/campaigns/:id/export
 GET /api/dashboard/summary
 GET /api/dashboard/campaigns/:id/metrics
 GET /metrics
+```
+
+### Relatórios de custo (ADR 0007)
+
+```http
+GET /api/reports/campaigns?from&to&clientId
+GET /api/reports/campaigns/export.csv
+GET /api/reports/campaigns/export.pdf   # HTML print-ready
+GET /api/reports/rates
+POST /api/reports/rates                 # Collos-only
+GET /api/reports/settings
+PUT /api/reports/settings               # Collos-only
 ```
 
 ## 10. Pseudocódigo essencial

@@ -43,6 +43,8 @@ export interface NavItem {
   dot: string;
   /** Visível apenas para papéis Collos. */
   collosOnly?: boolean;
+  /** Se definido, visível apenas para estes papéis (independente de collosOnly). */
+  roles?: Role[];
 }
 
 /** Navegação na ordem do DESIGN.md §1 (11 itens Collos / 7 itens cliente). */
@@ -57,12 +59,22 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/campaigns', label: 'Campanhas', dot: 'var(--uni-vinho-medio)' },
   { href: '/results', label: 'Resultados', dot: 'var(--uni-goiaba)' },
   { href: '/billing', label: 'Cobrança', dot: 'var(--uni-lima)' },
+  {
+    href: '/reports',
+    label: 'Relatórios',
+    dot: 'var(--uni-goiaba)',
+    // Relatório de custos: apenas admins Collos e admin do cliente (não viewer/operator).
+    roles: ['super_admin', 'admin', 'client_admin'],
+  },
   { href: '/audit', label: 'Auditoria', dot: 'var(--uni-pessego)', collosOnly: true },
   { href: '/tenant-organizer', label: 'Organização', dot: 'var(--uni-roxo)', collosOnly: true },
 ];
 
 export const navForRole = (role: Role): NavItem[] =>
-  NAV_ITEMS.filter((item) => !item.collosOnly || isCollosRole(role));
+  NAV_ITEMS.filter(
+    (item) =>
+      (!item.collosOnly || isCollosRole(role)) && (!item.roles || item.roles.includes(role)),
+  );
 
 const ACTIVE_CLIENT_KEY = 'waba_active_client';
 

@@ -220,7 +220,13 @@ export function Drawer({
   );
 }
 
-export function Forbidden() {
+export function Forbidden({
+  title = 'Acesso restrito',
+  desc = 'Esta área é exclusiva da operação Collos.',
+}: {
+  title?: string;
+  desc?: string;
+} = {}) {
   return (
     <div className="empty" style={{ minHeight: '60vh' }}>
       <div className="empty-ico">
@@ -229,8 +235,8 @@ export function Forbidden() {
           <path d="M8 11V7a4 4 0 0 1 8 0v4" />
         </svg>
       </div>
-      <div className="empty-title">Acesso restrito</div>
-      <div className="empty-desc">Esta área é exclusiva da operação Collos.</div>
+      <div className="empty-title">{title}</div>
+      <div className="empty-desc">{desc}</div>
     </div>
   );
 }
