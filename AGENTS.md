@@ -208,8 +208,10 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
   `pricing_category`/`pricing_billable`/`pricing_model` em `campaign_messages`
   (try/catch, não bloqueia o status; base do relatório de custos, ADR 0007)
 - relatório de custos: `apps/api/src/reports/` (`/reports/campaigns`,
-  `export.csv`, `export.pdf` como HTML print-ready, `/reports/rates`,
-  `/reports/settings`; reusa `results.service.ts`/`campaign-metrics.ts`)
+  `export.csv`, `export.pdf` = PDF binário real via `@react-pdf/renderer` (JS
+  puro, sem Chromium; fontes vendorizadas copiadas ao `dist` no build; WABA-25),
+  `/reports/rates`, `/reports/settings`; reusa
+  `results.service.ts`/`campaign-metrics.ts`)
 - resultados: `apps/api/src/results/results.service.ts`
 - wrapper HTTP do frontend: `apps/web/lib/api.ts`
 

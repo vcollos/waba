@@ -14,7 +14,7 @@ import {
   usePagedRows,
   useToasts,
 } from '../../components/ui';
-import { apiDownload, apiOpenBlob, apiRequest } from '../../lib/api';
+import { apiDownload, apiRequest } from '../../lib/api';
 import { CAMPAIGN_STATUS, badgeFor } from '../../lib/badges';
 import { fmtBRL, fmtDateTime, fmtInt } from '../../lib/format';
 import { Role, isCollosRole } from '../../lib/session';
@@ -293,9 +293,10 @@ function ReportTab({
     ).catch(() => undefined);
   };
   const exportPdf = () => {
-    void apiOpenBlob(`/reports/campaigns/export.pdf${query ? `?${query}` : ''}`).catch(
-      () => undefined,
-    );
+    void apiDownload(
+      `/reports/campaigns/export.pdf${query ? `?${query}` : ''}`,
+      'relatorio-campanhas.pdf',
+    ).catch(() => undefined);
   };
 
   return (
@@ -344,7 +345,7 @@ function ReportTab({
             onClick={exportPdf}
             disabled={loading || campaigns.length === 0}
           >
-            Imprimir / Salvar PDF
+            Exportar PDF
           </button>
         </div>
       </div>

@@ -79,7 +79,20 @@ export async function apiRequest<T>(
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
-/** Baixa um arquivo de um endpoint autenticado (ex.: CSV) via fetch + blob. */
+/**
+ * Extrai o `filename=` de um header Content-Disposition (aspas opcionais).
+ * Ignora a variante `filename*=` (RFC 5987) por simplicidade — o backend manda
+ * o nome bonito no `filename=` simples. Retorna null se não houver.
+ */
+const parseContentDispositionFilename = (header: string | null): string | null => {
+  if (!header) {
+    return null;
+  }
+  const match = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  return match ? match[1].trim() || null : null;
+};
+
+/** Baixa um arquivo de um endpoint autenticado (ex.: CSV/PDF) via fetch + blob. */
 export async function apiDownload(path: string, fileName: string): Promise<void> {
   const headers = new Headers();
   const token = readToken();
@@ -100,60 +113,17 @@ export async function apiDownload(path: string, fileName: string): Promise<void>
     throw new Error(String((payload as { message?: string }).message ?? `Erro ${response.status}`));
   }
 
+  // Prefere o nome que o servidor manda (ex.: relatorio-waba-<org>-<periodo>.pdf);
+  // cai no nome passado só se o header não vier.
+  const serverName = parseContentDispositionFilename(response.headers.get('Content-Disposition'));
+
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = fileName;
+  link.download = serverName ?? fileName;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-}
-
-/**
- * Abre um recurso autenticado (ex.: HTML print-ready) em nova aba via blob.
- * O Bearer fica no localStorage, então uma URL crua em `window.open` não
- * carrega o header — buscamos com auth e servimos o blob na aba já aberta.
- */
-export async function apiOpenBlob(path: string): Promise<void> {
-  // Abre a aba de forma síncrona (evita bloqueio de pop-up após o await).
-  const tab = typeof window !== 'undefined' ? window.open('', '_blank') : null;
-
-  const headers = new Headers();
-  const token = readToken();
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, { headers });
-  } catch (error) {
-    tab?.close();
-    throw error;
-  }
-
-  if (response.status === 401) {
-    clearToken();
-    tab?.close();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
-    }
-    return;
-  }
-  if (!response.ok) {
-    tab?.close();
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(String((payload as { message?: string }).message ?? `Erro ${response.status}`));
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  if (tab) {
-    tab.location.href = url;
-  } else if (typeof window !== 'undefined') {
-    window.open(url, '_blank');
-  }
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
