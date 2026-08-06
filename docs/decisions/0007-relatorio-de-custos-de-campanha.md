@@ -62,12 +62,30 @@ total = subtotal + subtotal * nota_fiscal_pct / 100
 O imposto é **somado** ao subtotal (gross-up), não embutido. Deixa explícito no
 relatório quanto é serviço e quanto é imposto.
 
-### 4. PDF é HTML print-ready, não binário
+### 4. PDF binário real gerado server-side, sem Chromium
 
-`GET /reports/campaigns/export.pdf` devolve **HTML pronto para impressão**
-(Ctrl+P → salvar como PDF no navegador), **não** um binário gerado no servidor.
-Decisão deliberada de infraestrutura: **não subir Chromium/puppeteer na VPS**,
-que está com disco em **86%**. O CSV (`export.csv`) cobre o consumo por planilha.
+> **Evolução (WABA-25):** a decisão original desta ADR era devolver **HTML
+> print-ready** (Ctrl+P no navegador) para evitar subir Chromium. Foi substituída
+> por **PDF binário real**, mantendo a mesma restrição (sem Chromium). O texto
+> abaixo reflete o estado final.
+
+`GET /reports/campaigns/export.pdf` devolve um **PDF binário** gerado no servidor
+com **`@react-pdf/renderer`** (JS puro, **sem Chromium/puppeteer**) — respeita a
+restrição de disco da VPS (86%). Download em **1 clique**, igual ao CSV.
+
+- layout segue design handoff do usuário (estética de fatura Collos): A4,
+  cabeçalho/rodapé corridos, caixa de Total, 8 tiles, barras de entrega/leitura,
+  tabelas;
+- fontes **Manrope + IBM Plex Mono embutidas** (vendorizadas no repo, copiadas
+  para o `dist` no build);
+- logo Collos como **wordmark de texto** por ora (sem rasterizador SVG→PNG na
+  VPS; PNG plugável depois);
+- nome do arquivo: `relatorio-waba-<org>-<inicio>-a-<fim>.pdf`.
+
+Os **8 indicadores do topo NÃO são recalculados** para bater com a soma da
+tabela: topo = a conta toda no período; tabela = só as campanhas cobradas. Uma
+frase de reconciliação no PDF explica a diferença. O CSV (`export.csv`) cobre o
+consumo por planilha.
 
 ### 5. Modelo de papéis financeiro (dois níveis)
 
@@ -113,8 +131,11 @@ para funil e contagens — não reimplementa agregação.
   **BRL** pela tabela da Collos; não há conversão de moeda no fluxo. Trazer
   câmbio/IOF adicionaria dependência de cotação sem necessidade.
 - **PDF binário via Chromium/puppeteer no servidor**: rejeitada — VPS com disco
-  em 86%; subir headless browser é peso desproporcional. HTML print-ready entrega
-  o mesmo resultado sem inflar a imagem/instância.
+  em 86%; subir headless browser é peso desproporcional. A 1ª versão entregou
+  HTML print-ready para contornar isso; a versão final (WABA-25) gera PDF binário
+  com **`@react-pdf/renderer`** (JS puro), que produz o binário **sem Chromium** —
+  mantém a restrição de disco e ainda dá download em 1 clique. Puppeteer/Chromium
+  segue descartado pelo mesmo motivo de disco.
 - **Tenant edita a própria tarifa**: rejeitada — preço é decisão comercial da
   Collos; tenant editar a própria fatura é conflito de interesse. Edição é
   Collos-only.

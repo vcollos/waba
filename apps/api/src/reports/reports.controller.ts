@@ -52,16 +52,23 @@ export class ReportsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('clientId') clientId?: string,
+    @Query('mostrarGlossario') mostrarGlossario?: string,
+    @Query('mostrarIds') mostrarIds?: string,
   ) {
-    const html = await this.reportsService.campaignsReportHtml(
+    // PDF real (react-pdf, WABA-25). Params de conteúdo default = ligados; só
+    // "false"/"0" desligam. Escopo de tenant vem do token via resolveClientScope.
+    const { buffer, filename } = await this.reportsService.campaignsReportPdf(
       { from, to },
       resolveClientScope(request.user, clientId),
+      {
+        mostrarGlossario: parseFlag(mostrarGlossario),
+        mostrarIds: parseFlag(mostrarIds),
+      },
     );
-    // Print-ready HTML (browser -> "Salvar como PDF"). Sem headless chrome/pdfkit
-    // para não pesar no disco da VPS. Inline para o navegador renderizar.
-    response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.setHeader('Content-Disposition', 'inline; filename="relatorio-campanhas.html"');
-    response.send(html);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    response.setHeader('Content-Length', String(buffer.length));
+    response.end(buffer);
   }
 
   @Get('rates')
@@ -99,3 +106,9 @@ export class ReportsController {
     return this.reportsService.updateSettings(request.user, body);
   }
 }
+
+/** Flag de querystring com default ligado: só "false"/"0"/"no" desligam. */
+const parseFlag = (value?: string): boolean => {
+  const raw = (value ?? '').trim().toLowerCase();
+  return !(raw === 'false' || raw === '0' || raw === 'no');
+};

@@ -279,7 +279,9 @@ decisão completa.
 - filtros: período (from/to) e cliente
 - por campanha: funil + classificação de cobrança (utility/marketing/auth) + custo
 - subtotal em BRL, imposto de nota fiscal (aditivo) e total
-- exportar CSV; exportar PDF = HTML print-ready (Ctrl+P), não binário
+- exportar CSV; exportar PDF = arquivo binário real (download em 1 clique),
+  gerado server-side com `@react-pdf/renderer` (sem Chromium); layout de fatura
+  Collos A4 (ver ADR 0007, WABA-25)
 
 [Tarifas / NF]
 - um valor atual por categoria em BRL, global (vale para todos os clientes); sem

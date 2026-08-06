@@ -5,6 +5,8 @@ import { DEFAULT_NOTA_FISCAL_PCT, isCollosRole } from '../database/types';
 import { writeClientId } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { nowIso } from '../database/helpers';
+import { renderCampaignsReportPdf } from './pdf/render';
+import { safeSlug } from './pdf/format';
 import type {
   CampaignMessageRecord,
   CampaignRecord,
@@ -343,6 +345,50 @@ export class ReportsService {
     return renderReportHtml(report);
   }
 
+  /**
+   * Relatório em PDF (react-pdf, WABA-25). Reutiliza o consolidado do JSON/CSV e
+   * resolve o NOME/CNPJ do destinatário a partir do clientId do escopo. Devolve
+   * o Buffer + o nome de arquivo já com slug seguro.
+   */
+  async campaignsReportPdf(
+    period: ReportPeriod,
+    scope: string | null,
+    options: { mostrarGlossario: boolean; mostrarIds: boolean },
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const report = await this.campaignsReport(period, scope);
+
+    // Destinatário: nome vem do cadastro do cliente do escopo. clientId null =
+    // operação compartilhada (Collos vê todos os tenants) -> rótulo genérico.
+    let recipientName = 'Operação compartilhada Collos';
+    let recipientCnpj: string | null = null;
+    if (report.clientId) {
+      const client = (await this.database.listClients()).find((c) => c.id === report.clientId);
+      recipientName = client?.name?.trim() || report.clientId;
+      recipientCnpj = client?.cnpj?.trim() || null;
+    }
+
+    const buffer = await renderCampaignsReportPdf({
+      report,
+      recipientName,
+      recipientCnpj,
+      mostrarGlossario: options.mostrarGlossario,
+      mostrarIds: options.mostrarIds,
+    });
+
+    // input -> header: só aceita YYYY-MM-DD; qualquer outra coisa cai no fallback
+    // (evita quebra/injeção de aspas no Content-Disposition).
+    const dateOrFallback = (value: string | null, fallback: string): string => {
+      const raw = (value ?? '').slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : fallback;
+    };
+    const inicio = dateOrFallback(report.period.from, 'inicio');
+    const fim = dateOrFallback(report.period.to, 'atual');
+    const orgSlug = safeSlug(report.clientId ? recipientName : 'todos', 'todos');
+    const filename = `relatorio-waba-${orgSlug}-${inicio}-a-${fim}.pdf`;
+
+    return { buffer, filename };
+  }
+
   // --- Administração de tarifas ---------------------------------------------
 
   async listRates(scope: string | null): Promise<PricingRateRecord[]> {
@@ -418,6 +464,9 @@ export class ReportsService {
     return this.database.upsertReportSettings({ clientId, notaFiscalPct });
   }
 }
+
+/** Payload consolidado do relatório de campanhas (reutilizado pelo PDF WABA-25). */
+export type CampaignsReport = Awaited<ReturnType<ReportsService['campaignsReport']>>;
 
 // --- helpers ----------------------------------------------------------------
 
