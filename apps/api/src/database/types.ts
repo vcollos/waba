@@ -116,6 +116,8 @@ export interface ImportRecord {
   validRows: number;
   invalidRows: number;
   duplicateRows: number;
+  /** Linhas não aplicadas (telefone sem dígitos ou colisão de telefone). */
+  skippedRows: number;
   fieldMapping?: Record<string, string | null>;
   defaults?: Record<string, string | null>;
   status: 'completed' | 'failed';

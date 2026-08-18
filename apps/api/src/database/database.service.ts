@@ -687,6 +687,7 @@ export class DatabaseService implements OnModuleDestroy {
         valid_rows INTEGER NOT NULL,
         invalid_rows INTEGER NOT NULL,
         duplicate_rows INTEGER NOT NULL,
+        skipped_rows INTEGER NOT NULL DEFAULT 0,
         field_mapping_json TEXT,
         defaults_json TEXT,
         status TEXT NOT NULL,
@@ -817,6 +818,7 @@ export class DatabaseService implements OnModuleDestroy {
           valid_rows INTEGER NOT NULL,
           invalid_rows INTEGER NOT NULL,
           duplicate_rows INTEGER NOT NULL,
+          skipped_rows INTEGER NOT NULL DEFAULT 0,
           field_mapping_json JSONB,
           defaults_json JSONB,
           status TEXT NOT NULL,
@@ -984,6 +986,7 @@ export class DatabaseService implements OnModuleDestroy {
     for (const table of sqliteTargets) {
       this.sqliteAddColumnIfMissing(table, 'client_id', 'TEXT');
     }
+    this.sqliteAddColumnIfMissing('imports', 'skipped_rows', 'INTEGER NOT NULL DEFAULT 0');
     this.database!.exec(`
       CREATE INDEX IF NOT EXISTS idx_contacts_client_id ON contacts(client_id);
       CREATE INDEX IF NOT EXISTS idx_lists_client_id ON lists(client_id);
@@ -1115,6 +1118,7 @@ export class DatabaseService implements OnModuleDestroy {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_client_phone_unique
           ON contacts (COALESCE(client_id, ''), phone_hash);
         ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_phone_hash_key;
+        ALTER TABLE imports ADD COLUMN IF NOT EXISTS skipped_rows INTEGER NOT NULL DEFAULT 0;
       `);
     }
   }
@@ -1362,7 +1366,7 @@ export class DatabaseService implements OnModuleDestroy {
       const rows = await this.metaClient.query<Record<string, unknown>>(
         `SELECT
           id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
-          field_mapping_json, defaults_json, status, created_at
+          skipped_rows, field_mapping_json, defaults_json, status, created_at
          FROM imports
          ORDER BY created_at DESC`,
       );
@@ -1376,6 +1380,7 @@ export class DatabaseService implements OnModuleDestroy {
         validRows: Number(row.valid_rows),
         invalidRows: Number(row.invalid_rows),
         duplicateRows: Number(row.duplicate_rows),
+        skippedRows: Number(row.skipped_rows ?? 0),
         fieldMapping: parseJsonStringMap(row.field_mapping_json),
         defaults: parseJsonStringMap(row.defaults_json),
         status: String(row.status) as ImportRecord['status'],
@@ -1387,7 +1392,7 @@ export class DatabaseService implements OnModuleDestroy {
       .prepare(
         `SELECT
           id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
-          field_mapping_json, defaults_json, status, created_at
+          skipped_rows, field_mapping_json, defaults_json, status, created_at
          FROM imports
          ORDER BY created_at DESC`,
       )
@@ -1402,6 +1407,7 @@ export class DatabaseService implements OnModuleDestroy {
       validRows: Number(row.valid_rows),
       invalidRows: Number(row.invalid_rows),
       duplicateRows: Number(row.duplicate_rows),
+      skippedRows: Number(row.skipped_rows ?? 0),
       fieldMapping: parseJsonStringMap(row.field_mapping_json),
       defaults: parseJsonStringMap(row.defaults_json),
       status: String(row.status) as ImportRecord['status'],
@@ -2440,8 +2446,8 @@ export class DatabaseService implements OnModuleDestroy {
       const insertImport = this.database!.prepare(
         `INSERT INTO imports (
           id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
-          field_mapping_json, defaults_json, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          skipped_rows, field_mapping_json, defaults_json, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const importRecord of normalizedState.imports) {
         insertImport.run(
@@ -2453,6 +2459,7 @@ export class DatabaseService implements OnModuleDestroy {
           importRecord.validRows,
           importRecord.invalidRows,
           importRecord.duplicateRows,
+          importRecord.skippedRows ?? 0,
           JSON.stringify(importRecord.fieldMapping ?? {}),
           JSON.stringify(importRecord.defaults ?? {}),
           importRecord.status,

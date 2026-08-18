@@ -597,7 +597,7 @@ function ContactsContent() {
             push(
               'success',
               r
-                ? `Importação concluída: ${fmtInt(Math.max(0, r.totalRows - r.duplicateRows))} novo(s), ${fmtInt(r.duplicateRows)} já existente(s)${r.invalidRows ? `, ${fmtInt(r.invalidRows)} inválido(s)` : ''}.`
+                ? `Importação concluída: ${fmtInt(Math.max(0, r.totalRows - r.duplicateRows - (r.skippedRows ?? 0)))} novo(s), ${fmtInt(r.duplicateRows)} já existente(s)${r.invalidRows ? `, ${fmtInt(r.invalidRows)} inválido(s)` : ''}${r.skippedRows ? `, ${fmtInt(r.skippedRows)} ignorado(s) sem telefone` : ''}.`
                 : `Importação concluída: ${job.processedRows} linha(s).`,
             );
             load(0);
