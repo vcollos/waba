@@ -26,6 +26,7 @@ export interface ImportResult {
   validRows: number;
   invalidRows: number;
   duplicateRows: number;
+  skippedRows?: number;
 }
 
 export interface UpdateSummary {
@@ -522,7 +523,14 @@ export function CsvImportModal({
                 <div className="kpi">
                   <span className="kpi-label">Novos contatos</span>
                   <span className="kpi-val">
-                    {fmtInt(Math.max(0, job.importRecord.totalRows - job.importRecord.duplicateRows))}
+                    {fmtInt(
+                      Math.max(
+                        0,
+                        job.importRecord.totalRows -
+                          job.importRecord.duplicateRows -
+                          (job.importRecord.skippedRows ?? 0),
+                      ),
+                    )}
                   </span>
                 </div>
                 <div className="kpi">
@@ -542,6 +550,13 @@ export function CsvImportModal({
                 <div className="toast warning" style={{ marginTop: 12 }}>
                   {fmtInt(job.importRecord.invalidRows)} linha(s) com telefone inválido foram importadas como
                   inválidas e não recebem envios até correção.
+                </div>
+              ) : null}
+              {(job.importRecord.skippedRows ?? 0) > 0 ? (
+                <div className="toast warning" style={{ marginTop: 12 }}>
+                  {fmtInt(job.importRecord.skippedRows ?? 0)} linha(s) foram ignoradas por não terem
+                  telefone utilizável (célula vazia ou sem nenhum dígito). Corrija o telefone dessas
+                  linhas no arquivo e importe de novo.
                 </div>
               ) : null}
             </>

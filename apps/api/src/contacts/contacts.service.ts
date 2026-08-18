@@ -955,6 +955,7 @@ export class ContactsService {
     let validRows = 0;
     let invalidRows = 0;
     let duplicateRows = 0;
+    let skippedRows = 0;
     try {
       await this.database.postgresQuery(
         `INSERT INTO lists (
@@ -1004,16 +1005,11 @@ export class ContactsService {
         const contactsToUpdate = batchContactsToUpdate.splice(0, batchContactsToUpdate.length);
         const membershipsToInsert = batchMemberships.splice(0, batchMemberships.length);
 
-        await this.database.postgresTransaction(async (client) => {
-          for (const contact of contactsToInsert) {
-            await insertContactPg(client, contact);
-          }
-
-          for (const contact of contactsToUpdate) {
-            await updateContactPg(client, contact);
-          }
-
-          for (const membership of membershipsToInsert) {
+        const writeMemberships = async (
+          client: PoolClient,
+          memberships: ListMemberRecord[],
+        ): Promise<void> => {
+          for (const membership of memberships) {
             await client.query(
               `INSERT INTO list_members (id, list_id, contact_id, created_at)
                VALUES ($1, $2, $3, $4)
@@ -1021,14 +1017,86 @@ export class ContactsService {
               [membership.id, membership.listId, membership.contactId, membership.createdAt],
             );
           }
-        });
+        };
+
+        try {
+          await this.database.postgresTransaction(async (client) => {
+            for (const contact of contactsToInsert) {
+              await insertContactPg(client, contact);
+            }
+
+            for (const contact of contactsToUpdate) {
+              await updateContactPg(client, contact);
+            }
+
+            await writeMemberships(client, membershipsToInsert);
+          });
+        } catch (error) {
+          if (!isUniqueViolation(error)) {
+            throw error;
+          }
+
+          // Rede de proteção: uma única colisão de telefone abortava a transação
+          // e, com ela, a importação inteira (lotes de 1000 linhas). Aqui o lote é
+          // refeito linha a linha: as linhas em conflito viram `skippedRows` e o
+          // resto entra normalmente. Caminho degradado — só roda após falha.
+          const failedContactIds = new Set<string>();
+          for (const contact of contactsToInsert) {
+            try {
+              await this.database.postgresTransaction((client) => insertContactPg(client, contact));
+            } catch (rowError) {
+              if (!isUniqueViolation(rowError)) {
+                throw rowError;
+              }
+              failedContactIds.add(contact.id);
+              skippedRows += 1;
+              if (contact.isValid) {
+                validRows -= 1;
+              } else {
+                invalidRows -= 1;
+              }
+            }
+          }
+
+          for (const contact of contactsToUpdate) {
+            try {
+              await this.database.postgresTransaction((client) => updateContactPg(client, contact));
+            } catch (rowError) {
+              if (!isUniqueViolation(rowError)) {
+                throw rowError;
+              }
+              // O contato continua no banco (e na lista) com os dados antigos;
+              // só a sobrescrita não pôde ser aplicada. Segue como duplicado.
+            }
+          }
+
+          // Só associa à lista o que de fato existe no banco (FK contact_id).
+          const survivors = membershipsToInsert.filter(
+            (membership) => !failedContactIds.has(membership.contactId),
+          );
+          await this.database.postgresTransaction((client) => writeMemberships(client, survivors));
+        }
       };
 
       for (let index = 0; index < params.records.length; index += 1) {
         const row = params.records[index];
         const rawPhone = pickMappedValue(row, params.mapping.phone);
         const normalized = normalizePhone(rawPhone);
-        const phoneHash = hash((normalized.phoneE164 || rawPhone).replace(/^\+/, ''));
+        // A chave de dedup TEM que ser o mesmo hash que vai para o banco
+        // (`phone_e164` sem o '+', igual ao `createNewContact`). Com o antigo
+        // fallback `|| rawPhone`, linhas cujo telefone não tem nenhum dígito
+        // ("-", "não informado") eram procuradas por hash(texto) mas gravadas com
+        // hash(''), furavam o dedup e estouravam a UNIQUE (client_id, phone_hash),
+        // derrubando a importação inteira.
+        const phoneHash = hash(normalized.phoneE164.replace(/^\+/, ''));
+        // Sem nenhum dígito no telefone não existe contato possível: todas essas
+        // linhas colapsam em hash('') e só uma poderia existir por tenant. Pula e
+        // reporta em `skippedRows` em vez de fundir pessoas distintas num contato
+        // fantasma (ou abortar o lote).
+        if (!normalized.phoneE164) {
+          skippedRows += 1;
+          continue;
+        }
         const existingContact = contactsByPhoneHash.get(phoneHash);
         const rowTimestamp = nowIso();
         const nextStatus = normalizeRecordStatus(
@@ -1115,6 +1183,7 @@ export class ContactsService {
         validRows,
         invalidRows,
         duplicateRows,
+        skippedRows,
         fieldMapping: Object.fromEntries(
           Object.entries(params.mapping).map(([key, value]) => [key, value ?? null]),
         ),
@@ -1130,8 +1199,8 @@ export class ContactsService {
       await this.database.postgresQuery(
         `INSERT INTO imports (
           id, list_id, file_name, file_sha256, total_rows, valid_rows, invalid_rows, duplicate_rows,
-          field_mapping_json, defaults_json, status, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          skipped_rows, field_mapping_json, defaults_json, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           importRecord.id,
           importRecord.listId,
@@ -1141,6 +1210,7 @@ export class ContactsService {
           importRecord.validRows,
           importRecord.invalidRows,
           importRecord.duplicateRows,
+          importRecord.skippedRows,
           JSON.stringify(importRecord.fieldMapping ?? {}),
           JSON.stringify(importRecord.defaults ?? {}),
           importRecord.status,
@@ -1168,6 +1238,7 @@ export class ContactsService {
             validRows,
             invalidRows,
             duplicateRows,
+            skippedRows,
             mapping: params.mapping,
             defaults: params.defaults,
           },
@@ -2234,6 +2305,13 @@ const getContactByIdFromDatabase = (
       const row = result.rows[0] as Record<string, unknown> | undefined;
       return row ? mapContactRow(row) : null;
     });
+
+/**
+ * Violação de UNIQUE do Postgres (SQLSTATE 23505) — usada para degradar a
+ * importação linha a linha em vez de perder o lote inteiro.
+ */
+const isUniqueViolation = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 
 // Unicidade de telefone é POR TENANT: o mesmo número pode existir em tenants
 // diferentes (COALESCE trata client_id nulo como o pool compartilhado).
