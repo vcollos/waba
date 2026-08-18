@@ -44,3 +44,21 @@ Deduplicação escopada por tenant em todos os caminhos de escrita:
   de isolamento legada em `processCsvImportJob`).
 - Qualquer novo caminho que insira contato **deve** escopar a unicidade por
   `client_id` (não voltar a assumir unicidade global de telefone).
+
+## Adendo (2026-08-18, WABA-26): linhas sem telefone no import
+
+Consequência prática do índice composto: `phone_hash` de telefone vazio é sempre
+`sha256('')`, então **só um contato sem telefone cabe por tenant**. O import em
+modo inserção procurava o contato existente por `hash(phoneE164 || telefone_cru)`
+mas gravava `hash(phoneE164)` — quando a célula não tem nenhum dígito (`-`,
+`N/A`, vazia, só zeros) as duas chaves divergiam, a linha furava o dedup e a
+UNIQUE derrubava a transação do lote inteiro (importação toda falhava).
+
+Decidido:
+
+- a chave de dedup é sempre o **mesmo hash gravado** no banco;
+- linha sem nenhum dígito no telefone é **ignorada** pelo import e reportada em
+  `imports.skipped_rows` — não dá para criar um contato por linha (a UNIQUE não
+  permite) e fundir pessoas distintas num contato fantasma seria pior;
+- colisão de UNIQUE num lote degrada para escrita linha a linha: só as linhas em
+  conflito caem, o resto do arquivo entra.
