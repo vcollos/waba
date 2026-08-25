@@ -183,6 +183,8 @@ export interface FlowCacheRecord {
   endpointUri?: string | null;
   assets?: Record<string, unknown>[] | null;
   completionPayloadDefinitions?: FlowCompletionPayloadDefinition[] | null;
+  inputFieldDefinitions?: FlowInputFieldDefinition[] | null;
+  screenTransitions?: FlowScreenTransition[] | null;
   raw: Record<string, unknown>;
   lastSyncedAt: string;
 }
@@ -199,6 +201,35 @@ export interface FlowCompletionPayloadDefinition {
   screenId: string;
   formName?: string | null;
   actionName: string;
+  payloadFields: FlowCompletionPayloadField[];
+}
+
+export interface FlowFieldOptionDefinition {
+  id: string;
+  title?: string | null;
+}
+
+/**
+ * Componente de entrada declarado no FLOW_JSON (RadioButtonsGroup, Dropdown, ...).
+ * `options` carrega o `data-source` estático quando existe — é a escala declarada
+ * da pergunta (ex.: ids "1".."5"), usada para não inferir escala das respostas.
+ */
+export interface FlowInputFieldDefinition {
+  screenId: string;
+  formName?: string | null;
+  name: string;
+  type: string;
+  options?: FlowFieldOptionDefinition[] | null;
+}
+
+/**
+ * Aresta de navegação entre telas (ação `navigate` com destino estático).
+ * Em flow multi-tela o `complete` recebe `${data.x}`, não `${form.x}`: é por
+ * estas arestas que se rastreia `${data.x}` até o componente que originou o valor.
+ */
+export interface FlowScreenTransition {
+  screenId: string;
+  nextScreenId: string;
   payloadFields: FlowCompletionPayloadField[];
 }
 

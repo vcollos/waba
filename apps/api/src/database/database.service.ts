@@ -534,6 +534,8 @@ export class DatabaseService implements OnModuleDestroy {
         endpoint_uri,
         assets_json,
         completion_payload_definitions_json,
+        input_field_definitions_json,
+        screen_transitions_json,
         raw_json,
         last_synced_at
        FROM flows
@@ -574,10 +576,12 @@ export class DatabaseService implements OnModuleDestroy {
             endpoint_uri,
             assets_json,
             completion_payload_definitions_json,
+            input_field_definitions_json,
+            screen_transitions_json,
             raw_json,
             last_synced_at
           ) VALUES (
-            $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::timestamptz
+            $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::timestamptz
           )`,
           [
             flow.id,
@@ -594,6 +598,8 @@ export class DatabaseService implements OnModuleDestroy {
             flow.endpointUri ?? null,
             JSON.stringify(flow.assets ?? []),
             JSON.stringify(flow.completionPayloadDefinitions ?? []),
+            JSON.stringify(flow.inputFieldDefinitions ?? []),
+            JSON.stringify(flow.screenTransitions ?? []),
             JSON.stringify(flow.raw ?? {}),
             flow.lastSyncedAt,
           ],
@@ -763,6 +769,8 @@ export class DatabaseService implements OnModuleDestroy {
           endpoint_uri TEXT,
           assets_json JSONB,
           completion_payload_definitions_json JSONB,
+          input_field_definitions_json JSONB,
+          screen_transitions_json JSONB,
           raw_json JSONB NOT NULL,
           last_synced_at TIMESTAMPTZ NOT NULL
         );
@@ -1119,6 +1127,14 @@ export class DatabaseService implements OnModuleDestroy {
           ON contacts (COALESCE(client_id, ''), phone_hash);
         ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_phone_hash_key;
         ALTER TABLE imports ADD COLUMN IF NOT EXISTS skipped_rows INTEGER NOT NULL DEFAULT 0;
+      `);
+
+      // WABA-27: escala declarada das perguntas do flow (data-source do FLOW_JSON).
+      // Coluna nova e opcional: flows já sincronizados ficam com NULL e caem no
+      // fallback de escala observada até o próximo sync. Idempotente.
+      await this.metaClient.query(`
+        ALTER TABLE flows ADD COLUMN IF NOT EXISTS input_field_definitions_json JSONB;
+        ALTER TABLE flows ADD COLUMN IF NOT EXISTS screen_transitions_json JSONB;
       `);
     }
   }
@@ -2847,10 +2863,12 @@ export class DatabaseService implements OnModuleDestroy {
               endpoint_uri,
               assets_json,
               completion_payload_definitions_json,
+              input_field_definitions_json,
+              screen_transitions_json,
               raw_json,
               last_synced_at
             ) VALUES (
-              $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::timestamptz
+              $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::timestamptz
             )`,
             [
               flow.id,
@@ -2867,6 +2885,8 @@ export class DatabaseService implements OnModuleDestroy {
               flow.endpointUri ?? null,
               JSON.stringify(flow.assets ?? []),
               JSON.stringify(flow.completionPayloadDefinitions ?? []),
+              JSON.stringify(flow.inputFieldDefinitions ?? []),
+              JSON.stringify(flow.screenTransitions ?? []),
               JSON.stringify(flow.raw ?? {}),
               flow.lastSyncedAt,
             ],
@@ -2932,6 +2952,8 @@ export class DatabaseService implements OnModuleDestroy {
           endpoint_uri,
           assets_json,
           completion_payload_definitions_json,
+          input_field_definitions_json,
+          screen_transitions_json,
           raw_json,
           last_synced_at
          FROM flows
@@ -2999,6 +3021,8 @@ type FlowRow = {
   endpoint_uri: string | null;
   assets_json: unknown;
   completion_payload_definitions_json: unknown;
+  input_field_definitions_json: unknown;
+  screen_transitions_json: unknown;
   raw_json: unknown;
   last_synced_at: string | Date;
 };
@@ -3277,6 +3301,8 @@ const mapFlowRow = (row: FlowRow): FlowCacheRecord => ({
   endpointUri: row.endpoint_uri,
   assets: parseJsonArray<Record<string, unknown>>(row.assets_json),
   completionPayloadDefinitions: parseJsonArray(row.completion_payload_definitions_json),
+  inputFieldDefinitions: parseJsonArray(row.input_field_definitions_json),
+  screenTransitions: parseJsonArray(row.screen_transitions_json),
   raw: parseJsonObject(row.raw_json),
   lastSyncedAt: toIsoString(row.last_synced_at) ?? new Date().toISOString(),
 });

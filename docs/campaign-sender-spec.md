@@ -796,12 +796,20 @@ Sugestão em PostgreSQL.
 - `health_status_jsonb`
 - `endpoint_uri` nullable
 - `assets_jsonb`
+- `input_field_definitions_json` — componentes de entrada declarados no
+  FLOW_JSON, com as opções do `data-source` (escala declarada das perguntas)
+- `screen_transitions_json` — arestas de navegação entre telas, usadas para
+  rastrear `${data.x}` do `complete` até o componente de origem
 - `raw_jsonb`
 - `last_synced_at`
 
 Índices:
 
 - unique em `(integration_id, meta_flow_id)`
+
+Observação operacional: `flows.id` é regenerado a cada sync (DELETE/INSERT); a
+identidade estável é `meta_flow_id`. Ver ADR 0008 para a ordem obrigatória entre
+sync e criação de campanha de pesquisa.
 
 ### campaigns
 

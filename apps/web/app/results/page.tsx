@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
-import { EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows, usePagedRows } from '../../components/ui';
+import { BadgeText, EmptyState, ErrorBanner, Kpi, KpiSkeleton, SkeletonRows, usePagedRows } from '../../components/ui';
 import { apiDownload, apiRequest } from '../../lib/api';
+import { BadgeClass } from '../../lib/badges';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 
 interface DeliveryOverview {
@@ -39,12 +40,50 @@ interface ErrorRow {
   percentage: number;
 }
 
+interface SurveyDistributionItem {
+  value: string;
+  count: number;
+  percentage: number;
+  /** Rótulo legível da opção (ex.: "Muito satisfeito"); ausente quando o flow não declara escala. */
+  label?: string | null;
+}
+
+interface SurveySegment {
+  label: string;
+  count: number;
+  percentage?: number;
+  tone?: 'success' | 'warning' | 'danger' | 'neutral';
+}
+
+interface SurveyMetric {
+  fieldKey: string;
+  metricType: 'nps' | 'csat';
+  label: string;
+  totalResponses: number;
+  validResponses: number;
+  ignoredResponses: number;
+  score: number;
+  averageScore: number | null;
+  scoreLabel: string;
+  scoreHint: string;
+  /** 'observed' = a faixa da escala não veio do flow, foi deduzida das respostas. */
+  scaleSource?: 'declared' | 'observed' | null;
+  /**
+   * Orientação da escala lida nos rótulos: 'ascending' maior = melhor,
+   * 'descending' menor = melhor, 'assumed' não foi possível determinar.
+   */
+  scaleOrientation?: 'ascending' | 'descending' | 'assumed' | null;
+  distribution: SurveyDistributionItem[];
+  segments: SurveySegment[];
+}
+
 interface Summary {
   totalFlowResponses: number;
   deliveryOverview: DeliveryOverview;
   deliveryTimeline: TimelinePoint[];
   topDeliveryCampaigns: CampaignRanking[];
   errorBreakdown: ErrorRow[];
+  surveyMetrics?: SurveyMetric[];
 }
 
 interface FlowResponse {
@@ -157,6 +196,8 @@ function SummaryTab() {
           </>
         )}
       </div>
+
+      <SurveySection loading={loading} metrics={summary?.surveyMetrics ?? []} />
 
       <div className="block">
         <div className="block-head">
@@ -293,6 +334,207 @@ function SummaryTab() {
         </div>
       </div>
     </>
+  );
+}
+
+const decimalFormatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+
+const fmtDecimal = (value: number | null | undefined): string =>
+  value === null || value === undefined || Number.isNaN(value) ? '—' : decimalFormatter.format(value);
+
+// CSAT chega como percentual (top-2-box); NPS é um índice de -100 a 100.
+const fmtSurveyScore = (metric: SurveyMetric): string =>
+  metric.metricType === 'csat' ? `${fmtDecimal(metric.score)}%` : fmtDecimal(metric.score);
+
+// Siglas de pesquisa que devem sair em caixa alta no título do card.
+const SURVEY_ACRONYMS = new Set(['nps', 'csat']);
+
+const humanizeFieldKey = (key: string): string => {
+  const tokens = key.split(/[_.\-\s]+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return key;
+  }
+
+  const words = tokens.map((token) =>
+    SURVEY_ACRONYMS.has(token.toLowerCase()) ? token.toUpperCase() : token,
+  );
+
+  // Campo sem sigla mantém o comportamento anterior: só a primeira letra sobe.
+  if (!SURVEY_ACRONYMS.has(tokens[0].toLowerCase())) {
+    words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  }
+
+  return words.join(' ');
+};
+
+// Frase que o backend anexa ao `scoreHint` quando a orientação é assumida
+// (results.service.ts, buildCsatScoreHint). Quando o card mostra o aviso de
+// orientação — que já traz badge e ação —, ela sai do hint para não repetir.
+const ASSUMED_ORIENTATION_SENTENCE =
+  /\s*Orienta[çc][ãa]o n[ãa]o identificada pelos r[óo]tulos:\s*assumido maior = melhor\.?/i;
+
+const surveyScoreHint = (metric: SurveyMetric, hasOrientationNotice: boolean): string => {
+  const hint = metric.scoreHint ?? '';
+  return hasOrientationNotice ? hint.replace(ASSUMED_ORIENTATION_SENTENCE, '').trim() : hint;
+};
+
+const segmentBadgeClass = (tone: SurveySegment['tone']): BadgeClass =>
+  tone === 'success' || tone === 'warning' || tone === 'danger' ? tone : 'neutral';
+
+function SurveySection({ loading, metrics }: { loading: boolean; metrics: SurveyMetric[] }) {
+  const npsMetrics = metrics.filter((metric) => metric.metricType === 'nps');
+  const csatMetrics = metrics.filter((metric) => metric.metricType === 'csat');
+
+  return (
+    <div className="block">
+      <div className="block-head">
+        <span className="block-title">Pesquisas NPS e CSAT</span>
+        {!loading && metrics.length > 0 ? (
+          <span className="kpi-foot">Apurado sobre as respostas de flow do período.</span>
+        ) : null}
+      </div>
+
+      {loading ? (
+        <div className="tbl-wrap">
+          <table className="tbl dense">
+            <thead>
+              <tr>
+                <th>Pesquisa</th>
+                <th className="num">Score</th>
+                <th className="num">Respostas válidas</th>
+              </tr>
+            </thead>
+            <SkeletonRows rows={4} cols={3} />
+          </table>
+        </div>
+      ) : metrics.length === 0 ? (
+        <div className="panel">
+          <EmptyState
+            title="Sem respostas de pesquisa"
+            desc="NPS e CSAT aparecem aqui assim que as primeiras respostas do flow chegarem."
+          />
+        </div>
+      ) : (
+        <div className="stack" style={{ gap: 16 }}>
+          {npsMetrics.map((metric) => (
+            <SurveyMetricCard key={metric.fieldKey} metric={metric} />
+          ))}
+          {csatMetrics.length > 0 ? (
+            <div className="grid-3">
+              {csatMetrics.map((metric) => (
+                <SurveyMetricCard key={metric.fieldKey} metric={metric} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SurveyNotice({ badge, text }: { badge: string; text: string }) {
+  return (
+    <div className="row" style={{ marginTop: 10, flexWrap: 'nowrap', alignItems: 'flex-start' }}>
+      <BadgeText label={badge} cls="warning" />
+      <span className="kpi-foot" style={{ flex: 1, minWidth: 0 }}>
+        {text}
+      </span>
+    </div>
+  );
+}
+
+function SurveyMetricCard({ metric }: { metric: SurveyMetric }) {
+  const maxCount = Math.max(1, ...metric.distribution.map((item) => item.count));
+  // A faixa da escala não veio do flow: a ação é sincronizar.
+  const observedScale = metric.scaleSource === 'observed';
+  // Sem escala declarada a orientação é SEMPRE 'assumed', e nesse estado quem
+  // resolve é o sync (é ele que traz os rótulos de onde sai a orientação). Avisar
+  // aqui empilharia dois textos e mandaria o operador fazer a coisa errada — o
+  // aviso só vale com escala declarada, quando os rótulos existem e mesmo assim
+  // não deram a leitura. Aí, sim, sincronizar não resolve.
+  const assumedOrientation =
+    metric.scaleSource === 'declared' && metric.scaleOrientation === 'assumed';
+  const invertedScale = metric.scaleOrientation === 'descending';
+
+  return (
+    <div className="panel">
+      <div className="block-head">
+        <div>
+          <div className="panel-title">{humanizeFieldKey(metric.fieldKey)}</div>
+          <div className="kpi-foot">{metric.label}</div>
+        </div>
+        <div className="row" style={{ gap: 6, flexShrink: 0 }}>
+          {invertedScale ? <BadgeText label="Escala invertida" cls="info" /> : null}
+          <BadgeText label={metric.scoreLabel} cls="neutral" />
+        </div>
+      </div>
+
+      <div className="row" style={{ alignItems: 'baseline', gap: 10 }}>
+        <span className="kpi-val">{fmtSurveyScore(metric)}</span>
+        <span className="kpi-label">
+          {metric.averageScore === null || metric.averageScore === undefined
+            ? `${fmtInt(metric.validResponses)} resposta(s) válida(s)`
+            : `média ${fmtDecimal(metric.averageScore)} · ${fmtInt(metric.validResponses)} resposta(s) válida(s)`}
+        </span>
+      </div>
+
+      <p className="kpi-foot" style={{ marginTop: 6 }}>
+        {surveyScoreHint(metric, assumedOrientation)}
+      </p>
+      {metric.ignoredResponses > 0 ? (
+        <p className="kpi-foot">{fmtInt(metric.ignoredResponses)} resposta(s) fora da escala ignorada(s).</p>
+      ) : null}
+
+      {observedScale ? (
+        <SurveyNotice
+          badge="Escala inferida"
+          text="A faixa da escala não veio do flow: foi deduzida das respostas recebidas. Re-sincronize o flow para o número ficar exato."
+        />
+      ) : null}
+
+      {assumedOrientation ? (
+        <SurveyNotice
+          badge="Orientação não confirmada"
+          text="Os rótulos não dizem qual ponta da escala é a melhor. O cálculo assumiu maior = melhor; se a escala for invertida, o score está trocado. Revise as opções da pergunta: sincronizar o flow não resolve."
+        />
+      ) : null}
+
+      {metric.segments.length > 0 ? (
+        <div className="row" style={{ marginTop: 14 }}>
+          {metric.segments.map((segment) => (
+            <BadgeText
+              key={segment.label}
+              cls={segmentBadgeClass(segment.tone)}
+              label={
+                segment.percentage === null || segment.percentage === undefined
+                  ? `${segment.label} · ${fmtInt(segment.count)}`
+                  : `${segment.label} · ${fmtInt(segment.count)} (${fmtDecimal(segment.percentage)}%)`
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {metric.distribution.length > 0 ? (
+        <div className="stack" style={{ marginTop: 14, gap: 8 }}>
+          {metric.distribution.map((item) => (
+            <div key={item.value}>
+              <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'nowrap' }}>
+                <span className="kpi-label" style={{ minWidth: 0 }}>
+                  {item.label?.trim() ? item.label : item.value}
+                </span>
+                <span className="kpi-foot" style={{ flexShrink: 0 }}>
+                  {fmtInt(item.count)} · {fmtDecimal(item.percentage)}%
+                </span>
+              </div>
+              <div className="mini-bar" style={{ width: '100%', marginTop: 4 }}>
+                <span style={{ width: `${(item.count / maxCount) * 100}%`, background: 'var(--accent)' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

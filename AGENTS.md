@@ -89,6 +89,20 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
 - não altere segredos, tokens Meta ou callback URL sem necessidade explícita
 - não faça reset destrutivo de banco, volumes Docker ou histórico git
 
+## Sync de flows × campanha de pesquisa (ordem obrigatória)
+
+`flows.id` é **regenerado a cada sync** (`newId()` + DELETE/INSERT), e campanhas
+e respostas guardam esse id. Consequência operacional (ver ADR 0008):
+
+- **sincronize a integração ANTES de criar a campanha**
+- **não sincronize entre criar a campanha e o fim da coleta** — um sync nessa
+  janela quebra o vínculo apenas das respostas que chegarem **depois**
+- respostas já coletadas sobrevivem: `meta_flow_id` é gravado junto e é estável
+- não há sync automático; o único gatilho é o botão na tela de Integrações
+- as métricas de pesquisa (NPS/CSAT) só usam a escala declarada no FLOW_JSON
+  depois de um sync que popule `flows.input_field_definitions_json` e
+  `flows.screen_transitions_json`; antes disso caem em escala observada
+
 ## Backup obrigatório antes de deploy
 
 Na VPS:
@@ -212,7 +226,17 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
   puro, sem Chromium; fontes vendorizadas copiadas ao `dist` no build; WABA-25),
   `/reports/rates`, `/reports/settings`; reusa
   `results.service.ts`/`campaign-metrics.ts`)
-- resultados: `apps/api/src/results/results.service.ts`
+- sync de templates/flows na Meta: `apps/api/src/integrations/meta-graph.service.ts`
+  — além do payload de `complete`, extrai do FLOW_JSON os **componentes de
+  entrada** (com as opções do `data-source`) e as **arestas de navegação** entre
+  telas, persistidos em `flows.input_field_definitions_json` /
+  `flows.screen_transitions_json` (ADR 0008); download do FLOW_JSON limitado a
+  5 MB
+- resultados: `apps/api/src/results/results.service.ts` — métricas de pesquisa
+  usam a **escala declarada no flow** (não a inferida das respostas) e expõem
+  `scaleSource` (`declared`/`observed`) e `scaleOrientation`
+  (`ascending`/`descending`/`assumed`) no contrato; em qualquer ambiguidade cai
+  para escala observada e sinaliza (ADR 0008)
 - wrapper HTTP do frontend: `apps/web/lib/api.ts`
 
 ## Bugs e riscos já conhecidos
@@ -222,6 +246,9 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
 - token JWT do frontend ainda fica em `localStorage`
 - polling do frontend existe e deve continuar contido
 - sync de flows é operação cara; tratar timeout e carga com cuidado
+- `flows.id` não é estável: regenerado a cada sync, quebra o vínculo de campanhas
+  e das respostas futuras (ver a seção de ordem obrigatória acima e ADR 0008)
+- botão de sync de flows não pede confirmação
 
 ## Diretriz de troubleshooting
 

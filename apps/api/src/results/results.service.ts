@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { buildCsv } from '../common/csv';
 import { campaignFunnel } from '../common/campaign-metrics';
 import { DatabaseService } from '../database/database.service';
-import type { FlowResponseRecord } from '../database/types';
+import type {
+  FlowCacheRecord,
+  FlowCompletionPayloadField,
+  FlowInputFieldDefinition,
+  FlowResponseRecord,
+  FlowScreenTransition,
+} from '../database/types';
 
 @Injectable()
 export class ResultsService {
@@ -128,11 +134,13 @@ export class ResultsService {
           ? campaignsById.get(response.campaignId) ?? null
           : null;
         const contact = response.contactId ? contactsById.get(response.contactId) ?? null : null;
-        const flow = response.flowCacheId
-          ? flowsById.get(response.flowCacheId) ?? null
-          : response.metaFlowId
-            ? flowsByMetaFlowId.get(response.metaFlowId) ?? null
-            : null;
+        // `flows.id` é regerado a cada sync (DELETE+INSERT), então respostas antigas
+        // guardam um flowCacheId órfão. Coalescer em vez de encadear ternário deixa
+        // o metaFlowId (estável) resolver esses casos.
+        const flow =
+          (response.flowCacheId ? flowsById.get(response.flowCacheId) : undefined) ??
+          (response.metaFlowId ? flowsByMetaFlowId.get(response.metaFlowId) : undefined) ??
+          null;
         const template = response.templateCacheId
           ? templatesById.get(response.templateCacheId) ?? null
           : null;
@@ -199,6 +207,11 @@ export class ResultsService {
     const fieldCoverage = new Map<string, number>();
     const categoricalValues = new Map<string, Map<string, number>>();
     const surveyFieldValues = new Map<string, number[]>();
+    // Escala declarada no FLOW_JSON por chave de payload. `null` marca conflito
+    // entre flows diferentes que usam a mesma chave com escalas divergentes —
+    // nesse caso caímos no fallback observado.
+    const declaredFieldScales = new Map<string, DeclaredScale | null>();
+    const declaredScalesByFlow = new Map<string, Map<string, DeclaredScale>>();
     const operationTimeline = new Map<
       string,
       { accepted: number; sent: number; delivered: number; read: number; failed: number }
@@ -213,11 +226,12 @@ export class ResultsService {
 
     for (const response of flowResponses) {
       const campaign = response.campaignId ? campaignsById.get(response.campaignId) ?? null : null;
-      const flow = response.flowCacheId
-        ? flowsById.get(response.flowCacheId) ?? null
-        : response.metaFlowId
-          ? flowsByMetaFlowId.get(response.metaFlowId) ?? null
-          : null;
+      // Ver nota em loadFlowResponses: flowCacheId órfão precisa cair para metaFlowId,
+      // senão a escala declarada do flow nunca é encontrada.
+      const flow =
+        (response.flowCacheId ? flowsById.get(response.flowCacheId) : undefined) ??
+        (response.metaFlowId ? flowsByMetaFlowId.get(response.metaFlowId) : undefined) ??
+        null;
 
       const flowKey = flow?.name ?? response.metaFlowId ?? 'Flow não identificado';
       byFlow.set(flowKey, (byFlow.get(flowKey) ?? 0) + 1);
@@ -227,6 +241,15 @@ export class ResultsService {
 
       const dayKey = response.completedAt.slice(0, 10);
       byDay.set(dayKey, (byDay.get(dayKey) ?? 0) + 1);
+
+      let flowScales: Map<string, DeclaredScale> | null = null;
+      if (flow) {
+        flowScales = declaredScalesByFlow.get(flow.id) ?? null;
+        if (!flowScales) {
+          flowScales = buildDeclaredFieldScales(flow);
+          declaredScalesByFlow.set(flow.id, flowScales);
+        }
+      }
 
       for (const [fieldKey, value] of Object.entries(response.responsePayload ?? {})) {
         fieldCoverage.set(fieldKey, (fieldCoverage.get(fieldKey) ?? 0) + 1);
@@ -243,6 +266,21 @@ export class ResultsService {
           const values = surveyFieldValues.get(fieldKey) ?? [];
           values.push(numericValue);
           surveyFieldValues.set(fieldKey, values);
+
+          // A métrica é agregada por chave de payload, atravessando flows. Só vale
+          // escala declarada se TODA resposta que entra na agregação vier de um flow
+          // que declara a mesma escala. Flow sem definição — ou não resolvido — não
+          // pode herdar a escala do vizinho: isso descartaria respostas legítimas
+          // como fora-de-faixa. `null` marca o fieldKey como observado.
+          const declaredScale = flowScales?.get(fieldKey) ?? null;
+          if (!declaredFieldScales.has(fieldKey)) {
+            declaredFieldScales.set(fieldKey, declaredScale);
+          } else {
+            const current = declaredFieldScales.get(fieldKey) ?? null;
+            if (current && (!declaredScale || current.signature !== declaredScale.signature)) {
+              declaredFieldScales.set(fieldKey, null);
+            }
+          }
         }
       }
     }
@@ -303,7 +341,7 @@ export class ResultsService {
       .sort((left, right) => right.processed - left.processed)
       .slice(0, 8);
 
-    const surveyMetrics = buildSurveyMetrics(surveyFieldValues, fieldCoverage);
+    const surveyMetrics = buildSurveyMetrics(surveyFieldValues, fieldCoverage, declaredFieldScales);
 
     return {
       totalFlowResponses: totalResponses,
@@ -506,23 +544,474 @@ type SurveyMetricSummary = {
   ignoredResponses: number;
   score: number;
   averageScore: number | null;
-  distribution: Array<{ value: string; count: number; percentage: number }>;
+  distribution: Array<{ value: string; count: number; percentage: number; label?: string }>;
   scoreLabel: string;
   scoreHint: string;
+  /**
+   * `declared`: a faixa da escala veio do FLOW_JSON (ou é normativa, caso do NPS).
+   * `observed`: a faixa foi inferida das respostas recebidas — pode estar errada
+   *   enquanto a coleta é pequena. Flows ainda não re-sincronizados caem aqui.
+   */
+  scaleSource: 'declared' | 'observed';
+  /**
+   * Orientação da escala, inferida dos rótulos declarados.
+   * `ascending`: maior = melhor (evidência nos rótulos).
+   * `descending`: menor = melhor (ex.: 0 "Muito satisfeito" ... 4 "Muito insatisfeito").
+   * `assumed`: sem evidência nos rótulos — assume maior = melhor, como sempre foi.
+   *   O front deve sinalizar ao operador, é uma suposição e não uma leitura.
+   */
+  scaleOrientation: ScaleOrientation;
   segments: Array<{ label: string; count: number; percentage: number; tone: 'success' | 'warning' | 'danger' }>;
 };
+
+type ScaleOrientation = 'ascending' | 'descending' | 'assumed';
+
+/** Escala declarada no `data-source` do componente de entrada do flow. */
+type DeclaredScale = {
+  min: number;
+  max: number;
+  /** Valores declarados, únicos e ascendentes. Suporta escala não contígua (1,3,5). */
+  values: number[];
+  labels: Map<number, string>;
+  orientation: ScaleOrientation;
+  signature: string;
+};
+
+// Tetos defensivos. Nenhuma escala de pesquisa real chega perto disso, e tanto o
+// Map de contagem quanto a `distribution` são materializados em memória e
+// renderizados item a item no front — faixa densa sem teto é DoS de event loop
+// e de heap para todos os tenants (o processo é single-threaded).
+const MAX_DECLARED_SCALE_OPTIONS = 50;
+const MAX_DECLARED_SCALE_SPREAD = 100;
+const MAX_DISTRIBUTION_BUCKETS = 100;
+
+// Profundidade máxima da cadeia de telas percorrida. Flow de pesquisa tem poucas
+// telas; aqui é só guarda de pilha — quem garante terminação é o memo/ciclo.
+const MAX_TRANSITION_DEPTH = 64;
+
+/**
+ * Liga cada chave do payload de `complete` ao componente de entrada que originou
+ * o valor, e devolve a escala declarada quando ela é numérica.
+ *
+ * Em flow multi-tela só a última tela usa `${form.x}`: as respostas anteriores
+ * chegam ao `complete` como `${data.x}`, encadeadas pelos payloads das ações
+ * `navigate`. Por isso a resolução caminha o grafo de telas para trás, de
+ * `${data.x}` até o `${form.x}` que de fato produziu o valor.
+ */
+const buildDeclaredFieldScales = (flow: FlowCacheRecord): Map<string, DeclaredScale> => {
+  const scales = new Map<string, DeclaredScale>();
+  const inputs = flow.inputFieldDefinitions ?? [];
+  if (inputs.length === 0) {
+    return scales;
+  }
+
+  // Índice montado UMA vez por flow: a busca linear dentro do laço de campos era
+  // O(campos x componentes), sem teto em nenhum dos dois lados. Agora é O(campos +
+  // componentes), e `toDeclaredScale` roda uma vez por componente.
+  const inputScales = buildInputScaleIndex(inputs);
+  // Compartilhado por todos os campos do flow: nós repetidos entre campos também
+  // aproveitam o memo.
+  const memo: ScaleMemo = new Map();
+
+  // Arestas indexadas pela tela de DESTINO: para saber de onde veio `${data.x}`
+  // em N, olha-se quem navegou para N.
+  const transitionsByTarget = new Map<string, FlowScreenTransition[]>();
+  for (const transition of flow.screenTransitions ?? []) {
+    const inbound = transitionsByTarget.get(transition.nextScreenId) ?? [];
+    inbound.push(transition);
+    transitionsByTarget.set(transition.nextScreenId, inbound);
+  }
+
+  for (const definition of flow.completionPayloadDefinitions ?? []) {
+    for (const field of definition.payloadFields ?? []) {
+      const scale = resolveFieldScale(
+        field,
+        definition.screenId,
+        inputScales,
+        transitionsByTarget,
+        memo,
+        0,
+      );
+      if (scale) {
+        scales.set(field.key, scale);
+      }
+    }
+  }
+
+  return scales;
+};
+
+/** Chave de `${data.X}`; null para qualquer outra expressão. */
+const dataReferenceKey = (field: FlowCompletionPayloadField): string | null => {
+  if (field.sourceType !== 'expression' || !field.sourceField) {
+    return null;
+  }
+
+  return field.expression && /^\$\{data\.[^}]+\}$/.test(field.expression)
+    ? field.sourceField
+    : null;
+};
+
+/**
+ * Escalas dos componentes indexadas por `${screenId}::${name}` e por `name`.
+ * Colisão de nome vira `null` (ambíguo): nunca se escolhe um componente
+ * arbitrariamente — na dúvida a métrica cai para escala observada.
+ */
+type InputScaleIndex = {
+  byScreen: Map<string, DeclaredScale | null>;
+  byName: Map<string, DeclaredScale | null>;
+};
+
+const buildInputScaleIndex = (inputs: FlowInputFieldDefinition[]): InputScaleIndex => {
+  const byScreen = new Map<string, DeclaredScale | null>();
+  const byName = new Map<string, DeclaredScale | null>();
+
+  for (const input of inputs) {
+    const scale = toDeclaredScale(input);
+    const screenKey = `${input.screenId}::${input.name}`;
+    byScreen.set(screenKey, byScreen.has(screenKey) ? null : scale);
+    byName.set(input.name, byName.has(input.name) ? null : scale);
+  }
+
+  return { byScreen, byName };
+};
+
+const resolveInputScale = (
+  fieldName: string,
+  screenId: string,
+  inputScales: InputScaleIndex,
+): DeclaredScale | null => {
+  const screenKey = `${screenId}::${fieldName}`;
+  if (inputScales.byScreen.has(screenKey)) {
+    return inputScales.byScreen.get(screenKey) ?? null;
+  }
+
+  // Sem correspondência na própria tela, só aceita se o nome for inequívoco no
+  // flow inteiro.
+  return inputScales.byName.get(fieldName) ?? null;
+};
+
+/**
+ * Marcador de nó em resolução. Serve de detector de ciclo: reencontrar um nó
+ * ainda `PENDING` significa que a aresta volta para dentro do próprio cálculo.
+ */
+const RESOLVING = Symbol('resolving');
+type ScaleMemo = Map<string, DeclaredScale | null | typeof RESOLVING>;
+
+const resolveFieldScale = (
+  field: FlowCompletionPayloadField,
+  screenId: string,
+  inputScales: InputScaleIndex,
+  transitionsByTarget: Map<string, FlowScreenTransition[]>,
+  memo: ScaleMemo,
+  depth: number,
+): DeclaredScale | null => {
+  // Guarda de pilha, não de trabalho: com o memo cada nó é calculado uma vez, mas
+  // uma cadeia longuíssima ainda recursaria fundo. Fica muito acima de qualquer
+  // flow real.
+  //
+  // Repare que esta guarda retorna ANTES de calcular o `memoKey`, de propósito:
+  // o resultado da truncagem NÃO é memoizado. A profundidade não faz parte da
+  // chave, então gravar `null` aqui vincularia à chave um resultado que depende
+  // do caminho por onde o nó foi alcançado. Um nó atingido a 70 de profundidade
+  // por um caminho e a 3 por outro seria condenado ao `null` do primeiro. Do
+  // jeito que está, ele é recalculado e resolve pelo caminho curto. Não "conserte"
+  // isto memoizando o resultado da truncagem — seria regressão.
+  if (depth > MAX_TRANSITION_DEPTH) {
+    return null;
+  }
+
+  if (field.sourceType === 'form' && field.sourceField) {
+    return resolveInputScale(field.sourceField, screenId, inputScales);
+  }
+
+  const dataKey = dataReferenceKey(field);
+  if (!dataKey) {
+    return null;
+  }
+
+  // Memo por NÓ `(tela, chave)`, não por caminho. Sem isto o número de chamadas é
+  // o número de caminhos raiz→folha (k^profundidade, k = arestas paralelas de
+  // entrada por tela), e o teto de arestas não limita caminhos: 41 arestas
+  // paralelas em 12 níveis são ~2,2e19 chamadas. Com memo é O(nós + arestas).
+  const memoKey = `${screenId}::${dataKey}`;
+  const cached = memo.get(memoKey);
+  if (cached !== undefined) {
+    return cached === RESOLVING ? null : cached;
+  }
+  memo.set(memoKey, RESOLVING);
+
+  let resolved: DeclaredScale | null = null;
+  for (const transition of transitionsByTarget.get(screenId) ?? []) {
+    // `parseJsonArray` valida o container, não o formato dos elementos: uma aresta
+    // com `payloadFields` não-array (JSONB adulterado) lançaria aqui dentro da
+    // janela do memo, deixando o nó preso em RESOLVING até o fim da chamada.
+    if (!Array.isArray(transition.payloadFields)) {
+      continue;
+    }
+
+    const upstream = transition.payloadFields.find((candidate) => candidate.key === dataKey);
+    if (!upstream) {
+      continue;
+    }
+
+    const candidate = resolveFieldScale(
+      upstream,
+      transition.screenId,
+      inputScales,
+      transitionsByTarget,
+      memo,
+      depth + 1,
+    );
+    // Caminho de entrada que não resolve, ou que resolve para escala diferente,
+    // torna a origem ambígua. Na dúvida, observado.
+    if (!candidate || (resolved && resolved.signature !== candidate.signature)) {
+      resolved = null;
+      break;
+    }
+    resolved = candidate;
+  }
+
+  memo.set(memoKey, resolved);
+  return resolved;
+};
+
+// Termos comparados POR PALAVRA, nunca por substring: `muito insatisfeito` contém
+// `satisfeito`, e um `includes` classificaria o pior rótulo da escala como positivo.
+// Tokenizar resolve o prefixo, porque `insatisfeito` é um token distinto de
+// `satisfeito`. A negação explícita ("não satisfeito") inverte o sinal do termo.
+const NEGATIVE_SCALE_TERMS = new Set([
+  'insatisfeito',
+  'insatisfeita',
+  'insatisfatorio',
+  'insatisfatoria',
+  'ruim',
+  'pessimo',
+  'pessima',
+  'dificil',
+  'discordo',
+  'improvavel',
+]);
+
+const POSITIVE_SCALE_TERMS = new Set([
+  'satisfeito',
+  'satisfeita',
+  'satisfatorio',
+  'satisfatoria',
+  'bom',
+  'boa',
+  'otimo',
+  'otima',
+  'excelente',
+  'facil',
+  'concordo',
+  'provavel',
+]);
+
+const NEGATION_TERMS = new Set(['nao', 'nunca', 'jamais', 'nenhum', 'nenhuma']);
+
+const normalizeLabelTokens = (label: string): string[] =>
+  label
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+
+const classifyLabelSentiment = (label: string | undefined): 'positive' | 'negative' | null => {
+  if (!label) {
+    return null;
+  }
+
+  let negated = false;
+  for (const token of normalizeLabelTokens(label)) {
+    if (NEGATION_TERMS.has(token)) {
+      negated = true;
+      continue;
+    }
+    if (NEGATIVE_SCALE_TERMS.has(token)) {
+      return negated ? 'positive' : 'negative';
+    }
+    if (POSITIVE_SCALE_TERMS.has(token)) {
+      return negated ? 'negative' : 'positive';
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Orientação pelos extremos declarados. Só afirma quando os dois extremos têm
+ * sinal e são opostos; qualquer outra combinação (sem rótulo, rótulo neutro,
+ * mesmo sinal nos dois lados) é `assumed` — não se inventa orientação.
+ */
+const detectScaleOrientation = (
+  values: number[],
+  labels: Map<number, string>,
+): ScaleOrientation => {
+  const lowest = classifyLabelSentiment(labels.get(values[0]));
+  const highest = classifyLabelSentiment(labels.get(values[values.length - 1]));
+
+  if (lowest === 'negative' && highest === 'positive') {
+    return 'ascending';
+  }
+  if (lowest === 'positive' && highest === 'negative') {
+    return 'descending';
+  }
+
+  return 'assumed';
+};
+
+const toDeclaredScale = (input: FlowInputFieldDefinition): DeclaredScale | null => {
+  const options = input.options ?? [];
+  if (options.length < 2 || options.length > MAX_DECLARED_SCALE_OPTIONS) {
+    return null;
+  }
+
+  const labels = new Map<number, string>();
+  const unique = new Set<number>();
+  for (const option of options) {
+    const parsed = Number(option.id);
+    if (!Number.isInteger(parsed)) {
+      // Escala não numérica (ex.: ids textuais): não serve de faixa.
+      return null;
+    }
+
+    unique.add(parsed);
+    if (option.title) {
+      labels.set(parsed, option.title);
+    }
+  }
+
+  const values = [...unique].sort((left, right) => left - right);
+  if (values.length < 2) {
+    return null;
+  }
+
+  const min = values[0];
+  const max = values[values.length - 1];
+  // Ids do tipo ano/data/código (ex.: "1" e "20250101") passam no teste de inteiro
+  // mas não são escala de pesquisa. Rejeitar aqui cai no fallback observado.
+  if (max - min > MAX_DECLARED_SCALE_SPREAD) {
+    return null;
+  }
+
+  const orientation = detectScaleOrientation(values, labels);
+  return {
+    min,
+    max,
+    values,
+    labels,
+    orientation,
+    // A orientação entra na assinatura: dois flows com a mesma faixa mas leitura
+    // oposta são conflito, não equivalência.
+    signature: `${min}..${max}|${values.join(',')}|${orientation}`,
+  };
+};
+
+const minMaxOf = (values: number[]): [number, number] => {
+  // reduce/laço em vez de Math.min(...values): o spread estoura a pilha com
+  // volume alto de respostas.
+  let min = values[0];
+  let max = values[0];
+  for (const value of values) {
+    if (value < min) {
+      min = value;
+    }
+    if (value > max) {
+      max = value;
+    }
+  }
+  return [min, max];
+};
+
+/**
+ * Buckets da distribuição.
+ * - Com escala declarada: sai das próprias opções declaradas — nunca materializa
+ *   a faixa densa e cobre escalas não contíguas.
+ * - Sem escala: mantém a faixa densa observada (comportamento atual) apenas
+ *   enquanto ela couber no teto. O caminho observado recebe valor livre do
+ *   respondente (um TextInput numérico chamado `csat_*` nunca tem `data-source`),
+ *   então `999999999` não pode virar 1e9 buckets.
+ */
+const buildDistributionCounts = (
+  validValues: number[],
+  scale: DeclaredScale | null,
+  minValue: number,
+  maxValue: number,
+): Map<string, number> => {
+  const counts = new Map<string, number>();
+
+  if (scale) {
+    for (const value of scale.values) {
+      counts.set(String(value), 0);
+    }
+  } else if (maxValue - minValue + 1 <= MAX_DISTRIBUTION_BUCKETS) {
+    for (let index = minValue; index <= maxValue; index += 1) {
+      counts.set(String(index), 0);
+    }
+  }
+
+  // Contar os valores distintos é O(n) e limitado pelo número de respostas —
+  // o que era ilimitado é a faixa densa acima, não isto.
+  for (const value of validValues) {
+    const key = String(value);
+    if (scale && !counts.has(key)) {
+      continue;
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  if (counts.size <= MAX_DISTRIBUTION_BUCKETS) {
+    return counts;
+  }
+
+  // Escala observada dispersa demais: mantém os buckets mais frequentes.
+  return new Map(
+    [...counts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, MAX_DISTRIBUTION_BUCKETS)
+      .sort((left, right) => Number(left[0]) - Number(right[0])),
+  );
+};
+
+const buildDistribution = (
+  counts: Map<string, number>,
+  total: number,
+  scale: DeclaredScale | null,
+): SurveyMetricSummary['distribution'] =>
+  [...counts.entries()]
+    .sort((left, right) => Number(left[0]) - Number(right[0]))
+    .map(([value, count]) => {
+      const label = scale?.labels.get(Number(value));
+      return {
+        value,
+        count,
+        percentage: total ? Number(((count / total) * 100).toFixed(1)) : 0,
+        ...(label ? { label } : {}),
+      };
+    });
 
 const buildSurveyMetrics = (
   fieldValues: Map<string, number[]>,
   fieldCoverage: Map<string, number>,
+  declaredScales: Map<string, DeclaredScale | null> = new Map(),
 ): SurveyMetricSummary[] => {
   const metrics: SurveyMetricSummary[] = [];
 
   for (const [fieldKey, values] of fieldValues.entries()) {
     const normalizedKey = fieldKey.trim().toLowerCase();
+    const declaredScale = declaredScales.get(fieldKey) ?? null;
 
     if (normalizedKey.includes('nps')) {
-      const metric = buildNpsMetric(fieldKey, values, fieldCoverage.get(fieldKey) ?? values.length);
+      const metric = buildNpsMetric(
+        fieldKey,
+        values,
+        fieldCoverage.get(fieldKey) ?? values.length,
+        declaredScale,
+      );
       if (metric) {
         metrics.push(metric);
       }
@@ -530,7 +1019,12 @@ const buildSurveyMetrics = (
     }
 
     if (normalizedKey.includes('csat') || normalizedKey.includes('cesat')) {
-      const metric = buildCsatMetric(fieldKey, values, fieldCoverage.get(fieldKey) ?? values.length);
+      const metric = buildCsatMetric(
+        fieldKey,
+        values,
+        fieldCoverage.get(fieldKey) ?? values.length,
+        declaredScale,
+      );
       if (metric) {
         metrics.push(metric);
       }
@@ -549,6 +1043,7 @@ const buildNpsMetric = (
   fieldKey: string,
   values: number[],
   totalResponses: number,
+  declaredScale: DeclaredScale | null = null,
 ): SurveyMetricSummary | null => {
   const validValues = values.filter((value) => Number.isInteger(value) && value >= 0 && value <= 10);
   if (validValues.length === 0) {
@@ -580,13 +1075,14 @@ const buildNpsMetric = (
     ignoredResponses: Math.max(totalResponses - total, 0),
     score,
     averageScore: Number((validValues.reduce((sum, value) => sum + value, 0) / total).toFixed(1)),
-    distribution: [...counts.entries()].map(([value, count]) => ({
-      value,
-      count,
-      percentage: total ? Number(((count / total) * 100).toFixed(1)) : 0,
-    })),
+    distribution: buildDistribution(counts, total, declaredScale),
     scoreLabel: 'NPS',
     scoreHint: 'Promotores (9-10) minus detratores (0-6). Notas 7-8 são neutras.',
+    // A faixa 0-10 e os cortes do NPS são normativos da métrica, nunca inferidos
+    // das respostas; a definição do flow só acrescenta rótulos.
+    scaleSource: 'declared',
+    // No NPS maior = melhor por definição da métrica, não por leitura de rótulo.
+    scaleOrientation: 'ascending',
     segments: [
       {
         label: 'Promotores',
@@ -610,34 +1106,81 @@ const buildNpsMetric = (
   };
 };
 
+const buildCsatScoreHint = (
+  declared: boolean,
+  orientation: ScaleOrientation,
+  minValue: number,
+  maxValue: number,
+  satisfiedThreshold: number,
+): string => {
+  if (!declared) {
+    // Texto preservado: é o comportamento antigo, para flow sem definição.
+    return `Top-2-box automático da escala ${minValue}-${maxValue} (${Math.max(
+      satisfiedThreshold,
+      minValue,
+    )}-${maxValue}).`;
+  }
+
+  if (orientation === 'descending') {
+    return `Escala declarada ${minValue}-${maxValue} invertida pelos rótulos (menor = melhor): top-2-box ${minValue}-${Math.min(
+      satisfiedThreshold,
+      maxValue,
+    )}.`;
+  }
+
+  const base = `Top-2-box da escala declarada no flow ${minValue}-${maxValue} (${Math.max(
+    satisfiedThreshold,
+    minValue,
+  )}-${maxValue}).`;
+
+  return orientation === 'assumed'
+    ? `${base} Orientação não identificada pelos rótulos: assumido maior = melhor.`
+    : base;
+};
+
 const buildCsatMetric = (
   fieldKey: string,
   values: number[],
   totalResponses: number,
+  declaredScale: DeclaredScale | null = null,
 ): SurveyMetricSummary | null => {
-  const validValues = values.filter((value) => Number.isInteger(value) && value >= 0);
+  // Com escala declarada, só valem os valores declarados (checagem por conjunto,
+  // não por faixa — a escala pode ser não contígua). Sem ela, o filtro antigo.
+  const declaredValues = declaredScale ? new Set(declaredScale.values) : null;
+  const validValues = declaredValues
+    ? values.filter((value) => Number.isInteger(value) && declaredValues.has(value))
+    : values.filter((value) => Number.isInteger(value) && value >= 0);
   if (validValues.length === 0) {
     return null;
   }
 
   const total = validValues.length;
-  const minValue = Math.min(...validValues);
-  const maxValue = Math.max(...validValues);
-  const satisfiedThreshold = Math.max(maxValue - 1, minValue);
-  const satisfiedCount = validValues.filter((value) => value >= satisfiedThreshold).length;
-  const neutralCount = validValues.filter((value) => value < satisfiedThreshold && value > minValue).length;
+  const [observedMin, observedMax] = minMaxOf(validValues);
+  const minValue = declaredScale ? declaredScale.min : observedMin;
+  const maxValue = declaredScale ? declaredScale.max : observedMax;
+  const orientation: ScaleOrientation = declaredScale ? declaredScale.orientation : 'assumed';
+  // Escala invertida (0 "Muito satisfeito" ... 4 "Muito insatisfeito"): o top-2-box
+  // são as duas opções mais BAIXAS. Sem essa leitura, o score mediria justamente
+  // os insatisfeitos e os apresentaria como satisfação.
+  const inverted = orientation === 'descending';
+  // Top-2-box = as duas opções extremas do lado "bom" da escala. Em escala
+  // contígua ascendente isso é `max - 1` (1-5 → corte 4); em escala não contígua
+  // (1,3,5 → corte 3) passa a ser realmente top-2-box em vez de top-1.
+  const satisfiedThreshold = declaredScale
+    ? inverted
+      ? declaredScale.values[1] ?? maxValue
+      : declaredScale.values[declaredScale.values.length - 2] ?? minValue
+    : Math.max(maxValue - 1, minValue);
+  const satisfiedCount = inverted
+    ? validValues.filter((value) => value <= satisfiedThreshold).length
+    : validValues.filter((value) => value >= satisfiedThreshold).length;
+  const neutralCount = inverted
+    ? validValues.filter((value) => value > satisfiedThreshold && value < maxValue).length
+    : validValues.filter((value) => value < satisfiedThreshold && value > minValue).length;
   const dissatisfiedCount = total - satisfiedCount - neutralCount;
   const score = Number(((satisfiedCount / total) * 100).toFixed(1));
 
-  const counts = new Map<string, number>();
-  for (let index = minValue; index <= maxValue; index += 1) {
-    counts.set(String(index), 0);
-  }
-
-  for (const value of validValues) {
-    const key = String(value);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
+  const counts = buildDistributionCounts(validValues, declaredScale, minValue, maxValue);
 
   return {
     fieldKey,
@@ -648,16 +1191,17 @@ const buildCsatMetric = (
     ignoredResponses: Math.max(totalResponses - total, 0),
     score,
     averageScore: Number((validValues.reduce((sum, value) => sum + value, 0) / total).toFixed(1)),
-    distribution: [...counts.entries()].map(([value, count]) => ({
-      value,
-      count,
-      percentage: total ? Number(((count / total) * 100).toFixed(1)) : 0,
-    })),
+    distribution: buildDistribution(counts, total, declaredScale),
     scoreLabel: 'CSAT',
-    scoreHint: `Top-2-box automático da escala ${minValue}-${maxValue} (${Math.max(
-      satisfiedThreshold,
+    scoreHint: buildCsatScoreHint(
+      Boolean(declaredScale),
+      orientation,
       minValue,
-    )}-${maxValue}).`,
+      maxValue,
+      satisfiedThreshold,
+    ),
+    scaleSource: declaredScale ? 'declared' : 'observed',
+    scaleOrientation: orientation,
     segments: [
       {
         label: 'Satisfeitos',

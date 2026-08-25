@@ -18,3 +18,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0005](0005-disparo-transacional-por-api.md) | Disparo transacional por API pública (envio síncrono fora do poller) | Aceito |
 | [0006](0006-atualizacao-em-massa-de-contatos-por-csv.md) | Atualização em massa de contatos por CSV (export filtrado + reimport por ID) | Aceito |
 | [0007](0007-relatorio-de-custos-de-campanha.md) | Relatório de custos de campanha (pricing da Meta como classificação + tarifa BRL da Collos) | Aceito |
+| [0008](0008-escala-declarada-de-pesquisas-de-flow.md) | Escala de pesquisa vem da definição do flow, não das respostas (CSAT declarado + falha fechada) | Aceito |
