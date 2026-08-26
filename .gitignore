@@ -22,3 +22,7 @@ tmp/
 *.tsbuildinfo
 .DS_Store
 ._*
+
+# Saída da verificação semanal do Direct Send (scripts/check-direct-send-cron.sh)
+data/direct-send-check.log
+data/DIRECT-SEND-HABILITADO
