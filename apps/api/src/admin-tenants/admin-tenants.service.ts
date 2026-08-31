@@ -25,10 +25,14 @@ interface OverviewTemplate {
   languageCode: string;
   integrationId: string;
   integrationName: string;
-  /** Override por template (etiqueta); null = herda o tenant da integração. */
+  /** Override por template (etiqueta); null = herda os tenants da integração. */
   clientId: string | null;
-  /** Tenant efetivo: override ?? tenant da integração. */
-  effectiveClientId: string | null;
+  /**
+   * Tenants que enxergam o modelo: só o da etiqueta quando existe, senão TODOS
+   * os vinculados à integração — uma conta WABA compartilhada expõe o modelo a
+   * mais de um tenant (ADR 0009).
+   */
+  effectiveClientIds: string[];
 }
 
 interface OverviewClient {
@@ -64,8 +68,8 @@ export class AdminTenantsService {
        FROM lists l
        ORDER BY l.name ASC`,
     );
-    // Tenant efetivo do modelo = override da etiqueta ?? tenant da integração
-    // (uma mesma conta WABA pode servir vários tenants).
+    // Quem enxerga o modelo: a etiqueta quando existe, senão todos os tenants
+    // vinculados à integração — a conta WABA pode ser compartilhada (ADR 0009).
     const templateRows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
         t.id,
@@ -74,7 +78,15 @@ export class AdminTenantsService {
         t.integration_id,
         i.name AS integration_name,
         t.client_id,
-        COALESCE(t.client_id, i.client_id) AS effective_client_id
+        CASE
+          WHEN t.client_id IS NOT NULL THEN ARRAY[t.client_id]
+          ELSE COALESCE(
+            (SELECT array_agg(link.client_id ORDER BY link.created_at)
+             FROM integration_clients link
+             WHERE link.integration_id = t.integration_id),
+            ARRAY[]::text[]
+          )
+        END AS effective_client_ids
        FROM templates t
        LEFT JOIN integrations i ON i.id = t.integration_id
        ORDER BY t.name ASC`,
@@ -103,7 +115,7 @@ export class AdminTenantsService {
         integrationId: String(row.integration_id),
         integrationName: (row.integration_name as string | null) ?? '',
         clientId: (row.client_id as string | null) ?? null,
-        effectiveClientId: (row.effective_client_id as string | null) ?? null,
+        effectiveClientIds: (row.effective_client_ids as string[] | null) ?? [],
       })),
     };
   }
