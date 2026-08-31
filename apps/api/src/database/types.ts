@@ -50,12 +50,35 @@ export interface IntegrationRecord {
   appSecretCiphertext?: string | null;
   webhookCallbackUrl?: string | null;
   status: 'active' | 'inactive';
-  /** Tenant proprietário da integração. Nulo = pool Collos compartilhado. */
+  /**
+   * Tenant PRINCIPAL da integração (primeiro vínculo). Nulo = pool Collos.
+   *
+   * NÃO é a fonte de verdade de autorização: uma mesma conta WABA pode servir
+   * vários tenants, e quem pode usá-la vive em `clientIntegrations`
+   * (tabela `client_integrations`). Este campo é derivado — mantido em sincronia
+   * com o primeiro vínculo — e sobrevive só para compatibilidade e como default
+   * do tenant de uma campanha criada pela Collos sem seletor.
+   */
   clientId?: string | null;
   lastSyncAt?: string | null;
   lastHealthcheckAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Vínculo N:N entre tenant e integração WABA: quem pode usar a conta.
+ *
+ * Fonte de verdade da autorização de integrações. Um vínculo só desaparece por
+ * ação explícita de um admin Collos — nenhum boot, deploy, sync ou edição de
+ * outro cliente o remove. Ver ADR 0009.
+ */
+export interface ClientIntegrationLink {
+  clientId: string;
+  integrationId: string;
+  createdAt: string;
+  /** userId do admin que criou o vínculo, ou marcador de migração. */
+  createdBy?: string | null;
 }
 
 export interface ContactRecord {
@@ -488,6 +511,7 @@ export interface AppState {
   clients: ClientRecord[];
   users: UserRecord[];
   integrations: IntegrationRecord[];
+  clientIntegrations: ClientIntegrationLink[];
   contacts: ContactRecord[];
   lists: ListRecord[];
   listMembers: ListMemberRecord[];
@@ -506,6 +530,7 @@ export const emptyState = (): AppState => ({
   clients: [],
   users: [],
   integrations: [],
+  clientIntegrations: [],
   contacts: [],
   lists: [],
   listMembers: [],

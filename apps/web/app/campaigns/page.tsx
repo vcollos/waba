@@ -52,6 +52,8 @@ interface Integration {
   id: string;
   name: string;
   clientId: string | null;
+  /** Tenants com acesso — a mesma conta WABA pode servir vários. */
+  clientIds: string[];
 }
 interface ListItem {
   id: string;
@@ -583,7 +585,10 @@ function CampaignWizard({
   const [error, setError] = useState<string | null>(null);
 
   const visibleIntegrations = useMemo(
-    () => (collos && clientId ? integrations.filter((i) => i.clientId === clientId) : integrations),
+    () =>
+      collos && clientId
+        ? integrations.filter((i) => i.clientIds.includes(clientId))
+        : integrations,
     [collos, clientId, integrations],
   );
   const template = templates.find((t) => t.id === templateId) ?? null;
@@ -636,6 +641,9 @@ function CampaignWizard({
         method: 'POST',
         body: JSON.stringify({
           name,
+          // Numa conta WABA compartilhada é este campo que decide de quem é a
+          // campanha (e o custo); sem ele cairia no tenant principal.
+          clientId: clientId || undefined,
           integrationId,
           listId,
           mode,

@@ -1,4 +1,4 @@
-import { UserSession, isCollosRole } from '../database/types';
+import { ClientIntegrationLink, UserSession, isCollosRole } from '../database/types';
 
 /**
  * Tenants do usuário, tolerando tokens legados (pré multi-tenant) que carregam
@@ -49,6 +49,40 @@ export const isWithinScope = (
   scope: string | null,
   recordClientId?: string | null,
 ): boolean => scope === null || (recordClientId ?? null) === scope;
+
+/**
+ * True se um registro com N tenants (ex.: integração compartilhada) é visível
+ * no escopo. Collos (`scope === null`) vê tudo.
+ */
+export const isWithinScopeAny = (
+  scope: string | null,
+  recordClientIds: readonly string[],
+): boolean => scope === null || recordClientIds.includes(scope);
+
+/** Índice integrationId -> tenants com acesso, a partir dos vínculos N:N. */
+export const clientIdsByIntegration = (
+  links: readonly ClientIntegrationLink[],
+): Map<string, string[]> => {
+  const index = new Map<string, string[]>();
+  for (const link of links) {
+    const current = index.get(link.integrationId);
+    if (current) {
+      if (!current.includes(link.clientId)) {
+        current.push(link.clientId);
+      }
+    } else {
+      index.set(link.integrationId, [link.clientId]);
+    }
+  }
+  return index;
+};
+
+/** Ids das integrações que um tenant pode usar. */
+export const integrationIdsForClient = (
+  links: readonly ClientIntegrationLink[],
+  clientId: string,
+): Set<string> =>
+  new Set(links.filter((link) => link.clientId === clientId).map((link) => link.integrationId));
 
 /**
  * clientId a gravar ao criar um registro:
