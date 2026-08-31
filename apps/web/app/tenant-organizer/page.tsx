@@ -40,7 +40,7 @@ interface OverviewTemplate {
   integrationId: string;
   integrationName: string;
   clientId: string | null;
-  effectiveClientId: string | null;
+  effectiveClientIds: string[];
 }
 interface Overview {
   clients: OverviewClient[];
@@ -517,7 +517,7 @@ function TemplatesSection({
               <th>Nome</th>
               <th>Idioma</th>
               <th>Conta WABA</th>
-              <th>Tenant efetivo</th>
+              <th>Quem enxerga</th>
               <th>Etiqueta</th>
             </tr>
           </thead>
@@ -544,7 +544,11 @@ function TemplatesSection({
                     <td className="cell-strong">{template.name}</td>
                     <td className="cell-sub">{template.languageCode}</td>
                     <td className="cell-sub">{template.integrationName}</td>
-                    <td className="cell-sub">{clientName(template.effectiveClientId)}</td>
+                    <td className="cell-sub">
+                      {template.effectiveClientIds.length === 0
+                        ? clientName(null)
+                        : template.effectiveClientIds.map(clientName).join(', ')}
+                    </td>
                     <td>
                       {template.clientId ? (
                         <BadgeText label="etiquetado" cls="success" />

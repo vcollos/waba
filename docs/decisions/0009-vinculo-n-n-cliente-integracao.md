@@ -2,7 +2,7 @@
 
 - **Status:** Aceito
 - **Data:** 2026-08
-- **Contexto Plane:** WABA Collos
+- **Contexto Plane:** WABA Collos (issue WABA-30)
 - **Gate:** verificado contra cópia dos dados de produção (banco de rascunho)
 
 ## Contexto
@@ -114,6 +114,8 @@ e `Uniodontos WABA → Campinas + Brasil + Operação compartilhada`.
 - A tela de Clientes deixou de mostrar "vinculada a outro cliente" (que sugeria
   exclusividade) e passou a mostrar "também em ⟨clientes⟩". A tela de
   Integrações troca o select "Cliente" por marcação múltipla "Clientes com
-  acesso".
+  acesso". No Organizador de tenants, a coluna "Tenant efetivo" virou "Quem
+  enxerga" e lista todos os tenants que veem o modelo, já que um modelo sem
+  etiqueta agora é visível a todos os vinculados à conta.
 - Fica pendente a limpeza do schema morto (`client_integrations`, `clients`,
   FK de `users`), fora do escopo desta mudança.
