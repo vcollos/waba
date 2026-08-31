@@ -11,6 +11,7 @@ import {
   CampaignAudienceSnapshot,
   CampaignMessageRecord,
   CampaignRecord,
+  ClientIntegrationLink,
   ContactRecord,
   FlowCacheRecord,
   FlowResponseRecord,
@@ -32,6 +33,9 @@ import {
 import { newId, nowIso } from './helpers';
 import { getEnv } from '../common/env';
 import { hashPassword } from '../common/password';
+
+/** Marcador do backfill único que recupera vínculos a partir das campanhas. */
+const CAMPAIGN_LINK_BACKFILL = 'integration_clients_from_campaigns_v1';
 
 @Injectable()
 export class DatabaseService implements OnModuleDestroy {
@@ -383,6 +387,180 @@ export class DatabaseService implements OnModuleDestroy {
     };
   }
 
+  /**
+   * Vínculos N:N tenant <-> integração. Fonte de verdade de quem pode usar cada
+   * conta WABA (ADR 0009).
+   */
+  async listClientIntegrationsInDatabase(): Promise<ClientIntegrationLink[]> {
+    await this.ensureReady();
+    if (!this.metaClient) {
+      return structuredClone(this.metaStateCache.clientIntegrations);
+    }
+
+    const rows = await this.metaClient.query<ClientIntegrationRow>(
+      `SELECT client_id, integration_id, created_at, created_by
+       FROM integration_clients
+       ORDER BY created_at ASC`,
+    );
+
+    return rows.rows.map(mapClientIntegrationRow);
+  }
+
+  /**
+   * Redefine os vínculos DE UM CLIENTE, sem tocar nos vínculos dos demais.
+   *
+   * É o que impede o "roubo" silencioso: salvar o cliente A nunca mais remove a
+   * integração compartilhada do cliente B. Remoção só acontece aqui, quando o
+   * admin desmarca — e a lista enviada é sempre a do cliente em edição.
+   */
+  async replaceClientIntegrationsForClient(
+    clientId: string,
+    integrationIds: string[],
+    actorId: string,
+  ): Promise<void> {
+    await this.ensureReady();
+    const desired = [...new Set(integrationIds)];
+    const createdAt = nowIso();
+
+    if (!this.metaClient) {
+      await this.write((state) => {
+        const others = state.clientIntegrations.filter((link) => link.clientId !== clientId);
+        const kept = state.clientIntegrations.filter(
+          (link) => link.clientId === clientId && desired.includes(link.integrationId),
+        );
+        const keptIds = new Set(kept.map((link) => link.integrationId));
+        const added = desired
+          .filter((integrationId) => !keptIds.has(integrationId))
+          .map((integrationId) => ({ clientId, integrationId, createdAt, createdBy: actorId }));
+        state.clientIntegrations = [...others, ...kept, ...added];
+        syncPrimaryClientsInState(state);
+      });
+      return;
+    }
+
+    const affected = await this.postgresTransaction(async (client) => {
+      const before = await client.query<{ integration_id: string }>(
+        'SELECT integration_id FROM integration_clients WHERE client_id = $1',
+        [clientId],
+      );
+      await client.query(
+        'DELETE FROM integration_clients WHERE client_id = $1 AND NOT (integration_id = ANY($2::text[]))',
+        [clientId, desired],
+      );
+      for (const integrationId of desired) {
+        await client.query(
+          `INSERT INTO integration_clients (client_id, integration_id, created_at, created_by)
+           VALUES ($1, $2, $3::timestamptz, $4)
+           ON CONFLICT (client_id, integration_id) DO NOTHING`,
+          [clientId, integrationId, createdAt, actorId],
+        );
+      }
+      return [...new Set([...before.rows.map((row) => row.integration_id), ...desired])];
+    });
+
+    await this.syncIntegrationPrimaryClients(affected);
+    await this.refreshClientIntegrationCache();
+  }
+
+  /** Redefine os tenants DE UMA INTEGRAÇÃO, sem tocar nas outras integrações. */
+  async replaceClientsForIntegration(
+    integrationId: string,
+    clientIds: string[],
+    actorId: string,
+  ): Promise<void> {
+    await this.ensureReady();
+    const desired = [...new Set(clientIds)];
+    const createdAt = nowIso();
+
+    if (!this.metaClient) {
+      await this.write((state) => {
+        const others = state.clientIntegrations.filter(
+          (link) => link.integrationId !== integrationId,
+        );
+        const kept = state.clientIntegrations.filter(
+          (link) => link.integrationId === integrationId && desired.includes(link.clientId),
+        );
+        const keptIds = new Set(kept.map((link) => link.clientId));
+        const added = desired
+          .filter((clientId) => !keptIds.has(clientId))
+          .map((clientId) => ({ clientId, integrationId, createdAt, createdBy: actorId }));
+        state.clientIntegrations = [...others, ...kept, ...added];
+        syncPrimaryClientsInState(state);
+      });
+      return;
+    }
+
+    await this.postgresTransaction(async (client) => {
+      await client.query(
+        'DELETE FROM integration_clients WHERE integration_id = $1 AND NOT (client_id = ANY($2::text[]))',
+        [integrationId, desired],
+      );
+      for (const clientId of desired) {
+        await client.query(
+          `INSERT INTO integration_clients (client_id, integration_id, created_at, created_by)
+           VALUES ($1, $2, $3::timestamptz, $4)
+           ON CONFLICT (client_id, integration_id) DO NOTHING`,
+          [clientId, integrationId, createdAt, actorId],
+        );
+      }
+    });
+
+    await this.syncIntegrationPrimaryClients([integrationId]);
+    await this.refreshClientIntegrationCache();
+  }
+
+  /**
+   * Mantém `integrations.client_id` (campo derivado, legado) igual ao vínculo
+   * mais antigo da integração — ou NULL quando não sobra nenhum. Sem isso o
+   * backfill de boot ressuscitaria um vínculo que o admin acabou de remover.
+   */
+  private async syncIntegrationPrimaryClients(integrationIds: string[]): Promise<void> {
+    if (!this.metaClient || integrationIds.length === 0) {
+      return;
+    }
+
+    await this.metaClient.query(
+      `UPDATE integrations
+       SET client_id = (
+         SELECT link.client_id
+         FROM integration_clients link
+         WHERE link.integration_id = integrations.id
+         ORDER BY link.created_at ASC, link.client_id ASC
+         LIMIT 1
+       )
+       WHERE id = ANY($1::text[])`,
+      [integrationIds],
+    );
+  }
+
+  private async refreshClientIntegrationCache(): Promise<void> {
+    if (!this.metaClient) {
+      return;
+    }
+
+    const [links, integrations] = await Promise.all([
+      this.metaClient.query<ClientIntegrationRow>(
+        `SELECT client_id, integration_id, created_at, created_by
+         FROM integration_clients
+         ORDER BY created_at ASC`,
+      ),
+      this.metaClient.query<IntegrationRow>(
+        `SELECT
+          id, name, graph_api_version, graph_api_base, waba_id, phone_number_id,
+          access_token_ciphertext, verify_token_ciphertext, app_secret_ciphertext,
+          client_id, webhook_callback_url, status, last_sync_at, last_healthcheck_at,
+          created_at, updated_at
+         FROM integrations`,
+      ),
+    ]);
+
+    this.metaStateCache = {
+      ...this.metaStateCache,
+      clientIntegrations: links.rows.map(mapClientIntegrationRow),
+      integrations: integrations.rows.map(mapIntegrationRow),
+    };
+  }
+
   async listTemplatesInDatabase(integrationId?: string): Promise<TemplateCacheRecord[]> {
     await this.ensureReady();
     if (!this.metaClient) {
@@ -534,6 +712,8 @@ export class DatabaseService implements OnModuleDestroy {
         endpoint_uri,
         assets_json,
         completion_payload_definitions_json,
+        input_field_definitions_json,
+        screen_transitions_json,
         raw_json,
         last_synced_at
        FROM flows
@@ -574,10 +754,12 @@ export class DatabaseService implements OnModuleDestroy {
             endpoint_uri,
             assets_json,
             completion_payload_definitions_json,
+            input_field_definitions_json,
+            screen_transitions_json,
             raw_json,
             last_synced_at
           ) VALUES (
-            $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::timestamptz
+            $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::timestamptz
           )`,
           [
             flow.id,
@@ -594,6 +776,8 @@ export class DatabaseService implements OnModuleDestroy {
             flow.endpointUri ?? null,
             JSON.stringify(flow.assets ?? []),
             JSON.stringify(flow.completionPayloadDefinitions ?? []),
+            JSON.stringify(flow.inputFieldDefinitions ?? []),
+            JSON.stringify(flow.screenTransitions ?? []),
             JSON.stringify(flow.raw ?? {}),
             flow.lastSyncedAt,
           ],
@@ -728,6 +912,28 @@ export class DatabaseService implements OnModuleDestroy {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_integrations_waba_phone
           ON integrations (waba_id, phone_number_id);
+        -- Vínculo N:N tenant <-> integração. Fonte de verdade de quem pode usar
+        -- uma conta WABA. Só sai por ação explícita de admin (ADR 0009).
+        -- Nome propositalmente diferente de client_integrations: aquela tabela
+        -- é schema morto de uma tentativa relacional anterior (FK para a tabela
+        -- clients, que o código não usa mais — os tenants vivem no blob
+        -- app_state). Nada aqui a lê ou escreve.
+        CREATE TABLE IF NOT EXISTS integration_clients (
+          client_id TEXT NOT NULL,
+          integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL,
+          created_by TEXT,
+          PRIMARY KEY (client_id, integration_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_integration_clients_integration
+          ON integration_clients (integration_id);
+        -- Marcador de backfills de dado que rodam UMA vez. Sem ele, um backfill
+        -- idempotente ressuscitaria em todo boot vínculos que o admin removeu.
+        CREATE TABLE IF NOT EXISTS schema_backfills (
+          name TEXT PRIMARY KEY,
+          applied_at TIMESTAMPTZ NOT NULL,
+          details JSONB
+        );
         CREATE TABLE IF NOT EXISTS templates (
           id TEXT PRIMARY KEY,
           integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,
@@ -763,6 +969,8 @@ export class DatabaseService implements OnModuleDestroy {
           endpoint_uri TEXT,
           assets_json JSONB,
           completion_payload_definitions_json JSONB,
+          input_field_definitions_json JSONB,
+          screen_transitions_json JSONB,
           raw_json JSONB NOT NULL,
           last_synced_at TIMESTAMPTZ NOT NULL
         );
@@ -968,7 +1176,10 @@ export class DatabaseService implements OnModuleDestroy {
 
     if (this.metaClient) {
       await this.bootstrapPostgresMetaCollections();
+      await this.backfillClientIntegrations();
       await this.persistMetaState(this.metaStateCache);
+    } else {
+      this.backfillClientIntegrationsInState();
     }
 
     await this.ensureTenantSeed();
@@ -1119,6 +1330,14 @@ export class DatabaseService implements OnModuleDestroy {
           ON contacts (COALESCE(client_id, ''), phone_hash);
         ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_phone_hash_key;
         ALTER TABLE imports ADD COLUMN IF NOT EXISTS skipped_rows INTEGER NOT NULL DEFAULT 0;
+      `);
+
+      // WABA-27: escala declarada das perguntas do flow (data-source do FLOW_JSON).
+      // Coluna nova e opcional: flows já sincronizados ficam com NULL e caem no
+      // fallback de escala observada até o próximo sync. Idempotente.
+      await this.metaClient.query(`
+        ALTER TABLE flows ADD COLUMN IF NOT EXISTS input_field_definitions_json JSONB;
+        ALTER TABLE flows ADD COLUMN IF NOT EXISTS screen_transitions_json JSONB;
       `);
     }
   }
@@ -2715,6 +2934,109 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+
+  /**
+   * Equivalente do backfill para a instalação sem Postgres (blob app_state).
+   * Só age em integração com `clientId` e SEM nenhum vínculo — mesma garantia
+   * de não ressuscitar o que um admin removeu.
+   */
+  private backfillClientIntegrationsInState(): void {
+    const linked = new Set(
+      this.metaStateCache.clientIntegrations.map((link) => link.integrationId),
+    );
+    const createdAt = nowIso();
+    const added = this.metaStateCache.integrations
+      .filter((integration) => integration.clientId && !linked.has(integration.id))
+      .map((integration) => ({
+        clientId: integration.clientId as string,
+        integrationId: integration.id,
+        createdAt,
+        createdBy: 'migration:integration_client_id',
+      }));
+
+    if (added.length === 0) {
+      return;
+    }
+
+    this.metaStateCache = {
+      ...this.metaStateCache,
+      clientIntegrations: [...this.metaStateCache.clientIntegrations, ...added],
+    };
+  }
+
+  /**
+   * Popula `integration_clients` a partir do modelo antigo (1 integração = 1
+   * cliente), sem nunca ressuscitar um vínculo removido por um admin.
+   *
+   * Duas fontes:
+   * 1. `integrations.client_id` — só para integrações SEM nenhum vínculo, isto
+   *    é, linhas legadas ainda não migradas. Roda em todo boot e é inócua
+   *    depois da primeira vez: quem tem vínculo não é tocado, e desvincular
+   *    tudo zera o `client_id` (ver `syncIntegrationPrimaryClients`).
+   * 2. Campanhas já criadas — recupera os tenants que perderam o acesso no
+   *    modelo exclusivo, em que atribuir a integração a um cliente a removia
+   *    silenciosamente do outro. Roda UMA única vez, marcada em
+   *    `schema_backfills`; sem essa trava, todo restart traria de volta
+   *    vínculos que o admin tivesse acabado de remover.
+   */
+  private async backfillClientIntegrations(): Promise<void> {
+    if (!this.metaClient) {
+      return;
+    }
+
+    await this.metaClient.query(
+      `INSERT INTO integration_clients (client_id, integration_id, created_at, created_by)
+       SELECT integration.client_id, integration.id, NOW(), 'migration:integration_client_id'
+       FROM integrations integration
+       WHERE integration.client_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM integration_clients link WHERE link.integration_id = integration.id
+         )
+       ON CONFLICT (client_id, integration_id) DO NOTHING`,
+    );
+
+    const applied = await this.metaClient.query(
+      'SELECT 1 FROM schema_backfills WHERE name = $1',
+      [CAMPAIGN_LINK_BACKFILL],
+    );
+    if (applied.rowCount === 0) {
+      const integrationIds = new Set(this.metaStateCache.integrations.map((item) => item.id));
+      const clientIds = new Set(this.metaStateCache.clients.map((item) => item.id));
+      const pairs = new Map<string, { clientId: string; integrationId: string }>();
+      for (const campaign of this.metaStateCache.campaigns) {
+        const clientId = campaign.clientId ?? null;
+        if (!clientId || !clientIds.has(clientId) || !integrationIds.has(campaign.integrationId)) {
+          continue;
+        }
+        pairs.set(`${clientId}:${campaign.integrationId}`, {
+          clientId,
+          integrationId: campaign.integrationId,
+        });
+      }
+
+      for (const pair of pairs.values()) {
+        await this.metaClient.query(
+          `INSERT INTO integration_clients (client_id, integration_id, created_at, created_by)
+           VALUES ($1, $2, NOW(), 'migration:campaign_history')
+           ON CONFLICT (client_id, integration_id) DO NOTHING`,
+          [pair.clientId, pair.integrationId],
+        );
+      }
+
+      await this.metaClient.query(
+        `INSERT INTO schema_backfills (name, applied_at, details)
+         VALUES ($1, NOW(), $2::jsonb)
+         ON CONFLICT (name) DO NOTHING`,
+        [CAMPAIGN_LINK_BACKFILL, JSON.stringify({ pairs: [...pairs.values()] })],
+      );
+    }
+
+    await this.syncIntegrationPrimaryClients(
+      this.metaStateCache.integrations.map((integration) => integration.id),
+    );
+    await this.refreshClientIntegrationCache();
+  }
+
   private async bootstrapPostgresMetaCollections(): Promise<void> {
     if (!this.metaClient) {
       return;
@@ -2739,6 +3061,7 @@ export class DatabaseService implements OnModuleDestroy {
             access_token_ciphertext,
             verify_token_ciphertext,
             app_secret_ciphertext,
+            client_id,
             webhook_callback_url,
             status,
             last_sync_at,
@@ -2746,8 +3069,8 @@ export class DatabaseService implements OnModuleDestroy {
             created_at,
             updated_at
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::timestamptz,
-            $13::timestamptz, $14::timestamptz, $15::timestamptz
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::timestamptz,
+            $14::timestamptz, $15::timestamptz, $16::timestamptz
           )
           ON CONFLICT (id) DO NOTHING`,
           [
@@ -2760,6 +3083,7 @@ export class DatabaseService implements OnModuleDestroy {
             integration.accessTokenCiphertext,
             integration.verifyTokenCiphertext,
             integration.appSecretCiphertext ?? null,
+            integration.clientId ?? null,
             integration.webhookCallbackUrl ?? null,
             integration.status,
             integration.lastSyncAt ?? null,
@@ -2847,10 +3171,12 @@ export class DatabaseService implements OnModuleDestroy {
               endpoint_uri,
               assets_json,
               completion_payload_definitions_json,
+              input_field_definitions_json,
+              screen_transitions_json,
               raw_json,
               last_synced_at
             ) VALUES (
-              $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::timestamptz
+              $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::timestamptz, $11::jsonb, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, $17::jsonb, $18::timestamptz
             )`,
             [
               flow.id,
@@ -2867,6 +3193,8 @@ export class DatabaseService implements OnModuleDestroy {
               flow.endpointUri ?? null,
               JSON.stringify(flow.assets ?? []),
               JSON.stringify(flow.completionPayloadDefinitions ?? []),
+              JSON.stringify(flow.inputFieldDefinitions ?? []),
+              JSON.stringify(flow.screenTransitions ?? []),
               JSON.stringify(flow.raw ?? {}),
               flow.lastSyncedAt,
             ],
@@ -2875,7 +3203,7 @@ export class DatabaseService implements OnModuleDestroy {
       }
     }
 
-    const [integrationsResult, templatesResult, flowsResult] = await Promise.all([
+    const [integrationsResult, templatesResult, flowsResult, linksResult] = await Promise.all([
       this.metaClient.query<IntegrationRow>(
         `SELECT
           id,
@@ -2932,10 +3260,17 @@ export class DatabaseService implements OnModuleDestroy {
           endpoint_uri,
           assets_json,
           completion_payload_definitions_json,
+          input_field_definitions_json,
+          screen_transitions_json,
           raw_json,
           last_synced_at
          FROM flows
          ORDER BY last_synced_at DESC`,
+      ),
+      this.metaClient.query<ClientIntegrationRow>(
+        `SELECT client_id, integration_id, created_at, created_by
+         FROM integration_clients
+         ORDER BY created_at ASC`,
       ),
     ]);
 
@@ -2944,6 +3279,7 @@ export class DatabaseService implements OnModuleDestroy {
       integrations: integrationsResult.rows.map(mapIntegrationRow),
       templates: templatesResult.rows.map(mapTemplateRow),
       flows: flowsResult.rows.map(mapFlowRow),
+      clientIntegrations: linksResult.rows.map(mapClientIntegrationRow),
     };
   }
 }
@@ -2999,6 +3335,8 @@ type FlowRow = {
   endpoint_uri: string | null;
   assets_json: unknown;
   completion_payload_definitions_json: unknown;
+  input_field_definitions_json: unknown;
+  screen_transitions_json: unknown;
   raw_json: unknown;
   last_synced_at: string | Date;
 };
@@ -3226,6 +3564,37 @@ const toIsoString = (value: string | Date | null | undefined): string | null => 
   return value instanceof Date ? value.toISOString() : String(value);
 };
 
+type ClientIntegrationRow = {
+  client_id: string;
+  integration_id: string;
+  created_at: string | Date;
+  created_by: string | null;
+};
+
+const mapClientIntegrationRow = (row: ClientIntegrationRow): ClientIntegrationLink => ({
+  clientId: row.client_id,
+  integrationId: row.integration_id,
+  createdAt: toIsoString(row.created_at) ?? new Date().toISOString(),
+  createdBy: row.created_by,
+});
+
+/**
+ * Espelha, no estado em memória/blob, a mesma regra do Postgres: o `clientId`
+ * da integração é o vínculo mais antigo (ou null quando não há nenhum).
+ */
+const syncPrimaryClientsInState = (state: AppState): void => {
+  state.integrations = state.integrations.map((integration) => {
+    const links = state.clientIntegrations
+      .filter((link) => link.integrationId === integration.id)
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.clientId.localeCompare(right.clientId),
+      );
+    return { ...integration, clientId: links[0]?.clientId ?? null };
+  });
+};
+
 const mapIntegrationRow = (row: IntegrationRow): IntegrationRecord => ({
   id: row.id,
   name: row.name,
@@ -3277,6 +3646,8 @@ const mapFlowRow = (row: FlowRow): FlowCacheRecord => ({
   endpointUri: row.endpoint_uri,
   assets: parseJsonArray<Record<string, unknown>>(row.assets_json),
   completionPayloadDefinitions: parseJsonArray(row.completion_payload_definitions_json),
+  inputFieldDefinitions: parseJsonArray(row.input_field_definitions_json),
+  screenTransitions: parseJsonArray(row.screen_transitions_json),
   raw: parseJsonObject(row.raw_json),
   lastSyncedAt: toIsoString(row.last_synced_at) ?? new Date().toISOString(),
 });

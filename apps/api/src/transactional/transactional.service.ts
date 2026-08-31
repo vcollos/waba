@@ -9,6 +9,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { CampaignsService } from '../campaigns/campaigns.service';
+import { integrationIdsForClient } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { hash, newId, normalizePhone, nowIso } from '../database/helpers';
 import {
@@ -293,9 +294,15 @@ export class TransactionalService {
     apiClientId: string,
     integrationId?: string | null,
   ): Promise<IntegrationRecord> {
-    const all = await this.database.listIntegrationsInDatabase();
+    const [all, links] = await Promise.all([
+      this.database.listIntegrationsInDatabase(),
+      this.database.listClientIntegrationsInDatabase(),
+    ]);
+    // Vínculo N:N: o tenant enxerga toda conta WABA vinculada a ele, inclusive
+    // uma compartilhada com outro tenant.
+    const allowed = integrationIdsForClient(links, apiClientId);
     const tenantIntegrations = all.filter(
-      (integration) => integration.clientId === apiClientId && integration.status === 'active',
+      (integration) => allowed.has(integration.id) && integration.status === 'active',
     );
 
     if (tenantIntegrations.length === 0) {

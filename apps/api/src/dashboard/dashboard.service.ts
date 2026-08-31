@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { resolveClientScope } from '../common/scope';
+import { integrationIdsForClient, resolveClientScope } from '../common/scope';
 import { campaignFunnel, sumCampaignSummaries } from '../common/campaign-metrics';
 import { CampaignRecord, UserSession, isCollosRole } from '../database/types';
 
@@ -55,10 +55,15 @@ export class DashboardService {
     // daria o mesmo resultado, mas somar baldes mantém uma única fonte de verdade.
     const totals = campaignFunnel(sumCampaignSummaries(campaigns.map((campaign) => campaign.summary)));
 
+    // Conta integrações ATIVAS que o tenant pode usar: uma conta WABA
+    // compartilhada conta para todos os tenants vinculados.
+    const allowedIntegrationIds = scopeClientId
+      ? integrationIdsForClient(state.clientIntegrations, scopeClientId)
+      : null;
     const activeIntegrations = state.integrations.filter(
       (integration) =>
         integration.status === 'active' &&
-        (!scopeClientId || integration.clientId === scopeClientId),
+        (!allowedIntegrationIds || allowedIntegrationIds.has(integration.id)),
     ).length;
 
     return {

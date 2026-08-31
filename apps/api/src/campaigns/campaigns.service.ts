@@ -10,7 +10,7 @@ import {
   nowIso,
   resolveParameterValue,
 } from '../database/helpers';
-import { isWithinScope, resolveClientScope } from '../common/scope';
+import { isWithinScope, isWithinScopeAny, resolveClientScope } from '../common/scope';
 import {
   CampaignAudienceConfig,
   CampaignAudienceOrderField,
@@ -25,6 +25,12 @@ import {
 
 export interface CreateCampaignInput {
   name: string;
+  /**
+   * Tenant dono da campanha. Necessário quando a conta WABA é compartilhada por
+   * mais de um cliente: sem ele a campanha (e o custo) cairia no tenant
+   * principal da integração. Papel de cliente só consegue o próprio.
+   */
+  clientId?: string | null;
   integrationId: string;
   listId: string;
   mode: CampaignRecord['mode'];
@@ -219,10 +225,20 @@ export class CampaignsService {
 
     // A integração vem primeiro: ela define o tenant da campanha e amarra o que
     // pode ser usado nela. O dispatch envia sempre por `campaign.integrationId`.
+    const scope = resolveClientScope(actor, input.clientId);
     const integration = state.integrations.find((item) => item.id === input.integrationId);
-    if (!integration || !isWithinScope(resolveClientScope(actor), integration.clientId)) {
+    const linkedClientIds = state.clientIntegrations
+      .filter((link) => link.integrationId === input.integrationId)
+      .map((link) => link.clientId);
+    if (!integration || !isWithinScopeAny(scope, linkedClientIds)) {
       throw new NotFoundException('Integração não encontrada');
     }
+
+    // Tenant da campanha: o escopo ativo (seletor da topbar ou tenant do
+    // usuário). Sem escopo — Collos vendo tudo — cai no único tenant vinculado
+    // ou no principal da integração.
+    const campaignClientId =
+      scope ?? (linkedClientIds.length === 1 ? linkedClientIds[0] : integration.clientId ?? null);
     if (!(await this.loadListsByIds([input.listId])).has(input.listId)) {
       throw new NotFoundException('Lista não encontrada');
     }
@@ -273,7 +289,7 @@ export class CampaignsService {
 
     const campaign: CampaignRecord = {
       id: newId(),
-      clientId: integration.clientId ?? null,
+      clientId: campaignClientId,
       integrationId: integration.id,
       name: input.name,
       mode: input.mode,

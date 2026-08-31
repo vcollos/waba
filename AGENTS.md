@@ -34,16 +34,28 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
 - papéis Collos (`super_admin`/`admin`) veem tudo; papéis de cliente
   (`client_admin`/`operator`/`viewer`) só o próprio tenant; `viewer` = leitura
 - escopo centralizado em `apps/api/src/common/scope.ts` (`resolveClientScope`,
-  `writeClientId`, `isWithinScope`, `sessionClientIds`)
+  `writeClientId`, `isWithinScope`, `isWithinScopeAny`, `sessionClientIds`)
 - toda entidade escopável grava `client_id` via `writeClientId` e filtra leitura
   via `resolveClientScope`/`isWithinScope`
+- **integração é N:N**: uma conta WABA pode servir vários tenants. Quem pode
+  usá-la vive em `integration_clients`, não em `integrations.client_id` — este é
+  campo **derivado** (tenant principal = vínculo mais antigo) e nenhuma
+  autorização o consulta. Use `isWithinScopeAny` /
+  `listClientIntegrationsInDatabase` (ADR 0009).
+- vínculo só sai por ação explícita de admin (`PUT /clients/:id/integrations`,
+  `PUT /integrations/:id/clients`). Salvar um cliente **não** toca nos vínculos
+  de outro; `POST /integrations` sem `clientIds` não mexe em vínculo nenhum.
 - exceção: `templates.client_id` é um **override** (etiqueta administrativa), não
   um tenant de criação — tenant efetivo do modelo =
-  `template.clientId ?? integration.clientId` (ADR 0004). Etiquetar **move** o
-  modelo: o tenant anterior perde a visibilidade.
+  `template.clientId` quando existe, senão **todos** os tenants vinculados à
+  integração (ADR 0004 + 0009). Etiquetar **move** o modelo: os demais tenants
+  perdem a visibilidade.
 - campanha: template e flow só podem ser da **integração da campanha** — a
   integração define o que pode ser usado nela (`campaigns.service.ts#create`)
-- detalhes e decisões em `docs/decisions/` (ver ADR 0001, 0002 e 0004)
+- campanha em conta compartilhada grava o tenant do **escopo ativo** (seletor da
+  topbar / tenant do usuário), não o da integração — é o que mantém o custo no
+  cliente certo (ADR 0007 + 0009)
+- detalhes e decisões em `docs/decisions/` (ver ADR 0001, 0002, 0004 e 0009)
 
 ## API pública por token de tenant
 
@@ -88,6 +100,20 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
 - se o browser mostrar erro de CORS, assuma primeiro que pode ser `502` upstream
 - não altere segredos, tokens Meta ou callback URL sem necessidade explícita
 - não faça reset destrutivo de banco, volumes Docker ou histórico git
+
+## Sync de flows × campanha de pesquisa (ordem obrigatória)
+
+`flows.id` é **regenerado a cada sync** (`newId()` + DELETE/INSERT), e campanhas
+e respostas guardam esse id. Consequência operacional (ver ADR 0008):
+
+- **sincronize a integração ANTES de criar a campanha**
+- **não sincronize entre criar a campanha e o fim da coleta** — um sync nessa
+  janela quebra o vínculo apenas das respostas que chegarem **depois**
+- respostas já coletadas sobrevivem: `meta_flow_id` é gravado junto e é estável
+- não há sync automático; o único gatilho é o botão na tela de Integrações
+- as métricas de pesquisa (NPS/CSAT) só usam a escala declarada no FLOW_JSON
+  depois de um sync que popule `flows.input_field_definitions_json` e
+  `flows.screen_transitions_json`; antes disso caem em escala observada
 
 ## Backup obrigatório antes de deploy
 
@@ -192,6 +218,8 @@ Com token válido, validar:
 - `GET /api/reports/campaigns` (relatório de custos; ver ADR 0007)
 - `POST /api/integrations/{id}/test`
 - `POST /api/integrations/{id}/sync/flows`
+- `GET /api/integrations` — confira `clientIds` de cada conta (vínculo N:N,
+  ADR 0009); conta compartilhada tem mais de um tenant na lista
 
 Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
 
@@ -212,7 +240,17 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
   puro, sem Chromium; fontes vendorizadas copiadas ao `dist` no build; WABA-25),
   `/reports/rates`, `/reports/settings`; reusa
   `results.service.ts`/`campaign-metrics.ts`)
-- resultados: `apps/api/src/results/results.service.ts`
+- sync de templates/flows na Meta: `apps/api/src/integrations/meta-graph.service.ts`
+  — além do payload de `complete`, extrai do FLOW_JSON os **componentes de
+  entrada** (com as opções do `data-source`) e as **arestas de navegação** entre
+  telas, persistidos em `flows.input_field_definitions_json` /
+  `flows.screen_transitions_json` (ADR 0008); download do FLOW_JSON limitado a
+  5 MB
+- resultados: `apps/api/src/results/results.service.ts` — métricas de pesquisa
+  usam a **escala declarada no flow** (não a inferida das respostas) e expõem
+  `scaleSource` (`declared`/`observed`) e `scaleOrientation`
+  (`ascending`/`descending`/`assumed`) no contrato; em qualquer ambiguidade cai
+  para escala observada e sinaliza (ADR 0008)
 - wrapper HTTP do frontend: `apps/web/lib/api.ts`
 
 ## Bugs e riscos já conhecidos
@@ -222,6 +260,9 @@ Sempre enviar `Origin: https://waba.collos.com.br` nos testes de CORS.
 - token JWT do frontend ainda fica em `localStorage`
 - polling do frontend existe e deve continuar contido
 - sync de flows é operação cara; tratar timeout e carga com cuidado
+- `flows.id` não é estável: regenerado a cada sync, quebra o vínculo de campanhas
+  e das respostas futuras (ver a seção de ordem obrigatória acima e ADR 0008)
+- botão de sync de flows não pede confirmação
 
 ## Diretriz de troubleshooting
 

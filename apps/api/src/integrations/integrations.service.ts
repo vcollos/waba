@@ -1,7 +1,7 @@
 import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../common/audit.service';
 import { CryptoService } from '../common/crypto.service';
-import { isWithinScope, resolveClientScope } from '../common/scope';
+import { clientIdsByIntegration, isWithinScopeAny, resolveClientScope } from '../common/scope';
 import { DatabaseService } from '../database/database.service';
 import { newId, nowIso } from '../database/helpers';
 import { FlowCacheRecord, IntegrationRecord, TemplateCacheRecord, UserSession } from '../database/types';
@@ -18,7 +18,14 @@ export interface SaveIntegrationInput {
   verifyToken: string;
   appSecret?: string;
   webhookCallbackUrl?: string;
+  /**
+   * Legado (tenant principal). Na criação vira o primeiro vínculo; na edição é
+   * ADITIVO — nunca remove um tenant já vinculado. Remoção só pelos endpoints
+   * dedicados de vínculo.
+   */
   clientId?: string | null;
+  /** Conjunto completo de tenants com acesso. Quando presente, substitui os vínculos. */
+  clientIds?: string[];
   status?: 'active' | 'inactive';
 }
 
@@ -27,7 +34,14 @@ export interface EnvIntegrationInput extends SaveIntegrationInput {}
 export type SanitizedIntegration = Omit<
   IntegrationRecord,
   'accessTokenCiphertext' | 'verifyTokenCiphertext' | 'appSecretCiphertext'
->;
+> & {
+  /** Tenants com acesso a esta conta WABA (vínculo N:N, fonte de verdade). */
+  clientIds: string[];
+};
+
+/** Compara conjuntos de tenants ignorando ordem. */
+const sameClientSet = (left: string[], right: string[]): boolean =>
+  left.length === right.length && [...left].sort().join('|') === [...right].sort().join('|');
 
 @Injectable()
 export class IntegrationsService {
@@ -40,10 +54,29 @@ export class IntegrationsService {
 
   async list(session: UserSession): Promise<SanitizedIntegration[]> {
     const scope = resolveClientScope(session);
-    const integrations = await this.database.listIntegrationsInDatabase();
+    const [integrations, links] = await Promise.all([
+      this.database.listIntegrationsInDatabase(),
+      this.database.listClientIntegrationsInDatabase(),
+    ]);
+    const clientIdsById = clientIdsByIntegration(links);
     return integrations
-      .filter((integration) => isWithinScope(scope, integration.clientId))
-      .map((integration) => this.sanitize(integration));
+      .filter((integration) =>
+        isWithinScopeAny(scope, clientIdsById.get(integration.id) ?? []),
+      )
+      .map((integration) => {
+        const linked = clientIdsById.get(integration.id) ?? [];
+        // Papel de cliente não enxerga com quem a conta é compartilhada: só o
+        // próprio tenant. Quem administra vínculo é a Collos.
+        return this.sanitize(integration, scope === null ? linked : [scope]);
+      });
+  }
+
+  /** Tenants com acesso a uma integração (vínculo N:N). */
+  async linkedClientIds(integrationId: string): Promise<string[]> {
+    const links = await this.database.listClientIntegrationsInDatabase();
+    return links
+      .filter((link) => link.integrationId === integrationId)
+      .map((link) => link.clientId);
   }
 
   async getById(id: string): Promise<IntegrationRecord> {
@@ -120,7 +153,7 @@ export class IntegrationsService {
     // Env é apenas bootstrap inicial. Se a integração já existe, a UI é a fonte
     // de verdade — não sobrescrever nome, tokens, cliente ou status a cada boot.
     if (existing) {
-      return this.sanitize(existing);
+      return this.sanitize(existing, await this.linkedClientIds(existing.id));
     }
 
     return this.save(input, {
@@ -154,7 +187,9 @@ export class IntegrationsService {
           ? this.crypto.encrypt(input.appSecret)
           : (current?.appSecretCiphertext ?? null),
       webhookCallbackUrl: input.webhookCallbackUrl ?? current?.webhookCallbackUrl ?? null,
-      clientId: input.clientId !== undefined ? input.clientId : (current?.clientId ?? null),
+      // Campo derivado: `saveIntegrationInDatabase` grava o valor atual e a
+      // sincronia com o vínculo mais antigo acontece logo abaixo.
+      clientId: current?.clientId ?? null,
       status: input.status ?? current?.status ?? 'active',
       lastSyncAt: current?.lastSyncAt ?? null,
       lastHealthcheckAt: current?.lastHealthcheckAt ?? null,
@@ -164,12 +199,35 @@ export class IntegrationsService {
 
     await this.database.saveIntegrationInDatabase(integration);
 
+    // Vínculos: `clientIds` substitui o conjunto; `clientId` (legado) é apenas
+    // aditivo. Editar uma integração NUNCA desvincula um tenant por omissão —
+    // é exatamente o que fazia clientes perderem a conta WABA sem aviso.
+    const existingLinks = await this.linkedClientIds(integration.id);
+    const desiredLinks = input.clientIds
+      ? [...new Set(input.clientIds)]
+      : input.clientId
+        ? [...new Set([...existingLinks, input.clientId])]
+        : existingLinks;
+
+    if (!sameClientSet(existingLinks, desiredLinks)) {
+      await this.database.replaceClientsForIntegration(integration.id, desiredLinks, actor.id);
+      void this.audit
+        .log({
+          actorUserId: actor.id,
+          action: 'integration.clients_changed',
+          entityType: 'integration',
+          entityId: integration.id,
+          metadata: { before: existingLinks, after: desiredLinks },
+        })
+        .catch(() => undefined);
+    }
+
     void this.audit
       .log({
         actorUserId: actor.id,
         action: current ? 'integration.updated' : 'integration.created',
         entityType: 'integration',
-      entityId: integration.id,
+        entityId: integration.id,
         metadata: {
           wabaId: integration.wabaId,
           phoneNumberId: integration.phoneNumberId,
@@ -177,7 +235,7 @@ export class IntegrationsService {
       })
       .catch(() => undefined);
 
-    return this.sanitize(integration);
+    return this.sanitize(integration, desiredLinks);
   }
 
   async testConnection(id: string): Promise<Record<string, unknown>> {
@@ -194,7 +252,7 @@ export class IntegrationsService {
 
   async syncTemplates(id: string, actor: UserSession): Promise<TemplateCacheRecord[]> {
     const integration = await this.getById(id);
-    if (!isWithinScope(resolveClientScope(actor), integration.clientId)) {
+    if (!isWithinScopeAny(resolveClientScope(actor), await this.linkedClientIds(id))) {
       throw new NotFoundException('Integração não encontrada');
     }
     const templates = await this.wrapMetaCall(() => this.metaGraph.syncTemplates(integration));
@@ -218,36 +276,38 @@ export class IntegrationsService {
     return templates;
   }
 
-  /** (Re)atribui uma integração a um cliente (ou null para desvincular). Collos only. */
-  async setClient(
+  /**
+   * Define o conjunto EXATO de tenants com acesso a uma integração. Collos only.
+   *
+   * É a única forma de remover um vínculo pelo lado da integração — e nenhum
+   * outro caminho (boot, deploy, sync, edição de outro cliente) o desfaz.
+   */
+  async setClients(
     id: string,
-    clientId: string | null,
+    clientIds: string[],
     actor: UserSession,
   ): Promise<SanitizedIntegration> {
-    const integration = await this.getById(id);
-    const updated: IntegrationRecord = {
-      ...integration,
-      clientId: clientId || null,
-      updatedAt: nowIso(),
-    };
-    await this.database.saveIntegrationInDatabase(updated);
+    await this.getById(id);
+    const before = await this.linkedClientIds(id);
+    const after = [...new Set(clientIds.filter(Boolean))];
+    await this.database.replaceClientsForIntegration(id, after, actor.id);
 
     void this.audit
       .log({
         actorUserId: actor.id,
-        action: 'integration.client_assigned',
+        action: 'integration.clients_changed',
         entityType: 'integration',
         entityId: id,
-        metadata: { clientId: updated.clientId },
+        metadata: { before, after },
       })
       .catch(() => undefined);
 
-    return this.sanitize(updated);
+    return this.sanitize(await this.getById(id), after);
   }
 
   async syncFlows(id: string, actor: UserSession): Promise<FlowCacheRecord[]> {
     const integration = await this.getById(id);
-    if (!isWithinScope(resolveClientScope(actor), integration.clientId)) {
+    if (!isWithinScopeAny(resolveClientScope(actor), await this.linkedClientIds(id))) {
       throw new NotFoundException('Integração não encontrada');
     }
     const flows = await this.wrapMetaCall(() => this.metaGraph.syncFlows(integration));
@@ -271,13 +331,13 @@ export class IntegrationsService {
     return flows;
   }
 
-  private sanitize(integration: IntegrationRecord): SanitizedIntegration {
+  private sanitize(integration: IntegrationRecord, clientIds: string[]): SanitizedIntegration {
     const { accessTokenCiphertext, verifyTokenCiphertext, appSecretCiphertext, ...safe } =
       integration;
     void accessTokenCiphertext;
     void verifyTokenCiphertext;
     void appSecretCiphertext;
-    return safe;
+    return { ...safe, clientIds };
   }
 
   private async wrapMetaCall<T>(operation: () => Promise<T>): Promise<T> {

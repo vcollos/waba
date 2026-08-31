@@ -25,7 +25,10 @@ interface Integration {
   graphApiVersion: string;
   wabaId: string;
   phoneNumberId: string;
+  /** Tenant principal (derivado do vínculo mais antigo). */
   clientId: string | null;
+  /** Tenants com acesso — fonte de verdade do vínculo N:N. */
+  clientIds: string[];
   webhookCallbackUrl?: string | null;
   status: 'active' | 'inactive';
   lastSyncAt?: string | null;
@@ -82,8 +85,11 @@ function IntegrationsContent() {
     }
   };
 
-  const clientName = (clientId: string | null): string =>
-    clientId ? clients.find((c) => c.id === clientId)?.name ?? '—' : 'Pool Collos';
+  const clientName = (clientId: string): string =>
+    clients.find((c) => c.id === clientId)?.name ?? '—';
+  // Uma conta WABA pode atender vários tenants; a coluna lista todos.
+  const clientNames = (clientIds: string[]): string =>
+    clientIds.length === 0 ? 'Pool Collos' : clientIds.map(clientName).join(', ');
 
   if (!isCollosRole(session.role)) {
     return <Forbidden />;
@@ -110,7 +116,7 @@ function IntegrationsContent() {
           <thead>
             <tr>
               <th>Nome</th>
-              <th>Cliente</th>
+              <th>Clientes</th>
               <th>WABA ID</th>
               <th>Phone Number ID</th>
               <th>Graph API</th>
@@ -134,7 +140,7 @@ function IntegrationsContent() {
                 pageRows.map((integration) => (
                   <tr key={integration.id}>
                     <td className="cell-strong">{integration.name}</td>
-                    <td className="cell-sub">{clientName(integration.clientId)}</td>
+                    <td className="cell-sub">{clientNames(integration.clientIds)}</td>
                     <td className="cell-mono">{integration.wabaId}</td>
                     <td className="cell-mono">{integration.phoneNumberId}</td>
                     <td className="cell-mono">{integration.graphApiVersion}</td>
@@ -214,7 +220,7 @@ interface Draft {
   wabaId: string;
   phoneNumberId: string;
   webhookCallbackUrl: string;
-  clientId: string;
+  clientIds: string[];
   status: 'active' | 'inactive';
 }
 
@@ -236,7 +242,7 @@ function IntegrationModal({
     wabaId: integration?.wabaId ?? '',
     phoneNumberId: integration?.phoneNumberId ?? '',
     webhookCallbackUrl: integration?.webhookCallbackUrl ?? '',
-    clientId: integration?.clientId ?? '',
+    clientIds: integration?.clientIds ?? [],
     status: integration?.status ?? 'active',
   });
   // Segredos nunca chegam do servidor; ficam mascarados até o operador optar por atualizar.
@@ -253,10 +259,9 @@ function IntegrationModal({
     setSaving(true);
     setError(null);
     try {
-      const payload: Record<string, unknown> = {
-        ...draft,
-        clientId: draft.clientId || null,
-      };
+      // `clientIds` é o conjunto final de tenants com acesso. O backend só
+      // remove um vínculo por esta ação explícita.
+      const payload: Record<string, unknown> = { ...draft };
       if (integration) payload.id = integration.id;
       // Só envia segredos que o operador escolheu atualizar.
       if (editSecret.accessToken && secrets.accessToken) payload.accessToken = secrets.accessToken;
@@ -337,20 +342,39 @@ function IntegrationModal({
             onChange={(e) => set({ phoneNumberId: e.target.value })}
           />
         </div>
-        <div className="field">
-          <label>Cliente</label>
-          <select
-            className="input"
-            value={draft.clientId}
-            onChange={(e) => set({ clientId: e.target.value })}
-          >
-            <option value="">Pool Collos (sem tenant)</option>
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.name}
-              </option>
-            ))}
-          </select>
+        <div className="field col-2">
+          <label>Clientes com acesso</label>
+          {clients.length === 0 ? (
+            <span className="cell-sub">Nenhum cliente cadastrado.</span>
+          ) : (
+            <div className="stack" style={{ gap: 4 }}>
+              {clients.map((client) => {
+                const checked = draft.clientIds.includes(client.id);
+                return (
+                  <label key={client.id} className="check-row" style={{ padding: '6px 8px' }}>
+                    <span className={`cbox${checked ? ' on' : ''}`} />
+                    <input
+                      type="checkbox"
+                      style={{ display: 'none' }}
+                      checked={checked}
+                      onChange={() =>
+                        set({
+                          clientIds: checked
+                            ? draft.clientIds.filter((id) => id !== client.id)
+                            : [...draft.clientIds, client.id],
+                        })
+                      }
+                    />
+                    <span>{client.name}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <span className="cell-sub" style={{ fontSize: 12 }}>
+            Sem nenhum marcado a conta fica no pool Collos. Vários clientes podem compartilhar a
+            mesma conta WhatsApp; o vínculo só sai quando um admin desmarcar aqui.
+          </span>
         </div>
         <div className="field">
           <label>Status</label>

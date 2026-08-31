@@ -24,6 +24,7 @@ interface ClientView {
   billingEmail: string | null;
   status: 'active' | 'inactive';
   integrationsCount: number;
+  integrationIds: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -31,7 +32,8 @@ interface ClientView {
 interface Integration {
   id: string;
   name: string;
-  clientId: string | null;
+  /** Tenants com acesso — a mesma conta WABA pode servir mais de um. */
+  clientIds: string[];
 }
 
 type Draft = {
@@ -192,6 +194,7 @@ function ClientsContent() {
         <ClientModal
           client={editing === 'new' ? null : editing}
           integrations={integrations}
+          clients={clients}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -206,14 +209,17 @@ function ClientsContent() {
 function ClientModal({
   client,
   integrations,
+  clients,
   onClose,
   onSaved,
 }: {
   client: ClientView | null;
   integrations: Integration[];
+  clients: ClientView[];
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const clientName = (id: string): string => clients.find((c) => c.id === id)?.name ?? id;
   const [draft, setDraft] = useState<Draft>(
     client
       ? {
@@ -225,10 +231,9 @@ function ClientModal({
         }
       : emptyDraft(),
   );
-  // Integrações marcadas como pertencentes a este cliente.
-  const [assigned, setAssigned] = useState<string[]>(
-    client ? integrations.filter((i) => i.clientId === client.id).map((i) => i.id) : [],
-  );
+  // Integrações que este cliente pode usar. Vem do próprio cliente (vínculo
+  // N:N), não de um campo exclusivo da integração.
+  const [assigned, setAssigned] = useState<string[]>(client?.integrationIds ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -244,19 +249,13 @@ function ClientModal({
         method: client ? 'PATCH' : 'POST',
         body: JSON.stringify(draft),
       });
-      const clientId = saved.id;
-      // Reconcilia as integrações: atribui as marcadas, desvincula as que deixaram de estar.
-      await Promise.all(
-        integrations.map((integration) => {
-          const wasMine = integration.clientId === clientId;
-          const nowMine = assigned.includes(integration.id);
-          if (wasMine === nowMine) return Promise.resolve();
-          return apiRequest(`/integrations/${integration.id}/client`, {
-            method: 'PATCH',
-            body: JSON.stringify({ clientId: nowMine ? clientId : null }),
-          });
-        }),
-      );
+      // Uma única chamada, com o conjunto final DESTE cliente. O backend não
+      // toca nos vínculos dos outros tenants: salvar aqui nunca mais desvincula
+      // a conta WABA compartilhada de outro cliente.
+      await apiRequest(`/clients/${saved.id}/integrations`, {
+        method: 'PUT',
+        body: JSON.stringify({ integrationIds: assigned }),
+      });
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao salvar cliente.');
@@ -332,7 +331,9 @@ function ClientModal({
             <div className="stack" style={{ gap: 4 }}>
               {integrations.map((integration) => {
                 const checked = assigned.includes(integration.id);
-                const ownedByOther = !checked && integration.clientId && integration.clientId !== (client?.id ?? '');
+                // Vínculo N:N: marcar aqui não tira a conta de ninguém. O rótulo
+                // só informa com quem ela já é compartilhada.
+                const others = integration.clientIds.filter((id) => id !== (client?.id ?? ''));
                 return (
                   <label key={integration.id} className="check-row" style={{ padding: '6px 8px' }}>
                     <span className={`cbox${checked ? ' on' : ''}`} />
@@ -343,9 +344,9 @@ function ClientModal({
                       onChange={() => toggleIntegration(integration.id)}
                     />
                     <span>{integration.name}</span>
-                    {ownedByOther ? (
-                      <span className="badge neutral" style={{ marginLeft: 'auto' }}>
-                        vinculada a outro cliente
+                    {others.length > 0 ? (
+                      <span className="cell-sub" style={{ marginLeft: 'auto', fontSize: 12 }}>
+                        também em {others.map(clientName).join(', ')}
                       </span>
                     ) : null}
                   </label>
@@ -354,8 +355,9 @@ function ClientModal({
             </div>
           )}
           <span className="hint">
-            Marque as integrações que este cliente pode usar. Ele também pode conectar as próprias na
-            tela de Integrações.
+            Marque as integrações que este cliente pode usar. Uma mesma conta WhatsApp pode
+            atender vários clientes — marcar aqui não desvincula ninguém. O vínculo só sai quando
+            um admin desmarcar nesta tela.
           </span>
         </div>
       </div>

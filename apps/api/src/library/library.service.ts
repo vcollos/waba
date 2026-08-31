@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { extractTemplateMediaHeader } from '../database/helpers';
-import { isWithinScope, resolveClientScope } from '../common/scope';
+import { clientIdsByIntegration, isWithinScopeAny, resolveClientScope } from '../common/scope';
 import { TemplateCacheRecord, UserSession } from '../database/types';
 
 @Injectable()
 export class LibraryService {
   constructor(private readonly database: DatabaseService) {}
 
-  /** Conjunto de integrações visíveis no escopo do usuário (por clientId da integração). */
+  /** Conjunto de integrações visíveis no escopo do usuário (vínculo N:N). */
   private async allowedIntegrationIds(
     actor: UserSession,
     requestedClientId?: string,
@@ -17,17 +17,17 @@ export class LibraryService {
     if (scope === null) {
       return null; // Collos sem filtro: todas as integrações
     }
-    const integrations = await this.database.listIntegrationsInDatabase();
+    const links = await this.database.listClientIntegrationsInDatabase();
     return new Set(
-      integrations.filter((i) => isWithinScope(scope, i.clientId)).map((i) => i.id),
+      links.filter((link) => link.clientId === scope).map((link) => link.integrationId),
     );
   }
 
   /**
    * Templates visíveis no escopo, pelo tenant EFETIVO de cada template:
-   * `template.clientId` (override por etiqueta) ?? `integration.clientId`.
-   * Uma mesma conta WABA pode servir vários tenants; a etiqueta permite que um
-   * template de integração compartilhada apareça só para o tenant marcado.
+   * `template.clientId` (override por etiqueta) quando existe; senão os tenants
+   * vinculados à integração. Uma conta WABA compartilhada expõe seus templates a
+   * todos os tenants vinculados; a etiqueta restringe um template a um só.
    */
   async templates(actor: UserSession, integrationId?: string, requestedClientId?: string) {
     const scope = resolveClientScope(actor, requestedClientId);
@@ -35,13 +35,14 @@ export class LibraryService {
     if (scope === null) {
       return this.decorateTemplates(templates);
     }
-    const integrations = await this.database.listIntegrationsInDatabase();
-    const integrationClientById = new Map<string, string | null>(
-      integrations.map((integration) => [integration.id, integration.clientId ?? null]),
-    );
+    const links = await this.database.listClientIntegrationsInDatabase();
+    const clientIdsByIntegrationId = clientIdsByIntegration(links);
     return this.decorateTemplates(
       templates.filter((t) =>
-        isWithinScope(scope, t.clientId ?? integrationClientById.get(t.integrationId) ?? null),
+        isWithinScopeAny(
+          scope,
+          t.clientId ? [t.clientId] : clientIdsByIntegrationId.get(t.integrationId) ?? [],
+        ),
       ),
     );
   }

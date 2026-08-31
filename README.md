@@ -43,6 +43,9 @@ Incidente resolvido em `2026-04-02`:
   - biblioteca de templates/flows
   - criação e monitoramento básico de campanhas
   - página `/reports` (relatório de custos + tarifas/NF), restrita por papel
+  - página `/results` com métricas de pesquisa (NPS/CSAT) calculadas sobre a
+    escala declarada no flow, sinalizando escala inferida, escala invertida e
+    orientação não confirmada (ver ADR 0008)
   - retry leve para `GET` em `502/503/504`
   - polling reduzido nas telas operacionais
 
