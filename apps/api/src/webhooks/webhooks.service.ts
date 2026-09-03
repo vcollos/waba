@@ -211,7 +211,12 @@ export class WebhooksService {
           : (state.integrations[0]?.id ?? ''),
         campaignId: relatedMessage?.campaignId ?? null,
         campaignMessageId: relatedMessage?.id ?? null,
-        contactId: contact?.id ?? null,
+        // Prefere o contato da mensagem casada pelo flow_token (cmp_<c>_ctt_<contato>),
+        // que é confiável e independe de tenant. O lookup por telefone (`contact`)
+        // falha quando a integração é compartilhada por vários tenants (N:N): ele
+        // resolve o tenant pela coluna client_id da integração, que aponta para UM
+        // só tenant, e não encontra o contato dos demais — deixando contact_id nulo.
+        contactId: contact?.id ?? relatedMessage?.contactId ?? null,
         templateCacheId:
           relatedMessage?.campaignId
             ? (state.campaigns.find((campaign) => campaign.id === relatedMessage.campaignId)?.templateCacheId ??

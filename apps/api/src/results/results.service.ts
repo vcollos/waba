@@ -203,7 +203,11 @@ export class ResultsService {
     };
   }
 
-  async exportCampaignResponseTableCsv(campaignId: string, scope: string | null = null): Promise<string> {
+  async exportCampaignResponseTableCsv(
+    campaignId: string,
+    scope: string | null = null,
+    filters?: { respondeu?: string; situacao?: string; search?: string },
+  ): Promise<string> {
     const table = await this.buildCampaignResponseTable(campaignId, scope);
     const header = [
       'telefone',
@@ -215,7 +219,9 @@ export class ResultsService {
       'contato',
       ...table.fieldColumns,
     ];
-    const lines = table.rows.map((row) => header.map((column) => String(row[column] ?? '')));
+    // Mesma lógica de filtro da tela: o CSV exporta exatamente o que o usuário vê.
+    const rows = filterCampaignTableRows(table.rows, filters);
+    const lines = rows.map((row) => header.map((column) => String(row[column] ?? '')));
     return buildCsv(header, lines);
   }
 
@@ -1175,6 +1181,32 @@ const classifyBrazilianLine = (phoneE164: string): string => {
   const subscriber = digits.slice(4);
   if (!subscriber) return 'outro';
   return '2345'.includes(subscriber[0]) ? 'fixo' : 'celular';
+};
+
+/**
+ * Aplica os mesmos filtros da tela (respondeu / situação / busca) sobre as linhas
+ * da tabela de uma campanha. Fica no service para que o CSV exportado bata 1:1 com
+ * o que o usuário está vendo — o front e o export não podem divergir.
+ */
+const filterCampaignTableRows = (
+  rows: Array<Record<string, unknown>>,
+  filters?: { respondeu?: string; situacao?: string; search?: string },
+): Array<Record<string, unknown>> => {
+  const respondeu = filters?.respondeu?.trim();
+  const situacao = filters?.situacao?.trim();
+  const term = filters?.search?.trim().toLowerCase();
+  if (!respondeu && !situacao && !term) {
+    return rows;
+  }
+  return rows.filter((row) => {
+    if (respondeu && String(row.respondeu ?? '') !== respondeu) return false;
+    if (situacao && String(row.situacao ?? '') !== situacao) return false;
+    if (term) {
+      const hay = `${row.telefone ?? ''} ${row.contato ?? ''}`.toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
+    return true;
+  });
 };
 
 const collectPayloadColumns = (

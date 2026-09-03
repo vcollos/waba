@@ -787,8 +787,16 @@ function CampaignTablesTab() {
             type="button"
             className="btn secondary sm"
             onClick={() => {
+              // Leva os filtros ativos da tela para o export: o CSV baixa exatamente
+              // o que está visível (scopeQuery já começa com '?', daí o join manual).
+              const extra = [
+                respondeu ? `respondeu=${encodeURIComponent(respondeu)}` : '',
+                situacao ? `situacao=${encodeURIComponent(situacao)}` : '',
+                search.trim() ? `search=${encodeURIComponent(search.trim())}` : '',
+              ].filter(Boolean);
+              const qs = [scopeQuery.replace(/^\?/, ''), ...extra].filter(Boolean).join('&');
               void apiDownload(
-                `/results/campaigns/${encodeURIComponent(selected)}/table.csv${scopeQuery}`,
+                `/results/campaigns/${encodeURIComponent(selected)}/table.csv${qs ? `?${qs}` : ''}`,
                 `respostas-${selected}.csv`,
               ).catch(() => undefined);
             }}

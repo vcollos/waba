@@ -54,10 +54,14 @@ export class ResultsController {
     @Req() request: { user: UserSession },
     @Res() response: Response,
     @Query('clientId') clientId?: string,
+    @Query('respondeu') respondeu?: string,
+    @Query('situacao') situacao?: string,
+    @Query('search') search?: string,
   ) {
     const csv = await this.resultsService.exportCampaignResponseTableCsv(
       campaignId,
       resolveClientScope(request.user, clientId),
+      { respondeu, situacao, search },
     );
     response.setHeader('Content-Type', 'text/csv; charset=utf-8');
     response.setHeader('Content-Disposition', `attachment; filename="respostas-${campaignId}.csv"`);
