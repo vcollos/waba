@@ -113,7 +113,7 @@ export default function ResultsPage() {
 }
 
 function ResultsContent() {
-  const [tab, setTab] = useState<'summary' | 'flow' | 'events'>('summary');
+  const [tab, setTab] = useState<'summary' | 'flow' | 'tables' | 'events'>('summary');
 
   return (
     <>
@@ -131,6 +131,9 @@ function ResultsContent() {
         <button className={`tab-trigger${tab === 'flow' ? ' active' : ''}`} onClick={() => setTab('flow')}>
           Respostas de flow
         </button>
+        <button className={`tab-trigger${tab === 'tables' ? ' active' : ''}`} onClick={() => setTab('tables')}>
+          Tabelas por campanha
+        </button>
         <button className={`tab-trigger${tab === 'events' ? ' active' : ''}`} onClick={() => setTab('events')}>
           Eventos
         </button>
@@ -138,6 +141,7 @@ function ResultsContent() {
 
       {tab === 'summary' ? <SummaryTab /> : null}
       {tab === 'flow' ? <FlowTab /> : null}
+      {tab === 'tables' ? <CampaignTablesTab /> : null}
       {tab === 'events' ? (
         <div className="tbl-wrap">
           <EmptyState title="Sem dados no período" desc="O feed de eventos por mensagem será exibido aqui." />
@@ -637,6 +641,212 @@ function FlowTab() {
                     <td className="cell-sub">{r.flowName ?? '—'}</td>
                     <td className="cell-mono">{fmtDateTime(r.completedAt)}</td>
                     <td className="num">{fmtInt(Object.keys(r.responsePayload ?? {}).length)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          )}
+        </table>
+        {pager}
+      </div>
+    </>
+  );
+}
+
+type CampaignWithResponses = {
+  campaignId: string;
+  campaignName: string;
+  totalResponses: number;
+  lastResponseAt: string | null;
+};
+
+type CampaignTable = {
+  campaignId: string;
+  campaignName: string | null;
+  flowName: string | null;
+  fieldColumns: string[];
+  situationSummary: Array<{ situacao: string; total: number }>;
+  rows: Array<Record<string, unknown>>;
+};
+
+/**
+ * Tabela crua por campanha: os campos do flow viram colunas, sem interpretar o que
+ * significam. Cada disparo aparece com a situação final, então os 100% dos casos são
+ * explicáveis — inclusive quem não respondeu e por quê.
+ */
+function CampaignTablesTab() {
+  const { scopeClientId } = useShell();
+  const [campaigns, setCampaigns] = useState<CampaignWithResponses[]>([]);
+  const [selected, setSelected] = useState<string>('');
+  const [table, setTable] = useState<CampaignTable | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingTable, setLoadingTable] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [situacao, setSituacao] = useState('');
+  const [respondeu, setRespondeu] = useState('');
+
+  const scopeQuery = scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : '';
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    void apiRequest<CampaignWithResponses[]>(`/results/campaigns${scopeQuery}`)
+      .then((data) => {
+        setCampaigns(data);
+        setSelected((current) => current || data[0]?.campaignId || '');
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar campanhas.');
+        setLoading(false);
+      });
+  }, [scopeQuery]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!selected) {
+      setTable(null);
+      return;
+    }
+    setLoadingTable(true);
+    setSituacao('');
+    setRespondeu('');
+    void apiRequest<CampaignTable>(`/results/campaigns/${encodeURIComponent(selected)}/table${scopeQuery}`)
+      .then((data) => {
+        setTable(data);
+        setLoadingTable(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Falha ao carregar a tabela.');
+        setLoadingTable(false);
+      });
+  }, [selected, scopeQuery]);
+
+  const situacoes = useMemo(
+    () => (table?.situationSummary ?? []).map((item) => item.situacao),
+    [table],
+  );
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return (table?.rows ?? []).filter((row) => {
+      if (situacao && String(row.situacao ?? '') !== situacao) return false;
+      if (respondeu && String(row.respondeu ?? '') !== respondeu) return false;
+      if (term) {
+        const hay = `${row.telefone ?? ''} ${row.contato ?? ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [table, search, situacao, respondeu]);
+
+  const { pageRows, pager } = usePagedRows(filtered, 'linha(s)');
+  const columns = table?.fieldColumns ?? [];
+  const totalCols = 6 + columns.length;
+
+  return (
+    <>
+      {error ? <ErrorBanner message={error} onRetry={load} /> : null}
+
+      <div className="toolbar">
+        <select className="flt" value={selected} onChange={(e) => setSelected(e.target.value)}>
+          {campaigns.length === 0 ? <option value="">Nenhuma campanha com respostas</option> : null}
+          {campaigns.map((campaign) => (
+            <option key={campaign.campaignId} value={campaign.campaignId}>
+              {campaign.campaignName} ({campaign.totalResponses})
+            </option>
+          ))}
+        </select>
+        <div className="tb-search">
+          <SearchIcon />
+          <input
+            placeholder="Buscar telefone ou contato"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select className="flt" value={respondeu} onChange={(e) => setRespondeu(e.target.value)}>
+          <option value="">Respondeu</option>
+          <option value="sim">Respondeu: Sim</option>
+          <option value="nao">Respondeu: Não</option>
+        </select>
+        <select className="flt" value={situacao} onChange={(e) => setSituacao(e.target.value)}>
+          <option value="">Situação</option>
+          {situacoes.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+        {selected ? (
+          <button
+            type="button"
+            className="btn secondary sm"
+            onClick={() => {
+              void apiDownload(
+                `/results/campaigns/${encodeURIComponent(selected)}/table.csv${scopeQuery}`,
+                `respostas-${selected}.csv`,
+              ).catch(() => undefined);
+            }}
+          >
+            Exportar CSV
+          </button>
+        ) : null}
+      </div>
+
+      {table && table.situationSummary.length > 0 ? (
+        <div className="kpi-grid k6 block">
+          {table.situationSummary.map((item) => (
+            <Kpi key={item.situacao} label={item.situacao} value={fmtInt(item.total)} />
+          ))}
+        </div>
+      ) : null}
+
+      <div className="tbl-wrap">
+        <table className="tbl dense">
+          <thead>
+            <tr>
+              <th>Telefone</th>
+              <th>Tipo</th>
+              <th>Situação</th>
+              <th>Código Meta</th>
+              <th>Respondeu</th>
+              <th>Respondido em</th>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          {loading || loadingTable ? (
+            <SkeletonRows rows={8} cols={totalCols} />
+          ) : (
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={totalCols}>
+                    <EmptyState title="Sem linhas para esta campanha" />
+                  </td>
+                </tr>
+              ) : (
+                pageRows.map((row, index) => (
+                  <tr key={`${String(row.telefone)}-${index}`}>
+                    <td className="cell-mono">{String(row.telefone ?? '—')}</td>
+                    <td className="cell-sub">{String(row.tipo ?? '—')}</td>
+                    <td className="cell-sub">{String(row.situacao ?? '—')}</td>
+                    <td className="cell-mono">{String(row.codigoMeta ?? '') || '—'}</td>
+                    <td className="cell-strong">{String(row.respondeu ?? '') === 'sim' ? 'Sim' : 'Não'}</td>
+                    <td className="cell-mono">
+                      {row.respondidoEm ? fmtDateTime(String(row.respondidoEm)) : '—'}
+                    </td>
+                    {columns.map((column) => (
+                      <td key={column} className="cell-sub">
+                        {String(row[column] ?? '') || '—'}
+                      </td>
+                    ))}
                   </tr>
                 ))
               )}

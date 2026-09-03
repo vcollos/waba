@@ -14,6 +14,7 @@ import {
   ClientIntegrationLink,
   ContactRecord,
   FlowCacheRecord,
+  CampaignTestSendRecord,
   FlowResponseRecord,
   ImportRecord,
   IntegrationRecord,
@@ -1251,6 +1252,28 @@ export class DatabaseService implements OnModuleDestroy {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_report_settings_client
         ON report_settings(COALESCE(client_id, ''));
+      CREATE TABLE IF NOT EXISTS campaign_test_sends (
+        id TEXT PRIMARY KEY,
+        campaign_id TEXT NOT NULL,
+        client_id TEXT,
+        integration_id TEXT NOT NULL,
+        phone_e164 TEXT NOT NULL,
+        flow_token TEXT,
+        status TEXT NOT NULL,
+        provider_message_id TEXT,
+        request_payload TEXT NOT NULL,
+        response_payload TEXT,
+        error_payload TEXT,
+        flow_response_payload TEXT,
+        created_by TEXT,
+        responded_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_campaign_test_sends_campaign
+        ON campaign_test_sends(campaign_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_test_sends_flow_token
+        ON campaign_test_sends(flow_token);
     `);
 
     if (this.metaClient) {
@@ -1319,6 +1342,28 @@ export class DatabaseService implements OnModuleDestroy {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_report_settings_client
           ON report_settings(COALESCE(client_id, ''));
+        CREATE TABLE IF NOT EXISTS campaign_test_sends (
+          id TEXT PRIMARY KEY,
+          campaign_id TEXT NOT NULL,
+          client_id TEXT,
+          integration_id TEXT NOT NULL,
+          phone_e164 TEXT NOT NULL,
+          flow_token TEXT,
+          status TEXT NOT NULL,
+          provider_message_id TEXT,
+          request_payload JSONB NOT NULL,
+          response_payload JSONB,
+          error_payload JSONB,
+          flow_response_payload JSONB,
+          created_by TEXT,
+          responded_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_campaign_test_sends_campaign
+          ON campaign_test_sends(campaign_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_test_sends_flow_token
+          ON campaign_test_sends(flow_token);
       `);
 
       // Unicidade de telefone POR TENANT: troca o UNIQUE global de phone_hash por
@@ -2431,6 +2476,72 @@ export class DatabaseService implements OnModuleDestroy {
       : response;
 
     await this.upsertFlowResponsesBatch(this.metaClient, [record]);
+  }
+
+  /**
+   * Envios de teste de campanha. Tabela própria (não `campaign_messages`) para
+   * que um teste nunca entre no funil, na taxa de entrega ou no custo da campanha.
+   * Só Postgres: é recurso novo, sem equivalente no blob legado de app_state.
+   */
+  async saveCampaignTestSendInDatabase(record: CampaignTestSendRecord): Promise<void> {
+    await this.postgresQuery(
+      `INSERT INTO campaign_test_sends (
+         id, campaign_id, client_id, integration_id, phone_e164, flow_token, status,
+         provider_message_id, request_payload, response_payload, error_payload,
+         flow_response_payload, created_by, responded_at, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       ON CONFLICT (id) DO UPDATE SET
+         status = EXCLUDED.status,
+         provider_message_id = EXCLUDED.provider_message_id,
+         response_payload = EXCLUDED.response_payload,
+         error_payload = EXCLUDED.error_payload,
+         flow_response_payload = EXCLUDED.flow_response_payload,
+         responded_at = EXCLUDED.responded_at,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        record.id,
+        record.campaignId,
+        record.clientId ?? null,
+        record.integrationId,
+        record.phoneE164,
+        record.flowToken ?? null,
+        record.status,
+        record.providerMessageId ?? null,
+        JSON.stringify(record.requestPayload ?? {}),
+        record.responsePayload ? JSON.stringify(record.responsePayload) : null,
+        record.errorPayload ? JSON.stringify(record.errorPayload) : null,
+        record.flowResponsePayload ? JSON.stringify(record.flowResponsePayload) : null,
+        record.createdBy ?? null,
+        record.respondedAt ?? null,
+        record.createdAt,
+        record.updatedAt,
+      ],
+    );
+  }
+
+  async listCampaignTestSendsInDatabase(
+    campaignId: string,
+    limit = 50,
+  ): Promise<CampaignTestSendRecord[]> {
+    const rows = await this.postgresQuery<Record<string, unknown>>(
+      `SELECT * FROM campaign_test_sends
+       WHERE campaign_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [campaignId, limit],
+    );
+    return rows.map(mapCampaignTestSendRow);
+  }
+
+  /** Casa a resposta de flow que chega no webhook com o teste que a originou. */
+  async findCampaignTestSendByFlowTokenInDatabase(
+    flowToken: string,
+  ): Promise<CampaignTestSendRecord | null> {
+    const rows = await this.postgresQuery<Record<string, unknown>>(
+      `SELECT * FROM campaign_test_sends WHERE flow_token = $1 LIMIT 1`,
+      [flowToken],
+    );
+    return rows[0] ? mapCampaignTestSendRow(rows[0]) : null;
   }
 
   async listFlowResponsesInDatabase(filters?: {
@@ -3735,6 +3846,36 @@ const mapMessageEventRow = (row: MessageEventRow): MessageEventRecord => {
     occurredAt: toIsoString(row.occurred_at) ?? new Date().toISOString(),
     receivedAt: toIsoString(row.received_at) ?? new Date().toISOString(),
     dedupeKey: row.dedupe_key,
+  };
+};
+
+const mapCampaignTestSendRow = (row: Record<string, unknown>): CampaignTestSendRecord => {
+  // Colunas JSONB voltam já desserializadas pelo pg; as demais podem vir como
+  // texto (SQLite/legado), então parseJsonObject cobre os dois casos.
+  const optionalJson = (value: unknown): Record<string, unknown> | null =>
+    value === null || value === undefined ? null : parseJsonObject(value);
+
+  return {
+    id: String(row.id),
+    campaignId: String(row.campaign_id),
+    clientId: normalizeOptionalString(row.client_id),
+    integrationId: String(row.integration_id),
+    phoneE164: String(row.phone_e164 ?? ''),
+    flowToken: normalizeOptionalString(row.flow_token),
+    status: (['accepted', 'failed', 'responded'] as const).includes(
+      row.status as 'accepted' | 'failed' | 'responded',
+    )
+      ? (row.status as 'accepted' | 'failed' | 'responded')
+      : 'accepted',
+    providerMessageId: normalizeOptionalString(row.provider_message_id),
+    requestPayload: parseJsonObject(row.request_payload),
+    responsePayload: optionalJson(row.response_payload),
+    errorPayload: optionalJson(row.error_payload),
+    flowResponsePayload: optionalJson(row.flow_response_payload),
+    createdBy: normalizeOptionalString(row.created_by),
+    respondedAt: toIsoString(row.responded_at as string | Date | null),
+    createdAt: toIsoString(row.created_at as string | Date | null) ?? new Date().toISOString(),
+    updatedAt: toIsoString(row.updated_at as string | Date | null) ?? new Date().toISOString(),
   };
 };
 

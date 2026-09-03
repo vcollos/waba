@@ -7,15 +7,18 @@ import {
   extractTemplateMediaHeader,
   hash,
   newId,
+  normalizePhone,
   nowIso,
   resolveParameterValue,
 } from '../database/helpers';
+import { MetaApiError, MetaGraphService } from '../integrations/meta-graph.service';
 import { isWithinScope, isWithinScopeAny, resolveClientScope } from '../common/scope';
 import {
   CampaignAudienceConfig,
   CampaignAudienceOrderField,
   CampaignMessageRecord,
   CampaignRecord,
+  CampaignTestSendRecord,
   ContactRecord,
   FlowCacheRecord,
   ParameterSource,
@@ -74,6 +77,7 @@ export class CampaignsService {
   constructor(
     private readonly database: DatabaseService,
     private readonly audit: AuditService,
+    private readonly metaGraph: MetaGraphService,
   ) {}
 
   /** Garante que a campanha pertence ao escopo do usuário; senão 404 (não vaza existência). */
@@ -593,6 +597,109 @@ export class CampaignsService {
     });
 
     await this.refreshCampaignSummary(campaignId);
+  }
+
+  /**
+   * Envia UM disparo de teste da campanha para um telefone avulso, antes do disparo real.
+   *
+   * Deliberadamente NÃO cria `campaign_messages`: se criasse, o teste entraria no funil,
+   * na taxa de entrega e no relatório de custo da campanha. O registro vai para
+   * `campaign_test_sends`, com os payloads crus guardados para inspeção.
+   *
+   * O `flowToken` usa o prefixo `test_` (em vez de `cmp_..._ctt_...`) — é por ele que o
+   * webhook desvia a resposta do flow para cá em vez de gravá-la como resultado da pesquisa.
+   */
+  async sendTestMessage(
+    campaignId: string,
+    phone: string,
+    actor: UserSession,
+  ): Promise<CampaignTestSendRecord> {
+    await this.assertCampaignScope(campaignId, actor);
+    const state = await this.database.readMeta();
+    const campaign = state.campaigns.find((item) => item.id === campaignId);
+    if (!campaign) {
+      throw new NotFoundException('Campanha não encontrada');
+    }
+
+    const template = campaign.templateCacheId
+      ? state.templates.find((item) => item.id === campaign.templateCacheId)
+      : undefined;
+    if (!template) {
+      throw new BadRequestException('Campanha sem template: sincronize o template antes de testar');
+    }
+
+    const integration = state.integrations.find((item) => item.id === campaign.integrationId);
+    if (!integration) {
+      throw new BadRequestException('Integração da campanha não encontrada');
+    }
+
+    const normalized = normalizePhone(phone);
+    if (normalized.error) {
+      throw new BadRequestException(`Telefone de teste inválido: ${normalized.error}`);
+    }
+
+    const id = newId();
+    const flowToken = template.hasFlowButton ? `test_${id}` : null;
+    // Contato sintético: só existe para resolver as variáveis do template. Não é
+    // persistido em `contacts` nem vinculado a lista alguma.
+    const contact = {
+      ...mapCampaignContactRow({ id: `test_${id}`, phone_e164: normalized.phoneE164 }),
+      name: 'Teste',
+      firstName: 'Teste',
+      phoneE164: normalized.phoneE164,
+    } as ContactRecord;
+
+    const payload = this.buildTemplatePayload(campaign, template, contact, flowToken);
+    const createdAt = nowIso();
+    const base: CampaignTestSendRecord = {
+      id,
+      campaignId,
+      clientId: campaign.clientId ?? null,
+      integrationId: integration.id,
+      phoneE164: normalized.phoneE164,
+      flowToken,
+      status: 'accepted',
+      requestPayload: payload,
+      createdBy: actor.email ?? actor.id ?? null,
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    let record: CampaignTestSendRecord;
+    try {
+      const response = await this.metaGraph.sendMessage(integration, payload);
+      const providerMessageId = Array.isArray(response.messages)
+        ? String((response.messages[0] as Record<string, unknown>)?.id ?? '')
+        : '';
+      record = { ...base, status: 'accepted', providerMessageId, responsePayload: response };
+    } catch (error) {
+      const metaError = error as MetaApiError;
+      record = {
+        ...base,
+        status: 'failed',
+        errorPayload: {
+          code: metaError.code ?? null,
+          message: metaError.message,
+          payload: metaError.payload ?? {},
+        },
+      };
+    }
+
+    await this.database.saveCampaignTestSendInDatabase(record);
+    await this.audit.log({
+      actorUserId: actor.id,
+      action: 'campaign.test_send',
+      entityType: 'campaign',
+      entityId: campaignId,
+      metadata: { phoneE164: record.phoneE164, status: record.status },
+    });
+
+    return record;
+  }
+
+  async listTestSends(campaignId: string, actor: UserSession): Promise<CampaignTestSendRecord[]> {
+    await this.assertCampaignScope(campaignId, actor);
+    return this.database.listCampaignTestSendsInDatabase(campaignId);
   }
 
   buildTemplatePayload(

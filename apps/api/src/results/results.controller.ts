@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, Res } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { resolveClientScope } from '../common/scope';
 import { UserSession } from '../database/types';
@@ -27,6 +27,41 @@ export class ResultsController {
   @Get('summary')
   summary(@Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
     return this.resultsService.summary(resolveClientScope(request.user, clientId));
+  }
+
+  /** Campanhas que têm respostas — uma tabela por campanha. */
+  @Get('campaigns')
+  campaignsWithResponses(@Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
+    return this.resultsService.listCampaignsWithResponses(resolveClientScope(request.user, clientId));
+  }
+
+  /** Tabela crua das respostas da campanha: campos do flow viram colunas. */
+  @Get('campaigns/:campaignId/table')
+  campaignTable(
+    @Param('campaignId') campaignId: string,
+    @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.resultsService.buildCampaignResponseTable(
+      campaignId,
+      resolveClientScope(request.user, clientId),
+    );
+  }
+
+  @Get('campaigns/:campaignId/table.csv')
+  async exportCampaignTableCsv(
+    @Param('campaignId') campaignId: string,
+    @Req() request: { user: UserSession },
+    @Res() response: Response,
+    @Query('clientId') clientId?: string,
+  ) {
+    const csv = await this.resultsService.exportCampaignResponseTableCsv(
+      campaignId,
+      resolveClientScope(request.user, clientId),
+    );
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="respostas-${campaignId}.csv"`);
+    response.send(csv);
   }
 
   @Get('flow-responses/export.csv')

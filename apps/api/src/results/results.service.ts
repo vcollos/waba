@@ -95,6 +95,130 @@ export class ResultsService {
     return buildCsv(header, lines);
   }
 
+  /**
+   * Campanhas que têm ao menos uma resposta de flow, para montar a lista de tabelas.
+   * Só isso: nenhuma interpretação de NPS/CSAT — a leitura do dado é feita fora.
+   */
+  async listCampaignsWithResponses(
+    scope: string | null = null,
+  ): Promise<Array<{ campaignId: string; campaignName: string; totalResponses: number; lastResponseAt: string | null }>> {
+    const rows = await this.loadFlowResponses(undefined, undefined, scope);
+    const byCampaign = new Map<string, { campaignName: string; totalResponses: number; lastResponseAt: string | null }>();
+
+    for (const row of rows) {
+      // Resposta órfã (sem campanha casada) fica de fora: não há tabela a que pertença.
+      if (!row.campaignId) {
+        continue;
+      }
+      const current = byCampaign.get(row.campaignId) ?? {
+        campaignName: row.campaignName ?? row.campaignId,
+        totalResponses: 0,
+        lastResponseAt: null,
+      };
+      current.totalResponses += 1;
+      if (!current.lastResponseAt || String(row.completedAt) > current.lastResponseAt) {
+        current.lastResponseAt = String(row.completedAt);
+      }
+      byCampaign.set(row.campaignId, current);
+    }
+
+    return [...byCampaign.entries()]
+      .map(([campaignId, value]) => ({ campaignId, ...value }))
+      .sort((left, right) => (right.lastResponseAt ?? '').localeCompare(left.lastResponseAt ?? ''));
+  }
+
+  /**
+   * Tabela de UMA campanha com TODOS os destinatários — não só quem respondeu.
+   * Cada disparo vira uma linha com o desfecho explícito (entregue, lida, sem
+   * WhatsApp, retida pela Meta...), e as chaves do payload do flow viram colunas
+   * extras, vazias para quem não respondeu. Assim os 100% dos casos ficam
+   * explicáveis, e nada depende de saber o que é NPS ou CSAT.
+   */
+  async buildCampaignResponseTable(
+    campaignId: string,
+    scope: string | null = null,
+  ): Promise<{
+    campaignId: string;
+    campaignName: string | null;
+    flowName: string | null;
+    fieldColumns: string[];
+    situationSummary: Array<{ situacao: string; total: number }>;
+    rows: Array<Record<string, unknown>>;
+  }> {
+    const responses = await this.loadFlowResponses({ campaignId }, undefined, scope);
+    const fieldColumns = collectPayloadColumns(responses);
+    const messages = await this.database.listCampaignMessagesInDatabase({ campaignId });
+    const contactsById = await this.loadResultContactsByIds(messages.map((m) => m.contactId));
+    // Indexa a resposta por contato E por telefone. O telefone é o que salva: boa
+    // parte das respostas chega com `contact_id` nulo (o webhook não conseguiu casar
+    // o contato), e casar só por id faria a campanha inteira parecer sem respostas.
+    // `waId` vem sem o '+', então a chave é só de dígitos dos dois lados.
+    const digitsOf = (value: string | null | undefined) => String(value ?? '').replace(/\D+/g, '');
+    const responseByContact = new Map<string, (typeof responses)[number]>();
+    const responseByPhone = new Map<string, (typeof responses)[number]>();
+    for (const response of responses) {
+      if (response.contactId && !responseByContact.has(response.contactId)) {
+        responseByContact.set(response.contactId, response);
+      }
+      const phoneKey = digitsOf(response.waId);
+      if (phoneKey && !responseByPhone.has(phoneKey)) {
+        responseByPhone.set(phoneKey, response);
+      }
+    }
+
+    const situationCounts = new Map<string, number>();
+    const rows = messages.map((message) => {
+      const contact = contactsById.get(message.contactId);
+      const response =
+        responseByContact.get(message.contactId) ??
+        responseByPhone.get(digitsOf(contact?.phoneE164));
+      const payload = response?.responsePayload ?? {};
+      const phone = contact?.phoneE164 ?? '';
+      const situacao = describeMessageSituation(message);
+      situationCounts.set(situacao, (situationCounts.get(situacao) ?? 0) + 1);
+
+      return {
+        telefone: phone,
+        tipo: classifyBrazilianLine(phone),
+        situacao,
+        codigoMeta: message.providerErrorCode ?? '',
+        respondeu: response ? 'sim' : 'nao',
+        respondidoEm: response?.completedAt ?? '',
+        contato: contact?.name ?? '',
+        ...Object.fromEntries(
+          fieldColumns.map((column) => [column, stringifyPayloadValue(payload[column])]),
+        ),
+      };
+    });
+
+    return {
+      campaignId,
+      campaignName: responses[0]?.campaignName ?? null,
+      flowName: responses[0]?.flowName ?? null,
+      fieldColumns,
+      situationSummary: [...situationCounts.entries()]
+        .map(([situacao, total]) => ({ situacao, total }))
+        .sort((left, right) => right.total - left.total),
+      rows,
+    };
+  }
+
+  async exportCampaignResponseTableCsv(campaignId: string, scope: string | null = null): Promise<string> {
+    const table = await this.buildCampaignResponseTable(campaignId, scope);
+    const header = [
+      'telefone',
+      'tipo',
+      'situacao',
+      'codigoMeta',
+      'respondeu',
+      'respondidoEm',
+      'contato',
+      ...table.fieldColumns,
+    ];
+    const lines = table.rows.map((row) => header.map((column) => String(row[column] ?? '')));
+    return buildCsv(header, lines);
+  }
+
   private async loadFlowResponses(
     filters?: {
       campaignId?: string;
@@ -147,6 +271,9 @@ export class ResultsService {
 
         return {
           id: response.id,
+          campaignId: response.campaignId ?? null,
+          contactId: response.contactId ?? null,
+          waId: response.waId ?? null,
           flowCacheId: response.flowCacheId ?? null,
           completedAt: response.completedAt,
           responsePayload: response.responsePayload,
@@ -993,6 +1120,78 @@ const buildDistribution = (
         ...(label ? { label } : {}),
       };
     });
+
+/**
+ * União das chaves de payload de um conjunto de respostas, em ordem estável.
+ * Preserva a ordem de primeira aparição (que costuma acompanhar a ordem das telas
+ * do flow) em vez de ordenar alfabeticamente, e descarta `flow_token`, que é
+ * controle de roteamento e não resposta do respondente.
+ */
+/**
+ * Traduz o desfecho de um disparo para uma frase que se explica sozinha.
+ * Os códigos vêm da Meta e são a única evidência confiável do motivo — em especial
+ * o 131026, que é o "este número não recebe no WhatsApp" (número inexistente no
+ * app, conta desativada ou linha que não aceita mensagem).
+ */
+const describeMessageSituation = (message: {
+  status: string;
+  providerErrorCode?: string | null;
+  providerErrorTitle?: string | null;
+}): string => {
+  if (message.status === 'read') return 'Lida';
+  if (message.status === 'delivered') return 'Entregue (não lida)';
+  if (message.status === 'sent') return 'Enviada, aguardando confirmação';
+  if (message.status === 'accepted') return 'Aceita pela Meta, sem confirmação de entrega';
+  if (message.status === 'pending') return 'Na fila, ainda não enviada';
+  if (message.status === 'failed') {
+    switch (String(message.providerErrorCode ?? '')) {
+      case '131026':
+        return 'Falhou: número não tem WhatsApp';
+      case '131049':
+        return 'Falhou: retida pela Meta (limite de marketing por usuário)';
+      case '130472':
+        return 'Falhou: número em experimento da Meta';
+      case '131047':
+        return 'Falhou: fora da janela de 24h e sem template válido';
+      case '132000':
+        return 'Falhou: parâmetros do template não batem';
+      case '470':
+        return 'Falhou: janela de mensagem expirada';
+      default:
+        return message.providerErrorTitle
+          ? `Falhou: ${message.providerErrorTitle}`
+          : 'Falhou (motivo não informado pela Meta)';
+    }
+  }
+  return message.status;
+};
+
+/** Fixo x celular pelo primeiro dígito do assinante (regra da numeração brasileira). */
+const classifyBrazilianLine = (phoneE164: string): string => {
+  const digits = phoneE164.replace(/\D+/g, '');
+  if (!digits.startsWith('55') || digits.length < 12) {
+    return 'outro';
+  }
+  const subscriber = digits.slice(4);
+  if (!subscriber) return 'outro';
+  return '2345'.includes(subscriber[0]) ? 'fixo' : 'celular';
+};
+
+const collectPayloadColumns = (
+  responses: Array<{ responsePayload?: Record<string, unknown> | null }>,
+): string[] => {
+  const columns: string[] = [];
+  const seen = new Set<string>(['flow_token', 'flowToken']);
+  for (const response of responses) {
+    for (const key of Object.keys(response.responsePayload ?? {})) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        columns.push(key);
+      }
+    }
+  }
+  return columns;
+};
 
 const buildSurveyMetrics = (
   fieldValues: Map<string, number[]>,

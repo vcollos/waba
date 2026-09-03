@@ -457,6 +457,31 @@ export interface MessageEventRecord {
   dedupeKey: string;
 }
 
+/**
+ * Envio de teste avulso disparado a partir de uma campanha, antes do disparo real.
+ * Fica FORA de `campaign_messages` de propósito: teste não pode entrar no funil,
+ * na taxa de entrega nem no relatório de custo da campanha. Guarda os payloads
+ * crus (requisição, resposta da Meta, erro e resposta do flow) para inspeção.
+ */
+export interface CampaignTestSendRecord {
+  id: string;
+  campaignId: string;
+  clientId?: string | null;
+  integrationId: string;
+  phoneE164: string;
+  flowToken?: string | null;
+  status: 'accepted' | 'failed' | 'responded';
+  providerMessageId?: string | null;
+  requestPayload: Record<string, unknown>;
+  responsePayload?: Record<string, unknown> | null;
+  errorPayload?: Record<string, unknown> | null;
+  flowResponsePayload?: Record<string, unknown> | null;
+  createdBy?: string | null;
+  respondedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface FlowResponseRecord {
   id: string;
   integrationId: string;
