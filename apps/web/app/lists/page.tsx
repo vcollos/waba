@@ -426,7 +426,7 @@ function ListDrawer({
           <span className="block-title">Membros</span>
         </div>
         {error ? <ErrorBanner message={error} /> : null}
-        <div className="tbl-wrap">
+        <div className="tbl-wrap" style={{ overflowX: 'auto' }}>
           <table className="tbl dense" style={{ minWidth: 1120 }}>
             <thead>
               <tr>
@@ -1085,7 +1085,7 @@ function ApiTokensModal({ scopeClientId, onClose }: { scopeClientId: string | nu
           <span className="block-title">Tokens ativos</span>
         </div>
         <div className="tbl-wrap">
-          <table className="tbl dense" style={{ minWidth: 1120 }}>
+          <table className="tbl dense">
             <thead>
               <tr>
                 <th>Nome</th>
