@@ -258,3 +258,11 @@ Para o seu cenário local com acesso externo:
 Webhook Meta:
 
 - `https://waba-api.collos.com.br/api/webhooks/meta/whatsapp`
+
+### Campos dos membros de listas
+
+A lista exibe Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.
+A API pública de ingestão aceita `institutionRepresented` e `jobTitle` opcionais
+(até 200 caracteres), persistidos nos atributos do contato. Campos omitidos ou
+vazios preservam dados existentes. A instituição representada é um dado do
+contato e não altera o tenant de autorização. Ver ADR 0011.

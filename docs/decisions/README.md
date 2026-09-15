@@ -20,3 +20,5 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0007](0007-relatorio-de-custos-de-campanha.md) | Relatório de custos de campanha (pricing da Meta como classificação + tarifa BRL da Collos) | Aceito |
 | [0008](0008-escala-declarada-de-pesquisas-de-flow.md) | Escala de pesquisa vem da definição do flow, não das respostas (CSAT declarado + falha fechada) | Aceito |
 | [0009](0009-vinculo-n-n-cliente-integracao.md) | Vínculo N:N cliente ↔ integração WABA (uma conta WhatsApp serve vários tenants) | Aceito |
+
+- [0011 — Identificação dos membros de listas](0011-identificacao-membros-listas.md)

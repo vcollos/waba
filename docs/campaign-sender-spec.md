@@ -1447,3 +1447,12 @@ Isso entrega o caso anual de pesquisa com baixo custo operacional e sem depender
 - Get all templates: https://www.postman.com/meta/whatsapp-business-platform/request/13382743-fe7fd515-c860-4e2a-a098-940dbe1fcada
 - Subscribe WABA to webhooks: https://www.postman.com/meta/whatsapp-business-platform/request/13382743-3e8909d4-c091-42be-a2a3-e2f4d1a5107f
 - Override callback URL: https://www.postman.com/meta/whatsapp-business-platform/request/13382743-b20e1762-e268-498b-882a-a2a55419ee85
+
+## Identificação dos membros de listas
+
+A grade de membros e seus formulários de inclusão/edição mantêm os campos
+Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.
+`POST /public/v1/lists/:id/contacts` aceita `institutionRepresented` e `jobTitle`
+como texto opcional de até 200 caracteres, armazenados em `attributes_json`.
+O upsert preserva outros atributos e o opt-out existente; omissão/vazio não apaga
+a instituição ou função anterior. Nenhum campo de identificação muda `client_id`.
