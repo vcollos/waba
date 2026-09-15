@@ -1390,6 +1390,8 @@ export class ContactsService {
       phone?: string;
       email?: string | null;
       category?: string | null;
+      institutionRepresented?: string | null;
+      jobTitle?: string | null;
     }>,
     clientId: string,
   ): Promise<{
@@ -1438,6 +1440,15 @@ export class ContactsService {
           email: row.email ?? null,
           category: row.category ?? null,
         };
+        const profileAttributes: Record<string, string> = {};
+        for (const key of ['institutionRepresented', 'jobTitle'] as const) {
+          const value = row[key];
+          if (value == null) continue;
+          if (typeof value !== 'string' || value.trim().length > 200) {
+            throw new BadRequestException(`${key} deve ser texto de até 200 caracteres`);
+          }
+          if (value.trim()) profileAttributes[key] = value.trim();
+        }
 
         // Lookup POR TENANT: telefone de outro tenant é invisível aqui (entra
         // como novo contato deste tenant). Isso fecha o oráculo de enumeração
@@ -1451,6 +1462,8 @@ export class ContactsService {
           [phoneHash, clientId],
         );
         const existing = existingRows.rows[0] ? mapContactRow(existingRows.rows[0]) : null;
+
+        input.attributes = { ...existing?.attributes, ...profileAttributes };
 
         let contactId: string;
         if (existing) {
@@ -2490,14 +2503,12 @@ const parseListCategoryStats = (value: unknown): ListCategorySummary[] => {
 };
 
 const parseAttributes = (value: unknown): Record<string, string> => {
-  if (typeof value !== 'string' || !value.trim()) {
-    return {};
-  }
-
   try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
+    // PostgreSQL returns JSONB as an object; legacy SQLite returns JSON text.
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(
-      Object.entries(parsed ?? {}).map(([key, rawValue]) => [key, String(rawValue ?? '')]),
+      Object.entries(parsed).map(([key, rawValue]) => [key, String(rawValue ?? '')]),
     );
   } catch {
     return {};

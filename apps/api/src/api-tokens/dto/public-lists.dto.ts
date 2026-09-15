@@ -29,6 +29,12 @@ export class IngestContactDto {
   @ApiPropertyOptional({ description: 'Sobrenome.', example: 'Silva' })
   lastName?: string;
 
+  @ApiPropertyOptional({ description: 'Uniodonto/instituição representada. Até 200 caracteres; omissão preserva o valor existente.', example: 'Uniodonto Campinas', maxLength: 200 })
+  institutionRepresented?: string | null;
+
+  @ApiPropertyOptional({ description: 'Cargo ou função do contato. Até 200 caracteres; omissão preserva o valor existente.', example: 'Presidente', maxLength: 200 })
+  jobTitle?: string | null;
+
   @ApiProperty({
     description: 'Telefone em E.164 (com DDI). Contatos inválidos são contados como "invalid".',
     example: '+5519998887766',

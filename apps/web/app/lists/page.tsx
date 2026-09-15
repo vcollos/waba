@@ -41,6 +41,10 @@ interface ListRow {
 
 interface Member {
   id: string;
+  firstName?: string;
+  lastName?: string | null;
+  email?: string | null;
+  attributes?: Record<string, string>;
   name: string;
   phoneE164: string;
   phoneRaw: string;
@@ -367,7 +371,7 @@ function ListDrawer({
   };
 
   return (
-    <Drawer title={list.name} subtitle={list.description ?? undefined} onClose={onClose} width={840}>
+    <Drawer title={list.name} subtitle={list.description ?? undefined} onClose={onClose} width={1280}>
       <div className="dl" style={{ marginBottom: 20 }}>
         <dt>Origem</dt>
         <dd>{ORIGIN_LABEL[list.sourceType] ?? list.sourceType}</dd>
@@ -423,11 +427,15 @@ function ListDrawer({
         </div>
         {error ? <ErrorBanner message={error} /> : null}
         <div className="tbl-wrap">
-          <table className="tbl dense">
+          <table className="tbl dense" style={{ minWidth: 1120 }}>
             <thead>
               <tr>
-                <th>Nome completo</th>
+                <th>Nome</th>
+                <th>Sobrenome</th>
+                <th>Uniodonto</th>
+                <th>Cargo/Função</th>
                 <th>WhatsApp</th>
+                <th>E-mail</th>
                 <th>Categoria</th>
                 <th>Status</th>
                 <th>Válido</th>
@@ -436,14 +444,18 @@ function ListDrawer({
               </tr>
             </thead>
             {loading ? (
-              <SkeletonRows rows={6} cols={writable ? 7 : 6} />
+              <SkeletonRows rows={6} cols={writable ? 11 : 10} />
             ) : (
               <tbody>
                 {detail && detail.members.length > 0 ? (
                   detail.members.map((member) => (
                     <tr key={member.id}>
-                      <td className="cell-strong">{member.name}</td>
+                      <td className="cell-strong">{member.firstName || member.name.split(' ')[0]}</td>
+                      <td>{(member.lastName ?? member.name.split(' ').slice(1).join(' ')) || '—'}</td>
+                      <td>{member.attributes?.institutionRepresented || '—'}</td>
+                      <td>{member.attributes?.jobTitle || '—'}</td>
                       <td className="cell-mono">{member.phoneE164 || member.phoneRaw || '—'}</td>
+                      <td className="cell-sub">{member.email || '—'}</td>
                       <td className="cell-sub">{member.category ?? '—'}</td>
                       <td>
                         <Badge def={badgeFor(ENTITY_STATUS, member.recordStatus)} />
@@ -478,7 +490,7 @@ function ListDrawer({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={writable ? 7 : 6}>
+                    <td colSpan={writable ? 11 : 10}>
                       <EmptyState title="Lista sem membros" />
                     </td>
                   </tr>
@@ -515,8 +527,11 @@ function EditMemberModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [firstName, setFirstName] = useState(member.name.split(' ')[0] ?? '');
-  const [lastName, setLastName] = useState(member.name.split(' ').slice(1).join(' '));
+  const [firstName, setFirstName] = useState(member.firstName || member.name.split(' ')[0] || '');
+  const [lastName, setLastName] = useState(member.lastName ?? member.name.split(' ').slice(1).join(' '));
+  const [institutionRepresented, setInstitutionRepresented] = useState(member.attributes?.institutionRepresented ?? '');
+  const [jobTitle, setJobTitle] = useState(member.attributes?.jobTitle ?? '');
+  const [email, setEmail] = useState(member.email ?? '');
   const [phone, setPhone] = useState(member.phoneE164 || member.phoneRaw || '');
   const [category, setCategory] = useState(member.category ?? '');
   const [recordStatus, setRecordStatus] = useState<'active' | 'inactive'>(member.recordStatus);
@@ -537,6 +552,8 @@ function EditMemberModal({
           firstName,
           lastName: lastName || null,
           phone,
+          email,
+          attributes: { institutionRepresented, jobTitle },
           category: category || null,
           recordStatus,
         }),
@@ -580,10 +597,22 @@ function EditMemberModal({
           <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
         <div className="field">
+          <label>Uniodonto</label>
+          <input className="input" maxLength={200} value={institutionRepresented} onChange={(e) => setInstitutionRepresented(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Cargo/Função</label>
+          <input className="input" maxLength={200} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+        </div>
+        <div className="field">
           <label>
             WhatsApp <span className="req">*</span>
           </label>
           <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>E-mail</label>
+          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div className="field">
           <label>Categoria</label>
@@ -618,6 +647,8 @@ function AddContactForm({
 }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [institutionRepresented, setInstitutionRepresented] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [category, setCategory] = useState('');
@@ -639,6 +670,7 @@ function AddContactForm({
           lastName: lastName || undefined,
           phone,
           email: email || undefined,
+          attributes: { institutionRepresented, jobTitle },
           category: category || undefined,
           clientId: scopeClientId ?? undefined,
           listIds: [listId],
@@ -662,6 +694,14 @@ function AddContactForm({
       <div className="field">
         <label>Sobrenome</label>
         <input className="input" value={lastName} onChange={(e) => setLastName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Uniodonto</label>
+          <input className="input" maxLength={200} value={institutionRepresented} onChange={(e) => setInstitutionRepresented(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Cargo/Função</label>
+          <input className="input" maxLength={200} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
       </div>
       <div className="field">
         <label>
@@ -1045,7 +1085,7 @@ function ApiTokensModal({ scopeClientId, onClose }: { scopeClientId: string | nu
           <span className="block-title">Tokens ativos</span>
         </div>
         <div className="tbl-wrap">
-          <table className="tbl dense">
+          <table className="tbl dense" style={{ minWidth: 1120 }}>
             <thead>
               <tr>
                 <th>Nome</th>
