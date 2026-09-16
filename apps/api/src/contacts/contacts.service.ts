@@ -78,6 +78,14 @@ interface ListCategorySummary {
   totalMembers: number;
 }
 
+interface ListFilterOptionField {
+  key: string;
+  label: string;
+  values: string[];
+  totalDistinct: number;
+  truncated: boolean;
+}
+
 interface CsvUpdateSummary {
   updated: number;
   created: number;
@@ -121,6 +129,29 @@ const IMPORTABLE_FIELDS: Array<{ key: CsvImportField; label: string; required: b
   { key: 'status', label: 'Status', required: false },
   { key: 'email', label: 'E-mail', required: false },
   { key: 'externalRef', label: 'Referência externa', required: false },
+];
+
+const LIST_FILTER_VALUE_LIMIT = 100;
+const LIST_CANONICAL_FILTER_FIELDS: Array<{
+  key:
+    | 'name'
+    | 'firstName'
+    | 'lastName'
+    | 'phoneE164'
+    | 'email'
+    | 'category'
+    | 'clientName'
+    | 'externalRef';
+  label: string;
+}> = [
+  { key: 'name', label: 'Nome completo' },
+  { key: 'firstName', label: 'Nome' },
+  { key: 'lastName', label: 'Sobrenome' },
+  { key: 'phoneE164', label: 'WhatsApp' },
+  { key: 'email', label: 'E-mail' },
+  { key: 'category', label: 'Categoria' },
+  { key: 'clientName', label: 'Cliente' },
+  { key: 'externalRef', label: 'Referência externa' },
 ];
 
 const FIELD_ALIASES: Record<CsvImportField, string[]> = {
@@ -380,6 +411,7 @@ export class ContactsService {
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT
         l.id,
+        l.client_id,
         l.name,
         l.description,
         l.source_type,
@@ -433,6 +465,64 @@ export class ContactsService {
       eligibleMembers: Number(row.eligible_members ?? 0),
       categories: parseListCategoryStats(row.category_stats),
     }));
+  }
+
+  async getListFilterOptions(
+    id: string,
+    scope: string | null = null,
+  ): Promise<{ listId: string; fields: ListFilterOptionField[] }> {
+    const [list] = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT id, client_id
+       FROM lists
+       WHERE id = $1`,
+      [id],
+    );
+    if (!list || (scope !== null && (list.client_id ?? null) !== scope)) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+
+    // A lista autoriza a consulta; o segundo predicado evita expor um contato
+    // de outro tenant caso exista uma associação histórica inconsistente.
+    const rows = await this.database.postgresQuery<Record<string, unknown>>(
+      `SELECT
+        c.external_ref, c.client_name, c.first_name, c.last_name, c.name,
+        c.category, c.phone_e164, c.email, c.attributes_json
+       FROM list_members lm
+       JOIN lists l ON l.id = lm.list_id
+       JOIN contacts c
+         ON c.id = lm.contact_id
+        AND c.client_id IS NOT DISTINCT FROM l.client_id
+       WHERE lm.list_id = $1`,
+      [id],
+    );
+    const contacts = rows.map(mapContactRowForFilterOptions);
+    const fields: ListFilterOptionField[] = [];
+
+    for (const definition of LIST_CANONICAL_FILTER_FIELDS) {
+      const values = buildDistinctFilterValues(
+        contacts.map((contact) => contact[definition.key]),
+      );
+      if (values.totalDistinct > 0) {
+        fields.push({ key: definition.key, label: definition.label, ...values });
+      }
+    }
+
+    const attributeKeys = new Set<string>();
+    for (const contact of contacts) {
+      for (const [key, value] of Object.entries(contact.attributes)) {
+        if (isSafeAttributeFilterKey(key) && value.trim()) {
+          attributeKeys.add(key);
+        }
+      }
+    }
+    for (const key of [...attributeKeys].sort(compareFilterValues)) {
+      const values = buildDistinctFilterValues(
+        contacts.map((contact) => contact.attributes[key]),
+      );
+      fields.push({ key: `attributes.${key}`, label: getAttributeFilterLabel(key), ...values });
+    }
+
+    return { listId: id, fields };
   }
 
   async getList(id: string, scope: string | null = null) {
@@ -2292,6 +2382,7 @@ const mapContactRow = (row: Record<string, unknown>): ContactRecord => ({
 
 const mapListRow = (row: Record<string, unknown>): ListRecord => ({
   id: String(row.id),
+  clientId: (toOptionalString(row.client_id) ?? null) as string | null,
   name: String(row.name),
   description: cleanNullableText(toOptionalString(row.description)),
   sourceType: String(row.source_type) as ListRecord['sourceType'],
@@ -2299,6 +2390,78 @@ const mapListRow = (row: Record<string, unknown>): ListRecord => ({
   createdAt: String(row.created_at),
   updatedAt: String(row.updated_at),
 });
+
+const mapContactRowForFilterOptions = (
+  row: Record<string, unknown>,
+): Pick<
+  ContactRecord,
+  | 'externalRef'
+  | 'clientName'
+  | 'firstName'
+  | 'lastName'
+  | 'name'
+  | 'category'
+  | 'phoneE164'
+  | 'email'
+  | 'attributes'
+> => ({
+  externalRef: cleanNullableText(toOptionalString(row.external_ref)),
+  clientName: cleanNullableText(toOptionalString(row.client_name)),
+  firstName: String(row.first_name ?? '').trim(),
+  lastName: cleanNullableText(toOptionalString(row.last_name)),
+  name: String(row.name ?? '').trim(),
+  category: cleanNullableText(toOptionalString(row.category)),
+  phoneE164: String(row.phone_e164 ?? '').trim(),
+  email: cleanNullableText(toOptionalString(row.email)),
+  attributes: parseAttributes(row.attributes_json),
+});
+
+const compareFilterValues = (left: string, right: string): number =>
+  left.localeCompare(right, 'pt-BR', { sensitivity: 'base', numeric: true });
+
+const ATTRIBUTE_FILTER_LABELS: Record<string, string> = {
+  institutionRepresented: 'Instituição representada',
+  jobTitle: 'Cargo/Função',
+};
+const UNSAFE_ATTRIBUTE_FILTER_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+const isSafeAttributeFilterKey = (key: string): boolean =>
+  Boolean(key) &&
+  key.length <= 200 &&
+  !/[\s\u0000-\u001f\u007f]/u.test(key) &&
+  !UNSAFE_ATTRIBUTE_FILTER_KEYS.has(key.toLocaleLowerCase('pt-BR'));
+
+const getAttributeFilterLabel = (key: string): string => {
+  const knownLabel = ATTRIBUTE_FILTER_LABELS[key];
+  if (knownLabel) return knownLabel;
+  const humanized = key
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/[_.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return humanized ? `${humanized.charAt(0).toLocaleUpperCase('pt-BR')}${humanized.slice(1)}` : key;
+};
+
+const buildDistinctFilterValues = (
+  rawValues: Array<string | null | undefined>,
+): Pick<ListFilterOptionField, 'values' | 'totalDistinct' | 'truncated'> => {
+  const distinct = new Map<string, string>();
+  for (const rawValue of rawValues) {
+    const value = String(rawValue ?? '').trim();
+    if (!value) continue;
+    const normalized = value.toLocaleLowerCase('pt-BR');
+    const current = distinct.get(normalized);
+    if (!current || compareFilterValues(value, current) < 0) {
+      distinct.set(normalized, value);
+    }
+  }
+  const allValues = [...distinct.values()].sort(compareFilterValues);
+  return {
+    values: allValues.slice(0, LIST_FILTER_VALUE_LIMIT),
+    totalDistinct: allValues.length,
+    truncated: allValues.length > LIST_FILTER_VALUE_LIMIT,
+  };
+};
 
 const getContactByIdFromDatabase = (
   database: Pick<PoolClient, 'query'>,

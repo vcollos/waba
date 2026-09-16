@@ -1154,6 +1154,76 @@ GET  /api/campaigns/:id/messages
 GET  /api/campaigns/:id/export
 ```
 
+#### Escopo da lista e filtro de audiência
+
+O assistente de criação usa o `clientId` do seletor ativo da aplicação em todas
+as consultas de campanhas, listas e biblioteca. Assim, o campo **Lista** exibe
+somente listas do tenant selecionado. Essa restrição também é validada no
+backend: a lista, a campanha e a integração precisam pertencer ao mesmo tenant,
+e uma referência fora do escopo responde como recurso não encontrado.
+
+Depois da seleção da lista, os campos e valores disponíveis para segmentação
+são descobertos pelo endpoint abaixo. Ele considera somente os membros daquela
+lista e respeita o escopo do usuário autenticado.
+
+```http
+GET /api/lists/:id/filter-options?clientId=:clientId
+```
+
+Resposta:
+
+```json
+{
+  "listId": "list_123",
+  "fields": [
+    {
+      "key": "attributes.institutionRepresented",
+      "label": "Instituição representada",
+      "values": ["Uniodonto Curitiba", "Uniodonto Londrina"],
+      "totalDistinct": 2,
+      "truncated": false
+    }
+  ]
+}
+```
+
+Campos canônicos suportados: `name`, `firstName`, `lastName`, `phoneE164`,
+`email`, `category`, `clientName` e `externalRef`. Atributos adicionais de cada
+contato são expostos como `attributes.<chave>`. Valores vazios não são
+oferecidos; valores repetidos são deduplicados sem diferenciar maiúsculas e
+minúsculas; a lista de sugestões é ordenada e limitada pelo backend.
+
+Para criar uma campanha filtrada, envie `audience.filterField` e
+`audience.filterValue`. A comparação é exata após remover espaços nas pontas e
+não diferencia maiúsculas e minúsculas. Os dois campos devem ser informados em
+conjunto. O campo legado `audience.category` continua sendo lido em campanhas
+existentes, mas novas integrações devem usar o filtro genérico.
+
+```json
+{
+  "name": "Pesquisa pós-evento",
+  "clientId": "client_123",
+  "integrationId": "integration_123",
+  "listId": "list_123",
+  "mode": "template",
+  "templateCacheId": "template_123",
+  "audience": {
+    "mode": "all",
+    "filterField": "attributes.institutionRepresented",
+    "filterValue": "Uniodonto Curitiba",
+    "orderMode": "field",
+    "orderField": "name",
+    "orderDirection": "asc",
+    "resendPolicy": "all",
+    "uniqueWhatsAppOnly": false
+  }
+}
+```
+
+O snapshot de audiência registra `afterFilterCount` e `excludedByFilter`. Os
+nomes históricos relacionados a categoria permanecem no contrato para
+compatibilidade com campanhas anteriores.
+
 ### Métricas
 
 ```http

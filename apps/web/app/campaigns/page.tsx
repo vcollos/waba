@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell, useShell } from '../../components/app-shell';
 import {
   Badge,
@@ -57,7 +57,21 @@ interface Integration {
 }
 interface ListItem {
   id: string;
+  clientId?: string | null;
   name: string;
+}
+
+interface ListFilterField {
+  key: string;
+  label: string;
+  values: string[];
+  totalDistinct: number;
+  truncated: boolean;
+}
+
+interface ListFilterOptions {
+  listId: string;
+  fields: ListFilterField[];
 }
 const MEDIA_LABEL: Record<'IMAGE' | 'VIDEO' | 'DOCUMENT', string> = {
   IMAGE: 'Imagem',
@@ -109,29 +123,38 @@ function CampaignsContent() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [wizard, setWizard] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
+    const scopeQuery = scopeClientId ? `?clientId=${encodeURIComponent(scopeClientId)}` : '';
     Promise.all([
-      apiRequest<CampaignItem[]>('/campaigns'),
-      apiRequest<ListItem[]>('/lists'),
-      apiRequest<Template[]>('/library/templates'),
+      apiRequest<CampaignItem[]>(`/campaigns${scopeQuery}`, { signal }),
+      apiRequest<ListItem[]>(`/lists${scopeQuery}`, { signal }),
+      apiRequest<Template[]>(`/library/templates${scopeQuery}`, { signal }),
     ])
       .then(([camps, listsData, templatesData]) => {
+        if (signal?.aborted) return;
         setCampaigns(camps);
         setLists(listsData);
         setTemplates(templatesData);
         setLoading(false);
       })
       .catch((err) => {
+        if (signal?.aborted) return;
         setError(err instanceof Error ? err.message : 'Falha ao carregar campanhas.');
         setLoading(false);
       });
-    void apiRequest<Integration[]>('/integrations').then(setIntegrations).catch(() => undefined);
-  }, []);
+    void apiRequest<Integration[]>('/integrations', { signal })
+      .then((data) => {
+        if (!signal?.aborted) setIntegrations(data);
+      })
+      .catch(() => undefined);
+  }, [scopeClientId]);
 
   useEffect(() => {
-    load();
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
   }, [load]);
 
   const clientName = (id: string | null): string =>
@@ -277,7 +300,9 @@ function CampaignsContent() {
 
       {wizard ? (
         <CampaignWizard
+          key={scopeClientId ?? 'all-clients'}
           collos={collos}
+          initialClientId={scopeClientId}
           clients={clients}
           integrations={integrations}
           lists={lists}
@@ -549,6 +574,7 @@ type ParamSource =
 
 function CampaignWizard({
   collos,
+  initialClientId,
   clients,
   integrations,
   lists,
@@ -557,6 +583,7 @@ function CampaignWizard({
   onCreated,
 }: {
   collos: boolean;
+  initialClientId: string | null;
   clients: Array<{ id: string; name: string }>;
   integrations: Integration[];
   lists: ListItem[];
@@ -566,12 +593,16 @@ function CampaignWizard({
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(initialClientId ?? '');
   const [integrationId, setIntegrationId] = useState('');
   const [mode, setMode] = useState<CampaignMode>('template');
   const [templateId, setTemplateId] = useState('');
   const [listId, setListId] = useState('');
-  const [category, setCategory] = useState('');
+  const [filterOptions, setFilterOptions] = useState<ListFilterField[]>([]);
+  const [filterOptionsLoading, setFilterOptionsLoading] = useState(false);
+  const [filterOptionsError, setFilterOptionsError] = useState<string | null>(null);
+  const [filterField, setFilterField] = useState('');
+  const [filterValue, setFilterValue] = useState('');
   const [audienceMode, setAudienceMode] = useState<'all' | 'fixed_count' | 'percentage'>('all');
   const [fixedCount, setFixedCount] = useState('');
   const [percentage, setPercentage] = useState('');
@@ -583,15 +614,94 @@ function CampaignWizard({
   const [sendRate, setSendRate] = useState('20');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const filterOptionsRequest = useRef(0);
 
   const visibleIntegrations = useMemo(
     () =>
-      collos && clientId
+      clientId
         ? integrations.filter((i) => i.clientIds.includes(clientId))
         : integrations,
-    [collos, clientId, integrations],
+    [clientId, integrations],
   );
-  const template = templates.find((t) => t.id === templateId) ?? null;
+  const visibleLists = useMemo(() => {
+    if (!clientId) return [];
+    return lists.filter((list) => {
+      if (list.clientId !== undefined) return list.clientId === clientId;
+      // Compatibilidade transitória: uma resposta antiga sem clientId só é
+      // segura quando já veio escopada pelo tenant ativo da topbar.
+      return initialClientId === clientId;
+    });
+  }, [clientId, initialClientId, lists]);
+  const visibleTemplates = useMemo(
+    () => templates.filter((item) => !integrationId || item.integrationId === integrationId),
+    [integrationId, templates],
+  );
+  const template = useMemo(
+    () => visibleTemplates.find((item) => item.id === templateId) ?? null,
+    [templateId, visibleTemplates],
+  );
+  const selectedFilterField = useMemo(
+    () => filterOptions.find((field) => field.key === filterField) ?? null,
+    [filterField, filterOptions],
+  );
+
+  const resetAudienceFilter = () => {
+    filterOptionsRequest.current += 1;
+    setListId('');
+    setFilterOptions([]);
+    setFilterOptionsLoading(false);
+    setFilterOptionsError(null);
+    setFilterField('');
+    setFilterValue('');
+  };
+
+  const handleClientChange = (nextClientId: string) => {
+    setClientId(nextClientId);
+    setIntegrationId('');
+    setTemplateId('');
+    setMapping({});
+    resetAudienceFilter();
+  };
+
+  const handleIntegrationChange = (nextIntegrationId: string) => {
+    setIntegrationId(nextIntegrationId);
+    setTemplateId('');
+    setMapping({});
+  };
+
+  const loadFilterOptions = async (selectedListId: string) => {
+    const requestId = filterOptionsRequest.current + 1;
+    filterOptionsRequest.current = requestId;
+    setFilterOptions([]);
+    setFilterOptionsError(null);
+    setFilterOptionsLoading(true);
+    try {
+      const scopeQuery = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const result = await apiRequest<ListFilterOptions>(
+        `/lists/${encodeURIComponent(selectedListId)}/filter-options${scopeQuery}`,
+      );
+      if (filterOptionsRequest.current !== requestId) return;
+      setFilterOptions(result.fields);
+    } catch (err) {
+      if (filterOptionsRequest.current !== requestId) return;
+      setFilterOptionsError(
+        err instanceof Error ? err.message : 'Falha ao carregar os campos desta lista.',
+      );
+    } finally {
+      if (filterOptionsRequest.current === requestId) setFilterOptionsLoading(false);
+    }
+  };
+
+  const handleListChange = (nextListId: string) => {
+    filterOptionsRequest.current += 1;
+    setListId(nextListId);
+    setFilterOptions([]);
+    setFilterOptionsLoading(false);
+    setFilterOptionsError(null);
+    setFilterField('');
+    setFilterValue('');
+    if (nextListId) void loadFilterOptions(nextListId);
+  };
 
   // Ao escolher o template, pré-preenche cada campo com o exemplo aprovado na Meta
   // (para o usuário só ajustar, não adivinhar o que inserir).
@@ -632,7 +742,8 @@ function CampaignWizard({
         orderDirection,
         resendPolicy,
         uniqueWhatsAppOnly: uniqueWhatsApp,
-        category: category || null,
+        filterField: filterField || null,
+        filterValue: filterValue.trim() || null,
       };
       if (audienceMode === 'fixed_count') audience.fixedCount = Number(fixedCount) || 0;
       if (audienceMode === 'percentage') audience.percentage = Number(percentage) || 0;
@@ -661,9 +772,11 @@ function CampaignWizard({
   };
 
   const steps = ['Configuração', 'Público', 'Variáveis', 'Revisão'];
+  const hasCompleteFilter =
+    (!filterField && !filterValue.trim()) || Boolean(filterField && filterValue.trim());
   const canNext =
-    (step === 1 && name && integrationId && templateId) ||
-    (step === 2 && listId) ||
+    (step === 1 && name && integrationId && templateId && (!collos || clientId)) ||
+    (step === 2 && listId && hasCompleteFilter && !filterOptionsLoading) ||
     step === 3;
 
   return (
@@ -721,22 +834,36 @@ function CampaignWizard({
           </div>
           {collos ? (
             <div className="field">
-              <label>Cliente</label>
-              <select className="input" value={clientId} onChange={(e) => { setClientId(e.target.value); setIntegrationId(''); }}>
-                <option value="">Todos</option>
+              <label>
+                Cliente <span className="req">*</span>
+              </label>
+              <select
+                className="input"
+                value={clientId}
+                disabled={Boolean(initialClientId)}
+                onChange={(e) => handleClientChange(e.target.value)}
+              >
+                <option value="">Selecione</option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
               </select>
+              {initialClientId ? (
+                <span className="hint">Cliente definido pelo filtro ativo da barra superior.</span>
+              ) : null}
             </div>
           ) : null}
           <div className="field">
             <label>
               Integração <span className="req">*</span>
             </label>
-            <select className="input" value={integrationId} onChange={(e) => setIntegrationId(e.target.value)}>
+            <select
+              className="input"
+              value={integrationId}
+              onChange={(e) => handleIntegrationChange(e.target.value)}
+            >
               <option value="">Selecione</option>
               {visibleIntegrations.map((i) => (
                 <option key={i.id} value={i.id}>
@@ -759,13 +886,11 @@ function CampaignWizard({
             </label>
             <select className="input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
               <option value="">Selecione</option>
-              {templates
-                .filter((t) => !integrationId || t.integrationId === integrationId)
-                .map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
+              {visibleTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -777,18 +902,82 @@ function CampaignWizard({
             <label>
               Lista <span className="req">*</span>
             </label>
-            <select className="input" value={listId} onChange={(e) => setListId(e.target.value)}>
-              <option value="">Selecione</option>
-              {lists.map((l) => (
+            <select
+              className="input"
+              value={listId}
+              disabled={!clientId}
+              onChange={(e) => handleListChange(e.target.value)}
+            >
+              <option value="">{clientId ? 'Selecione' : 'Selecione primeiro o cliente'}</option>
+              {visibleLists.map((l) => (
                 <option key={l.id} value={l.id}>
                   {l.name}
                 </option>
               ))}
             </select>
+            {clientId && visibleLists.length === 0 ? (
+              <span className="hint">Este cliente ainda não possui listas disponíveis.</span>
+            ) : null}
           </div>
           <div className="field">
-            <label>Categoria</label>
-            <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} />
+            <label>Campo do filtro</label>
+            <select
+              className="input"
+              value={filterField}
+              disabled={!listId || filterOptionsLoading || Boolean(filterOptionsError)}
+              onChange={(e) => {
+                setFilterField(e.target.value);
+                setFilterValue('');
+              }}
+            >
+              <option value="">
+                {filterOptionsLoading
+                  ? 'Carregando campos…'
+                  : filterOptions.length > 0
+                    ? 'Sem filtro'
+                    : 'Nenhum campo disponível'}
+              </option>
+              {filterOptions.map((field) => (
+                <option key={field.key} value={field.key}>
+                  {field.label}
+                </option>
+              ))}
+            </select>
+            {filterOptionsError ? (
+              <span className="hint" style={{ color: 'var(--danger)' }}>
+                {filterOptionsError}{' '}
+                <button
+                  type="button"
+                  className="btn tertiary sm"
+                  onClick={() => void loadFilterOptions(listId)}
+                >
+                  Tentar novamente
+                </button>
+              </span>
+            ) : null}
+          </div>
+          <div className="field">
+            <label>Valor do filtro</label>
+            <input
+              className="input"
+              list="campaign-filter-values"
+              value={filterValue}
+              disabled={!filterField}
+              placeholder={filterField ? 'Selecione ou digite um valor' : 'Escolha um campo'}
+              onChange={(e) => setFilterValue(e.target.value)}
+            />
+            <datalist id="campaign-filter-values">
+              {(selectedFilterField?.values ?? []).map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+            {selectedFilterField ? (
+              <span className="hint">
+                {selectedFilterField.truncated
+                  ? `Exibindo ${selectedFilterField.values.length} de ${selectedFilterField.totalDistinct} valores; você também pode digitar outro.`
+                  : `${selectedFilterField.totalDistinct} valor(es) disponível(is) nesta lista.`}
+              </span>
+            ) : null}
           </div>
           <div className="field">
             <label>Modo de audiência</label>
@@ -939,7 +1128,13 @@ function CampaignWizard({
             <dt>Template</dt>
             <dd>{template?.name ?? '—'}</dd>
             <dt>Lista</dt>
-            <dd>{lists.find((l) => l.id === listId)?.name ?? '—'}</dd>
+            <dd>{visibleLists.find((l) => l.id === listId)?.name ?? '—'}</dd>
+            <dt>Filtro</dt>
+            <dd>
+              {selectedFilterField && filterValue.trim()
+                ? `${selectedFilterField.label}: ${filterValue.trim()}`
+                : 'Sem filtro'}
+            </dd>
             <dt>Modo de audiência</dt>
             <dd>{audienceMode}</dd>
           </div>

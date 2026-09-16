@@ -12,9 +12,11 @@ import {
   resolveParameterValue,
 } from '../database/helpers';
 import { MetaApiError, MetaGraphService } from '../integrations/meta-graph.service';
-import { isWithinScope, isWithinScopeAny, resolveClientScope } from '../common/scope';
+import { isWithinScope, resolveClientScope } from '../common/scope';
 import {
+  CampaignAudienceCanonicalFilterField,
   CampaignAudienceConfig,
+  CampaignAudienceFilterField,
   CampaignAudienceOrderField,
   CampaignMessageRecord,
   CampaignRecord,
@@ -227,24 +229,28 @@ export class CampaignsService {
   async create(input: CreateCampaignInput, actor: UserSession) {
     const state = await this.database.readMeta();
 
-    // A integração vem primeiro: ela define o tenant da campanha e amarra o que
-    // pode ser usado nela. O dispatch envia sempre por `campaign.integrationId`.
     const scope = resolveClientScope(actor, input.clientId);
+    const list = (await this.loadListsByIds([input.listId])).get(input.listId);
+    if (!list || !isWithinScope(scope, list.clientId)) {
+      throw new NotFoundException('Lista não encontrada');
+    }
+
+    // A lista determina o tenant efetivo quando um usuário Collos cria sem um
+    // tenant ativo. Isso impede que uma lista de A seja usada numa campanha de B.
     const integration = state.integrations.find((item) => item.id === input.integrationId);
     const linkedClientIds = state.clientIntegrations
       .filter((link) => link.integrationId === input.integrationId)
       .map((link) => link.clientId);
-    if (!integration || !isWithinScopeAny(scope, linkedClientIds)) {
-      throw new NotFoundException('Integração não encontrada');
-    }
-
-    // Tenant da campanha: o escopo ativo (seletor da topbar ou tenant do
-    // usuário). Sem escopo — Collos vendo tudo — cai no único tenant vinculado
-    // ou no principal da integração.
     const campaignClientId =
-      scope ?? (linkedClientIds.length === 1 ? linkedClientIds[0] : integration.clientId ?? null);
-    if (!(await this.loadListsByIds([input.listId])).has(input.listId)) {
-      throw new NotFoundException('Lista não encontrada');
+      scope ??
+      list.clientId ??
+      (linkedClientIds.length === 1 ? linkedClientIds[0] : integration?.clientId ?? null);
+    if (
+      !integration ||
+      (campaignClientId !== null && !linkedClientIds.includes(campaignClientId)) ||
+      (list.clientId !== null && !linkedClientIds.includes(list.clientId))
+    ) {
+      throw new NotFoundException('Integração não encontrada');
     }
 
     // Template e flow só valem se forem da MESMA integração da campanha. A
@@ -833,11 +839,11 @@ export class CampaignsService {
   private async loadListsByIds(listIds: string[]) {
     const uniqueIds = [...new Set(listIds.filter(Boolean))];
     if (uniqueIds.length === 0) {
-      return new Map<string, { id: string; name: string; description?: string | null; sourceType: string; sourceFilePath?: string | null; createdAt: string; updatedAt: string }>();
+      return new Map<string, { id: string; clientId: string | null; name: string; description?: string | null; sourceType: string; sourceFilePath?: string | null; createdAt: string; updatedAt: string }>();
     }
 
     const rows = await this.database.postgresQuery<Record<string, unknown>>(
-      `SELECT id, name, description, source_type, source_file_path, created_at, updated_at
+      `SELECT id, client_id, name, description, source_type, source_file_path, created_at, updated_at
        FROM lists
        WHERE id = ANY($1::text[])`,
       [uniqueIds],
@@ -848,6 +854,7 @@ export class CampaignsService {
         String(row.id),
         {
           id: String(row.id),
+          clientId: normalizeOptionalText(row.client_id),
           name: String(row.name),
           description: normalizeOptionalText(row.description),
           sourceType: String(row.source_type),
@@ -885,7 +892,10 @@ export class CampaignsService {
         c.phone_raw, c.phone_e164, c.phone_hash, c.email, c.attributes_json, c.is_valid, c.validation_error,
         c.is_opted_out, c.opted_out_at, c.opt_out_source, c.imported_at, c.created_at, c.updated_at
        FROM list_members lm
-       JOIN contacts c ON c.id = lm.contact_id
+       JOIN lists l ON l.id = lm.list_id
+       JOIN contacts c
+         ON c.id = lm.contact_id
+        AND c.client_id IS NOT DISTINCT FROM l.client_id
        WHERE lm.list_id = $1
        ORDER BY c.updated_at DESC`,
       [listId],
@@ -909,8 +919,10 @@ const emptySummary = (): CampaignRecord['summary'] => ({
 const emptyAudienceSnapshot = (): CampaignRecord['audienceSnapshot'] => ({
   listMembersTotal: 0,
   eligibleCount: 0,
+  afterFilterCount: 0,
   afterCategoryFilterCount: 0,
   afterResendFilterCount: 0,
+  excludedByFilter: 0,
   excludedByCategory: 0,
   afterUniqueWhatsAppFilterCount: 0,
   excludedByUniqueWhatsApp: 0,
@@ -923,6 +935,13 @@ const normalizeAudienceConfig = (
 ): CampaignAudienceConfig => {
   const mode = input?.mode ?? 'all';
   const orderMode = input?.orderMode ?? 'field';
+  const category = cleanNullableCampaignText(input?.category);
+  const rawFilterField = cleanNullableCampaignText(input?.filterField);
+  const filterValue = cleanNullableCampaignText(input?.filterValue);
+  if ((rawFilterField && !filterValue) || (!rawFilterField && filterValue)) {
+    throw new BadRequestException('Informe o campo e o valor do filtro');
+  }
+  const filterField = rawFilterField ? validateAudienceFilterField(rawFilterField) : null;
 
   return {
     mode,
@@ -934,7 +953,11 @@ const normalizeAudienceConfig = (
       mode === 'percentage'
         ? Math.max(1, Math.min(100, Number(input?.percentage ?? 100)))
         : null,
-    category: cleanNullableCampaignText(input?.category),
+    // Se a nova interface filtrar categoria, mantém também o campo legado para
+    // leitores antigos. Outros campos não são convertidos para `category`.
+    category: filterField ? (filterField === 'category' ? filterValue : null) : category,
+    filterField,
+    filterValue,
     orderMode,
     orderField: orderMode === 'field' ? (input?.orderField ?? 'importedAt') : null,
     orderDirection: input?.orderDirection === 'desc' ? 'desc' : 'asc',
@@ -949,10 +972,10 @@ const selectCampaignContacts = (
   campaignMessages: CampaignMessageRecord[],
 ): { selectedContacts: ContactRecord[]; snapshot: CampaignRecord['audienceSnapshot'] } => {
   const eligibleContacts = contacts.filter(isEligibleContactForCampaign);
-  const afterCategoryFilter = eligibleContacts.filter((contact) =>
-    passesCategoryFilter(contact, campaign.audience.category),
+  const afterFilter = eligibleContacts.filter((contact) =>
+    passesAudienceFilter(contact, campaign.audience),
   );
-  const afterResendFilter = afterCategoryFilter.filter((contact) =>
+  const afterResendFilter = afterFilter.filter((contact) =>
     passesResendPolicy(contact.id, campaign.id, campaign.audience.resendPolicy, campaignMessages),
   );
   const afterUniqueWhatsAppFilter = campaign.audience.uniqueWhatsAppOnly
@@ -968,12 +991,14 @@ const selectCampaignContacts = (
     snapshot: {
       listMembersTotal: contacts.length,
       eligibleCount: eligibleContacts.length,
-      afterCategoryFilterCount: afterCategoryFilter.length,
+      afterFilterCount: afterFilter.length,
+      afterCategoryFilterCount: afterFilter.length,
       afterResendFilterCount: afterResendFilter.length,
-      excludedByCategory: eligibleContacts.length - afterCategoryFilter.length,
+      excludedByFilter: eligibleContacts.length - afterFilter.length,
+      excludedByCategory: eligibleContacts.length - afterFilter.length,
       afterUniqueWhatsAppFilterCount: afterUniqueWhatsAppFilter.length,
       excludedByUniqueWhatsApp: afterResendFilter.length - afterUniqueWhatsAppFilter.length,
-      excludedByResendPolicy: afterCategoryFilter.length - afterResendFilter.length,
+      excludedByResendPolicy: afterFilter.length - afterResendFilter.length,
       selectedCount: selectedContacts.length,
     },
   };
@@ -982,13 +1007,73 @@ const selectCampaignContacts = (
 const isEligibleContactForCampaign = (contact: ContactRecord): boolean =>
   contact.isValid && !contact.isOptedOut && contact.recordStatus === 'active';
 
-const passesCategoryFilter = (contact: ContactRecord, category?: string | null): boolean => {
-  const normalizedCategory = cleanNullableCampaignText(category);
-  if (!normalizedCategory) {
+const CANONICAL_AUDIENCE_FILTER_FIELDS = new Set<CampaignAudienceFilterField>([
+  'name',
+  'firstName',
+  'lastName',
+  'phoneE164',
+  'email',
+  'category',
+  'clientName',
+  'externalRef',
+]);
+const UNSAFE_ATTRIBUTE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+const validateAudienceFilterField = (field: string): CampaignAudienceFilterField => {
+  if (CANONICAL_AUDIENCE_FILTER_FIELDS.has(field as CampaignAudienceFilterField)) {
+    return field as CampaignAudienceFilterField;
+  }
+  if (!field.startsWith('attributes.')) {
+    throw new BadRequestException('Campo de filtro inválido');
+  }
+  const key = field.slice('attributes.'.length);
+  if (
+    !key ||
+    key.length > 200 ||
+    /[\s\u0000-\u001f\u007f]/u.test(key) ||
+    UNSAFE_ATTRIBUTE_KEYS.has(key.toLocaleLowerCase('pt-BR'))
+  ) {
+    throw new BadRequestException('Campo de filtro inválido');
+  }
+  return `attributes.${key}`;
+};
+
+const normalizeAudienceFilterValue = (value: unknown): string =>
+  String(value ?? '').trim().toLocaleLowerCase('pt-BR');
+
+const getAudienceFilterValue = (
+  contact: ContactRecord,
+  field: CampaignAudienceFilterField,
+): string | null | undefined => {
+  if (field.startsWith('attributes.')) {
+    const key = field.slice('attributes.'.length);
+    return Object.prototype.hasOwnProperty.call(contact.attributes, key)
+      ? contact.attributes[key]
+      : null;
+  }
+  return contact[field as CampaignAudienceCanonicalFilterField];
+};
+
+const passesAudienceFilter = (
+  contact: ContactRecord,
+  audience: CampaignAudienceConfig,
+): boolean => {
+  const filterField = audience.filterField
+    ? validateAudienceFilterField(audience.filterField)
+    : audience.category
+      ? 'category'
+      : null;
+  const filterValue = cleanNullableCampaignText(
+    audience.filterField ? audience.filterValue : audience.category,
+  );
+  if (!filterField || !filterValue) {
     return true;
   }
 
-  return cleanNullableCampaignText(contact.category) === normalizedCategory;
+  return (
+    normalizeAudienceFilterValue(getAudienceFilterValue(contact, filterField)) ===
+    normalizeAudienceFilterValue(filterValue)
+  );
 };
 
 const passesResendPolicy = (
@@ -1173,12 +1258,14 @@ const mapCampaignContactRow = (row: Record<string, unknown>): ContactRecord => (
 });
 
 const parseCampaignAttributes = (value: unknown): Record<string, string> => {
-  if (typeof value !== 'string' || !value.trim()) {
-    return {};
-  }
-
   try {
-    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const parsed = (typeof value === 'string' ? JSON.parse(value) : value) as Record<
+      string,
+      unknown
+    > | null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
     return Object.fromEntries(
       Object.entries(parsed ?? {}).flatMap(([key, rawValue]) => {
         if (rawValue === undefined || rawValue === null) {

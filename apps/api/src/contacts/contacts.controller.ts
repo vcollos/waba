@@ -169,6 +169,18 @@ export class ContactsController {
     return this.contactsService.listLists(resolveClientScope(request.user, clientId));
   }
 
+  @Get('lists/:id/filter-options')
+  listFilterOptions(
+    @Param('id') id: string,
+    @Req() request: { user: UserSession },
+    @Query('clientId') clientId?: string,
+  ) {
+    return this.contactsService.getListFilterOptions(
+      id,
+      resolveClientScope(request.user, clientId),
+    );
+  }
+
   @Get('lists/:id')
   list(
     @Param('id') id: string,

@@ -275,12 +275,27 @@ export type CampaignAudienceOrderField =
   | 'importedAt'
   | 'createdAt';
 export type CampaignAudienceResendPolicy = 'all' | 'not_delivered' | 'not_read';
+export type CampaignAudienceCanonicalFilterField =
+  | 'name'
+  | 'firstName'
+  | 'lastName'
+  | 'phoneE164'
+  | 'email'
+  | 'category'
+  | 'clientName'
+  | 'externalRef';
+export type CampaignAudienceFilterField =
+  | CampaignAudienceCanonicalFilterField
+  | `attributes.${string}`;
 
 export interface CampaignAudienceConfig {
   mode: CampaignAudienceMode;
   fixedCount?: number | null;
   percentage?: number | null;
+  /** Compatibilidade com campanhas antigas; novas interfaces usam filterField/filterValue. */
   category?: string | null;
+  filterField?: CampaignAudienceFilterField | null;
+  filterValue?: string | null;
   orderMode: CampaignAudienceOrderMode;
   orderField?: CampaignAudienceOrderField | null;
   orderDirection: 'asc' | 'desc';
@@ -291,9 +306,12 @@ export interface CampaignAudienceConfig {
 export interface CampaignAudienceSnapshot {
   listMembersTotal: number;
   eligibleCount: number;
+  /** Contagem genérica para qualquer campo; os nomes de categoria seguem por compatibilidade. */
+  afterFilterCount?: number;
   afterCategoryFilterCount?: number;
   afterResendFilterCount: number;
   afterUniqueWhatsAppFilterCount?: number;
+  excludedByFilter?: number;
   excludedByCategory?: number;
   excludedByUniqueWhatsApp?: number;
   excludedByResendPolicy: number;
