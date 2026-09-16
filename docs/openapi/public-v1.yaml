@@ -1,0 +1,583 @@
+openapi: 3.1.0
+info:
+  title: Uniodonto WABA — API pública
+  version: 1.0.0
+  summary: Listas, contatos e mensagens transacionais por API Token de tenant.
+  description: |
+    API REST pública do WABA Collos. O tenant é derivado exclusivamente do API
+    Token enviado em `Authorization: Bearer wba_...`; nenhum endpoint aceita
+    `clientId` do consumidor. O valor completo do token é exibido uma única vez
+    quando criado no painel.
+
+    Atenção: o servidor listado é produção. Operações POST persistem dados e o
+    disparo transacional pode contatar destinatários e gerar cobrança. Use token
+    dedicado, dados sintéticos e destinatário controlado; revogue o token após o
+    teste. Não há sandbox pública documentada atualmente.
+  contact:
+    name: Collos
+servers:
+  - url: https://waba-api.collos.com.br
+    description: Produção
+tags:
+  - name: Listas
+    description: Criação e leitura de listas do tenant.
+  - name: Contatos
+    description: Ingestão em lote com upsert por telefone dentro do tenant.
+  - name: Mensagens
+    description: Disparo síncrono de templates transacionais aprovados.
+security:
+  - ApiToken: []
+paths:
+  /api/public/v1/lists:
+    get:
+      tags: [Listas]
+      operationId: listPublicLists
+      summary: Lista as listas do tenant
+      description: Retorna somente listas pertencentes ao tenant do API Token.
+      responses:
+        '200':
+          description: Listas visíveis, mais recentes primeiro.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ListSummary'
+              examples:
+                success:
+                  value:
+                    - id: lst_01K58Q2D9Y2R3A4B5C6D7E8F9G
+                      name: Assinaturas de setembro
+                      description: Contatos integrados pelo sistema de contratos
+                      sourceType: api
+                      sourceFilePath: null
+                      createdAt: '2026-09-15T19:45:00.000Z'
+                      updatedAt: '2026-09-15T19:45:00.000Z'
+                      totalMembers: 1
+                      eligibleMembers: 1
+                      categories:
+                        - value: assinante
+                          label: assinante
+                          eligibleMembers: 1
+                          totalMembers: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Listas]
+      operationId: createPublicList
+      summary: Cria uma lista no tenant
+      description: Cria a lista com `sourceType=api`; o tenant vem do API Token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateListRequest'
+            examples:
+              default:
+                value:
+                  name: Assinaturas de setembro
+                  description: Contatos integrados pelo sistema de contratos
+      responses:
+        '201':
+          description: Lista criada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/List'
+              examples:
+                success:
+                  value:
+                    id: lst_01K58Q2D9Y2R3A4B5C6D7E8F9G
+                    clientId: cli_01K58PZ9RH0A1B2C3D4E5F6G7H
+                    name: Assinaturas de setembro
+                    description: Contatos integrados pelo sistema de contratos
+                    sourceType: api
+                    sourceFilePath: null
+                    createdAt: '2026-09-15T19:45:00.000Z'
+                    updatedAt: '2026-09-15T19:45:00.000Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/public/v1/lists/{id}/contacts:
+    post:
+      tags: [Contatos]
+      operationId: ingestPublicListContacts
+      summary: Ingere contatos em uma lista
+      description: |
+        Faz upsert por telefone no tenant do token e associa cada contato à
+        lista. A lista deve pertencer ao mesmo tenant. O lote aceita de 1 a 5000
+        itens. Telefones ausentes ou inválidos são contabilizados em `invalid`.
+      parameters:
+        - $ref: '#/components/parameters/ListId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestContactsRequest'
+            examples:
+              oneContact:
+                value:
+                  contacts:
+                    - firstName: Maria
+                      lastName: Silva
+                      institutionRepresented: Uniodonto Campinas
+                      jobTitle: Presidente
+                      phone: '+5519998887766'
+                      email: maria@example.com
+                      category: assinante
+      responses:
+        '201':
+          description: Resumo do lote processado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestContactsResponse'
+              examples:
+                success:
+                  value:
+                    listId: lst_01K58Q2D9Y2R3A4B5C6D7E8F9G
+                    received: 1
+                    inserted: 1
+                    updated: 0
+                    skipped: 0
+                    invalid: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/public/v1/messages:
+    post:
+      tags: [Mensagens]
+      operationId: sendTransactionalMessage
+      summary: Envia uma mensagem transacional
+      description: |
+        Envio síncrono à Meta com template `APPROVED` das categorias `UTILITY`
+        ou `AUTHENTICATION`. O canal bloqueia `MARKETING`, respeita opt-out e
+        limita cada token a 10 req/s e 300 req/min por instância. Uma resposta
+        `accepted` não significa que a mensagem já foi entregue ao aparelho.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+            examples:
+              authentication:
+                summary: Confirmação por template posicional
+                value:
+                  to: '+5519998887766'
+                  template: confirmacao_assinatura_contrato
+                  language: pt_BR
+                  variables:
+                    '1': '84721'
+                  callbackUrl: https://integracao.example.com/webhooks/waba
+              namedVariables:
+                summary: Template com parâmetros nomeados
+                value:
+                  to: '+5519998887766'
+                  template: confirmacao_cadastro
+                  language: pt_BR
+                  variables:
+                    nome: Maria
+                    protocolo: '84721'
+                  integrationId: int_01K58PVG7R8S9T0U1V2W3X4Y5Z
+      responses:
+        '200':
+          description: Mensagem aceita pela Meta ou replay idempotente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+              examples:
+                accepted:
+                  value:
+                    id: msg_01K58R4P8Q9A0B1C2D3E4F5G6H
+                    providerMessageId: wamid.HBgMNTUxOTk5ODg4Nzc2NhUCABIYFjNFQkM0
+                    status: accepted
+                    to: '+5519998887766'
+                    callbackSecret: whsec_000000000000000000000000000000000000000000000000
+                replay:
+                  value:
+                    id: msg_01K58R4P8Q9A0B1C2D3E4F5G6H
+                    providerMessageId: wamid.HBgMNTUxOTk5ODg4Nzc2NhUCABIYFjNFQkM0
+                    status: delivered
+                    to: '+5519998887766'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Destino em opt-out no tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                statusCode: 409
+                message:
+                  message: Destino descadastrado (opt-out)
+                  reason: opted_out
+                error: Conflict
+        '422':
+          description: A Meta rejeitou a mensagem.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaError'
+        '429':
+          description: Limite por token excedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Falha de comunicação com a Meta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaError'
+components:
+  securitySchemes:
+    ApiToken:
+      type: http
+      scheme: bearer
+      bearerFormat: wba_...
+      description: Cole somente o token `wba_...`; a UI adiciona `Bearer`.
+  parameters:
+    ListId:
+      name: id
+      in: path
+      required: true
+      description: ID opaco da lista pertencente ao tenant do token.
+      schema:
+        type: string
+      example: lst_01K58Q2D9Y2R3A4B5C6D7E8F9G
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Chave de deduplicação por tenant. Repetições devolvem o disparo original
+        sem reenviar. Use uma chave estável por operação lógica.
+      schema:
+        type: string
+        minLength: 1
+      example: contrato-84721-confirmacao-v1
+  responses:
+    BadRequest:
+      description: Requisição inválida.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            generic:
+              value:
+                statusCode: 400
+                message: Requisição inválida
+                error: Bad Request
+            missingVariables:
+              value:
+                statusCode: 400
+                message:
+                  message: Variáveis obrigatórias do template ausentes
+                  missing: [codigo]
+                error: Bad Request
+    Unauthorized:
+      description: API Token ausente, inválido ou revogado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            statusCode: 401
+            message: Token de API inválido ou revogado
+            error: Unauthorized
+    NotFound:
+      description: Recurso não encontrado no tenant do token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            statusCode: 404
+            message: Lista não encontrada
+            error: Not Found
+  schemas:
+    CreateListRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+          default: Lista via API
+          example: Assinaturas de setembro
+        description:
+          type: string
+          maxLength: 2000
+          example: Contatos integrados pelo sistema de contratos
+    List:
+      type: object
+      additionalProperties: false
+      required: [id, clientId, name, description, sourceType, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        clientId:
+          type: [string, 'null']
+          description: Tenant definido pelo token; informativo no retorno.
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        sourceType:
+          type: string
+          const: api
+        sourceFilePath:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ListSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - sourceType
+        - sourceFilePath
+        - createdAt
+        - updatedAt
+        - totalMembers
+        - eligibleMembers
+        - categories
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        sourceType:
+          type: string
+          enum: [csv, manual, api]
+        sourceFilePath:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        totalMembers:
+          type: integer
+          minimum: 0
+        eligibleMembers:
+          type: integer
+          minimum: 0
+          description: Contatos ativos, válidos e fora de opt-out.
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListCategorySummary'
+    ListCategorySummary:
+      type: object
+      additionalProperties: false
+      required: [value, label, eligibleMembers, totalMembers]
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+        eligibleMembers:
+          type: integer
+          minimum: 0
+        totalMembers:
+          type: integer
+          minimum: 0
+    IngestContactsRequest:
+      type: object
+      required: [contacts]
+      properties:
+        contacts:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items:
+            $ref: '#/components/schemas/IngestContact'
+    IngestContact:
+      type: object
+      required: [phone]
+      properties:
+        name:
+          type: string
+          description: Nome completo; fallback quando firstName/lastName não são enviados.
+        firstName:
+          type: string
+        lastName:
+          type: [string, 'null']
+        institutionRepresented:
+          type: [string, 'null']
+          maxLength: 200
+          description: Persistido em `attributes.institutionRepresented`; não altera tenant.
+        jobTitle:
+          type: [string, 'null']
+          maxLength: 200
+          description: Persistido em `attributes.jobTitle`.
+        phone:
+          type: string
+          description: Telefone com DDI, normalizável para E.164.
+          examples: ['+5519998887766']
+        email:
+          type: [string, 'null']
+          description: Valor cadastral; a API atual não valida formato ou entrega.
+        category:
+          type: [string, 'null']
+          description: Categoria livre para segmentação.
+    IngestContactsResponse:
+      type: object
+      additionalProperties: false
+      required: [listId, received, inserted, updated, skipped, invalid]
+      properties:
+        listId:
+          type: string
+        received:
+          type: integer
+          minimum: 0
+        inserted:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        invalid:
+          type: integer
+          minimum: 0
+    SendMessageRequest:
+      type: object
+      required: [to, template]
+      properties:
+        to:
+          type: string
+          description: Telefone com DDI, normalizável para E.164.
+          examples: ['+5519998887766']
+        template:
+          type: string
+          minLength: 1
+          description: Nome exato do template aprovado UTILITY ou AUTHENTICATION.
+        language:
+          type: string
+          description: Código de idioma da Meta; obrigatório em caso de ambiguidade.
+          examples: [pt_BR]
+        variables:
+          type: object
+          description: Valores por paramName ou índice posicional do placeholder.
+          additionalProperties:
+            type: string
+          examples:
+            - '1': '84721'
+            - nome: Maria
+              protocolo: '84721'
+        integrationId:
+          type: string
+          description: Obrigatório se o tenant tiver mais de uma integração ativa.
+        callbackUrl:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: URL HTTPS pública, validada contra SSRF e sem redirect.
+    SendMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [id, providerMessageId, status, to]
+      properties:
+        id:
+          type: string
+          description: ID interno usado para reconciliar callbacks.
+        providerMessageId:
+          type: [string, 'null']
+          description: WAMID retornado pela Meta, quando disponível.
+        status:
+          type: string
+          enum: [pending, accepted, sent, delivered, read, failed, skipped, cancelled]
+          description: Em envio novo é `accepted`; replay pode refletir status posterior.
+        to:
+          type: string
+          description: Destino normalizado em E.164.
+        callbackSecret:
+          type: string
+          readOnly: true
+          description: Exibido uma vez quando callbackUrl foi informado.
+    CallbackEvent:
+      type: object
+      additionalProperties: false
+      required: [messageId, idempotencyKey, to, status, providerMessageId, occurredAt]
+      properties:
+        messageId:
+          type: string
+        idempotencyKey:
+          type: [string, 'null']
+        to:
+          type: string
+        status:
+          type: string
+        providerMessageId:
+          type: [string, 'null']
+        occurredAt:
+          type: string
+          format: date-time
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, title]
+          properties:
+            code:
+              type: [string, 'null']
+            title:
+              type: [string, 'null']
+    Error:
+      type: object
+      required: [statusCode, message]
+      properties:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+            - type: object
+              additionalProperties: true
+        error:
+          type: string
+    MetaError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            message:
+              oneOf:
+                - type: string
+                - type: object
+                  properties:
+                    message:
+                      type: string
+                    metaCode:
+                      type: [string, integer, 'null']
+                    metaMessage:
+                      type: [string, 'null']

@@ -259,6 +259,16 @@ Webhook Meta:
 
 - `https://waba-api.collos.com.br/api/webhooks/meta/whatsapp`
 
+## Documentação da API
+
+- guia completo: [`docs/api-reference.md`](docs/api-reference.md)
+- contrato OpenAPI público: [`docs/openapi/public-v1.yaml`](docs/openapi/public-v1.yaml)
+- Swagger UI pública: `https://waba-api.collos.com.br/api/docs`
+
+A Swagger pública aceita API Token no botão **Authorize** e expõe somente as
+rotas `/api/public/v1/*`. As rotas administrativas do painel permanecem fora do
+documento público.
+
 ### Campos dos membros de listas
 
 A lista exibe Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.
