@@ -684,7 +684,20 @@ troca de réplica pode tornar o ID indisponível.
 | `POST /campaigns/{id}/resume` | exceto viewer | Retoma se houver pendentes/falhas. |
 | `POST /campaigns/{id}/retry-failed` | exceto viewer | Reagenda mensagens falhas. |
 | `POST /campaigns/{id}/retry-unanswered-flow` | exceto viewer | Reenvia flow a entregues/lidos sem resposta. |
-| `DELETE /campaigns/{id}` | exceto viewer | Exclui somente rascunho. |
+| `DELETE /campaigns/{id}` | exceto viewer | Exclui rascunho ou campanha terminal sem envio efetivo. |
+
+A exclusão é aceita para campanhas em `draft` e para campanhas em
+`completed`, `failed` ou `cancelled` quando nenhuma mensagem permanece nos
+estados `pending`, `accepted`, `sent`, `delivered` ou `read`. Campanhas em processamento
+(`queued`, `sending` ou `paused`) e qualquer campanha com histórico efetivo de
+envio são protegidas, mesmo que o cliente tente chamar a rota diretamente.
+Quando elegível, a operação remove a campanha e seus dados operacionais
+relacionados (`campaign_messages` e eventos de mensagem). A exclusão é recusada
+se existir qualquer resposta de flow, para nunca apagar dados de pesquisa. A
+elegibilidade é revalidada na mesma transação da limpeza; webhooks e reenvios
+concorrentes atualizam somente mensagens ainda existentes e não recriam linhas
+removidas. O registro de auditoria preserva o estado anterior e a quantidade de
+mensagens removidas. A interface solicita confirmação antes da chamada.
 
 `CreateCampaignInput`:
 

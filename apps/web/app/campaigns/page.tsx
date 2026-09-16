@@ -332,6 +332,22 @@ function CampaignActions({
 }) {
   const disabled = busy !== null;
   const s = campaign.status;
+  const isTerminal = s === 'completed' || s === 'failed' || s === 'cancelled';
+  const canDelete =
+    s === 'draft' ||
+    (isTerminal &&
+      campaign.funnel.sentTotal === 0 &&
+      campaign.summary.accepted === 0 &&
+      campaign.summary.pending === 0);
+
+  const confirmDelete = () => {
+    const confirmed = window.confirm(
+      'Excluir esta campanha? Todo o histórico será removido e esta ação não pode ser desfeita.',
+    );
+    if (!confirmed) return;
+    run(campaign.id, '', 'DELETE', 'Campanha excluída.');
+  };
+
   return (
     <>
       {s === 'draft' || s === 'queued' ? (
@@ -354,8 +370,8 @@ function CampaignActions({
           Reenviar falhas
         </button>
       ) : null}
-      {s === 'draft' ? (
-        <button className="btn danger sm" disabled={disabled} onClick={() => run(campaign.id, '', 'DELETE', 'Rascunho excluído.')}>
+      {canDelete ? (
+        <button className="btn danger sm" disabled={disabled} onClick={confirmDelete}>
           Excluir
         </button>
       ) : null}

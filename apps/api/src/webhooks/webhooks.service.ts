@@ -104,7 +104,10 @@ export class WebhooksService {
       nextMessage.providerErrorMessage = errors ? JSON.stringify(errors) : 'Webhook failed';
     }
 
-    await this.database.saveCampaignMessageInDatabase(nextMessage);
+    const messageUpdated = await this.database.updateCampaignMessageIfExistsInDatabase(nextMessage);
+    if (!messageUpdated) {
+      return;
+    }
 
     // Callback de saída para mensagens transacionais (OTP/token): best-effort,
     // fora do caminho crítico do webhook (void + catch).

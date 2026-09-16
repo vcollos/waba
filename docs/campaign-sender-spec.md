@@ -1150,9 +1150,26 @@ POST /api/campaigns/:id/start
 POST /api/campaigns/:id/pause
 POST /api/campaigns/:id/resume
 POST /api/campaigns/:id/retry-failed
+DELETE /api/campaigns/:id
 GET  /api/campaigns/:id/messages
 GET  /api/campaigns/:id/export
 ```
+
+#### Exclusão segura
+
+A ação **Excluir** fica disponível para rascunhos e para campanhas encerradas
+(`completed`, `failed` ou `cancelled`) que não tenham mensagens em
+`pending`, `accepted`, `sent`, `delivered` ou `read`. Isso permite remover, por exemplo,
+uma campanha concluída em que todos os destinatários falharam antes do envio.
+
+A tela exige confirmação explícita porque a operação remove a campanha, suas
+mensagens e eventos associados. Se houver qualquer resposta de flow, a exclusão
+é recusada e a resposta permanece preservada. O backend repete a validação de
+elegibilidade e de escopo do tenant; esconder o botão não é controle de
+autorização. A validação das mensagens e a limpeza ocorrem na mesma transação,
+e atualizações concorrentes de webhook/reenvio não recriam mensagens removidas.
+Campanhas enfileiradas, em envio ou pausadas, assim como campanhas com qualquer
+histórico efetivo de envio, não podem ser excluídas.
 
 #### Escopo da lista e filtro de audiência
 

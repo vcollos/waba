@@ -404,7 +404,7 @@ export class CampaignsService {
     );
     await Promise.all(
       failedMessages.map((message) =>
-        this.database.saveCampaignMessageInDatabase({
+        this.database.updateCampaignMessageIfExistsInDatabase({
           ...message,
           status: 'pending',
           nextAttemptAt: retryAt,
@@ -475,7 +475,7 @@ export class CampaignsService {
 
     await Promise.all(
       unansweredMessages.map((message) =>
-        this.database.saveCampaignMessageInDatabase({
+        this.database.updateCampaignMessageIfExistsInDatabase({
           ...message,
           status: 'pending',
           providerMessageId: null,
@@ -517,34 +517,82 @@ export class CampaignsService {
     return this.getCampaign(id);
   }
 
-  async removeDraft(id: string, actor: UserSession) {
+  async remove(id: string, actor: UserSession) {
     await this.assertCampaignScope(id, actor);
-    const state = await this.database.readMeta();
-    const campaign = state.campaigns.find((item) => item.id === id);
+    const reservation: { campaign?: CampaignRecord } = {};
+    await this.database.write((state) => {
+      const campaign = state.campaigns.find((item) => item.id === id);
+      if (!campaign || !isWithinScope(resolveClientScope(actor), campaign.clientId)) {
+        throw new NotFoundException('Campanha não encontrada');
+      }
+
+      const isDraft = campaign.status === 'draft';
+      const isTerminal = ['completed', 'failed', 'cancelled'].includes(campaign.status);
+      if (!isDraft && !isTerminal) {
+        throw new BadRequestException(
+          'Só é permitido excluir campanhas em rascunho ou encerradas sem mensagens enviadas',
+        );
+      }
+
+      reservation.campaign = structuredClone(campaign);
+      state.campaigns = state.campaigns.filter((item) => item.id !== id);
+    });
+    const campaign = reservation.campaign;
     if (!campaign) {
       throw new NotFoundException('Campanha não encontrada');
     }
 
-    if (campaign.status !== 'draft') {
-      throw new BadRequestException('Só é permitido excluir campanhas em rascunho');
+    const isDraft = campaign.status === 'draft';
+    const allowedDraftMessageStatuses = new Set<CampaignMessageRecord['status']>([
+      'pending',
+      'failed',
+      'skipped',
+      'cancelled',
+    ]);
+    const allowedTerminalMessageStatuses = new Set<CampaignMessageRecord['status']>([
+      'failed',
+      'skipped',
+      'cancelled',
+    ]);
+    const allowedMessageStatuses = isDraft
+      ? allowedDraftMessageStatuses
+      : allowedTerminalMessageStatuses;
+    let deletion: Awaited<
+      ReturnType<DatabaseService['deleteCampaignOperationalDataIfEligibleInDatabase']>
+    >;
+    try {
+      deletion = await this.database.deleteCampaignOperationalDataIfEligibleInDatabase(
+        id,
+        [...allowedMessageStatuses],
+      );
+      if (!deletion.deleted) {
+        if (deletion.flowResponseCount > 0) {
+          throw new BadRequestException('Campanhas com respostas de flow não podem ser excluídas');
+        }
+        throw new BadRequestException(
+          isDraft
+            ? 'Rascunhos com mensagens aceitas, enviadas ou em status desconhecido não podem ser excluídos'
+            : 'Campanhas encerradas só podem ser excluídas quando todas as mensagens falharam, foram ignoradas ou canceladas',
+        );
+      }
+    } catch (error) {
+      // Compensa a reserva quando a limpeza falha ou detecta dados protegidos.
+      await this.database.write((state) => {
+        if (!state.campaigns.some((item) => item.id === id)) {
+          state.campaigns.push(campaign);
+        }
+      });
+      throw error;
     }
-
-    const relatedMessageIds = new Set(
-      (await this.database.listCampaignMessagesInDatabase({ campaignId: id })).map((message) => message.id),
-    );
-
-    await this.database.write((draft) => {
-      draft.campaigns = draft.campaigns.filter((item) => item.id !== id);
-    });
-    await this.database.deleteCampaignOperationalDataInDatabase(id);
 
     await this.audit.log({
       actorUserId: actor.id,
-      action: 'campaign.deleted_draft',
+      action: isDraft ? 'campaign.deleted_draft' : 'campaign.deleted_terminal',
       entityType: 'campaign',
       entityId: id,
       metadata: {
-        removedMessageCount: relatedMessageIds.size,
+        previousStatus: campaign.status,
+        removedMessageCount: deletion.messageCount,
       },
     });
 

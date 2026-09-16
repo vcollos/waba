@@ -91,6 +91,6 @@ export class CampaignsController {
   @Delete(':id')
   @Roles(...CAMPAIGN_WRITE_ROLES)
   remove(@Param('id') id: string, @Req() request: { user: UserSession }) {
-    return this.campaignsService.removeDraft(id, request.user);
+    return this.campaignsService.remove(id, request.user);
   }
 }

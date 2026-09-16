@@ -1962,6 +1962,59 @@ export class DatabaseService implements OnModuleDestroy {
   }
 
   /**
+   * Atualiza uma mensagem somente enquanto ela ainda existe. Diferente do
+   * upsert usado pelo dispatcher, este método não pode ressuscitar uma mensagem
+   * removida concorrentemente com a chegada de um webhook.
+   */
+  async updateCampaignMessageIfExistsInDatabase(message: CampaignMessageRecord): Promise<boolean> {
+    await this.ensureReady();
+    if (!this.metaClient) {
+      let updated = false;
+      await this.write((state) => {
+        if (!state.campaignMessages.some((item) => item.id === message.id)) {
+          return;
+        }
+        state.campaignMessages = mergeById(state.campaignMessages, message);
+        updated = true;
+      });
+      return updated;
+    }
+
+    const result = await this.metaClient.query(
+      `UPDATE campaign_messages
+       SET campaign_id = $2,
+           contact_id = $3,
+           provider_message_id = $4,
+           flow_token = $5,
+           status = $6,
+           next_attempt_at = $7::timestamptz,
+           pricing_category = COALESCE($8, pricing_category),
+           pricing_billable = COALESCE($9::boolean, pricing_billable),
+           pricing_model = COALESCE($10, pricing_model),
+           created_at = $11::timestamptz,
+           updated_at = $12::timestamptz,
+           record_json = $13::jsonb
+       WHERE id = $1`,
+      [
+        message.id,
+        message.campaignId,
+        message.contactId,
+        message.providerMessageId ?? null,
+        message.flowToken ?? null,
+        message.status,
+        message.nextAttemptAt ?? null,
+        message.pricingCategory ?? null,
+        message.pricingBillable ?? null,
+        message.pricingModel ?? null,
+        message.createdAt,
+        message.updatedAt,
+        JSON.stringify(message),
+      ],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
    * Persiste a precificação (pricing) de uma mensagem, casando por
    * `provider_message_id` (wamid). Idempotente e não-destrutivo: só grava um
    * campo se veio valor (COALESCE preserva o existente), então reprocessar o
@@ -2443,39 +2496,74 @@ export class DatabaseService implements OnModuleDestroy {
     return rows.rows.map(mapMessageEventRow);
   }
 
-  async saveFlowResponseInDatabase(response: FlowResponseRecord): Promise<void> {
+  async saveFlowResponseInDatabase(response: FlowResponseRecord): Promise<boolean> {
     await this.ensureReady();
     if (!this.metaClient) {
+      let saved = false;
       await this.write((state) => {
+        const relatedMessageStillExists =
+          !response.campaignId ||
+          !response.campaignMessageId ||
+          state.campaignMessages.some(
+            (message) =>
+              message.id === response.campaignMessageId &&
+              message.campaignId === response.campaignId,
+          );
+        if (!relatedMessageStillExists) {
+          return;
+        }
         const existing = state.flowResponses.find(
           (item) =>
             item.providerMessageId === response.providerMessageId ||
             (response.flowToken && item.flowToken === response.flowToken),
         );
         if (existing) {
-          Object.assign(existing, { ...response, id: existing.id, updatedAt: new Date().toISOString() });
+          Object.assign(existing, {
+            ...response,
+            id: existing.id,
+            updatedAt: new Date().toISOString(),
+          });
+          saved = true;
           return;
         }
         state.flowResponses.push(response);
+        saved = true;
       });
-      return;
+      return saved;
     }
 
-    const existing = await this.metaClient.query<{ id: string }>(
-      `SELECT id
-       FROM flow_responses
-       WHERE provider_message_id = $1
-          OR ($2::text IS NOT NULL AND flow_token = $2)
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-      [response.providerMessageId, response.flowToken ?? null],
-    );
+    return this.postgresTransaction(async (client) => {
+      if (response.campaignId && response.campaignMessageId) {
+        const relatedMessage = await client.query<{ id: string }>(
+          `SELECT id
+           FROM campaign_messages
+           WHERE id = $1
+             AND campaign_id = $2
+           FOR KEY SHARE`,
+          [response.campaignMessageId, response.campaignId],
+        );
+        if (relatedMessage.rows.length === 0) {
+          return false;
+        }
+      }
 
-    const record: FlowResponseRecord = existing.rows[0]
-      ? { ...response, id: existing.rows[0].id, updatedAt: new Date().toISOString() }
-      : response;
+      const existing = await client.query<{ id: string }>(
+        `SELECT id
+         FROM flow_responses
+         WHERE provider_message_id = $1
+            OR ($2::text IS NOT NULL AND flow_token = $2)
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [response.providerMessageId, response.flowToken ?? null],
+      );
 
-    await this.upsertFlowResponsesBatch(this.metaClient, [record]);
+      const record: FlowResponseRecord = existing.rows[0]
+        ? { ...response, id: existing.rows[0].id, updatedAt: new Date().toISOString() }
+        : response;
+
+      await this.upsertFlowResponsesBatch(client, [record]);
+      return true;
+    });
   }
 
   /**
@@ -2649,25 +2737,94 @@ export class DatabaseService implements OnModuleDestroy {
     await this.upsertAuditLogsBatch(this.metaClient, [record]);
   }
 
-  async deleteCampaignOperationalDataInDatabase(campaignId: string): Promise<void> {
+  async deleteCampaignOperationalDataIfEligibleInDatabase(
+    campaignId: string,
+    allowedMessageStatuses: readonly CampaignMessageRecord['status'][],
+  ): Promise<{
+    deleted: boolean;
+    messageCount: number;
+    flowResponseCount: number;
+    blockedStatuses: string[];
+  }> {
     await this.ensureReady();
     if (!this.metaClient) {
+      let result = {
+        deleted: false,
+        messageCount: 0,
+        flowResponseCount: 0,
+        blockedStatuses: [] as string[],
+      };
       await this.write((state) => {
-        const relatedIds = new Set(
-          state.campaignMessages
-            .filter((message) => message.campaignId === campaignId)
-            .map((message) => message.id),
+        const relatedMessages = state.campaignMessages.filter(
+          (message) => message.campaignId === campaignId,
         );
+        const relatedIds = new Set(relatedMessages.map((message) => message.id));
+        const relatedFlowResponses = state.flowResponses.filter(
+          (response) => response.campaignId === campaignId,
+        );
+        const allowed = new Set<string>(allowedMessageStatuses);
+        const blockedStatuses = [
+          ...new Set(
+            relatedMessages
+              .map((message) => String(message.status))
+              .filter((status) => !allowed.has(status)),
+          ),
+        ];
+        result = {
+          deleted: false,
+          messageCount: relatedMessages.length,
+          flowResponseCount: relatedFlowResponses.length,
+          blockedStatuses,
+        };
+        if (relatedFlowResponses.length > 0 || blockedStatuses.length > 0) {
+          return;
+        }
+
         state.campaignMessages = state.campaignMessages.filter((message) => message.campaignId !== campaignId);
         state.messageEvents = state.messageEvents.filter(
           (event) => !event.campaignMessageId || !relatedIds.has(event.campaignMessageId),
         );
-        state.flowResponses = state.flowResponses.filter((response) => response.campaignId !== campaignId);
+        result.deleted = true;
       });
-      return;
+      return result;
     }
 
-    await this.postgresTransaction(async (client) => {
+    return this.postgresTransaction(async (client) => {
+      const messages = await client.query<{ id: string; status: string }>(
+        `SELECT id, status
+         FROM campaign_messages
+         WHERE campaign_id = $1
+         FOR UPDATE`,
+        [campaignId],
+      );
+      // Depois de travar as mensagens, bloqueia INSERT concorrente de resposta.
+      // A mesma ordem de locks é usada por saveFlowResponseInDatabase.
+      await client.query('LOCK TABLE flow_responses IN SHARE ROW EXCLUSIVE MODE');
+      const flowResponses = await client.query<{ id: string }>(
+        `SELECT id
+         FROM flow_responses
+         WHERE campaign_id = $1
+         FOR SHARE`,
+        [campaignId],
+      );
+      const allowed = new Set<string>(allowedMessageStatuses);
+      const blockedStatuses = [
+        ...new Set(
+          messages.rows
+            .map((message) => String(message.status))
+            .filter((status) => !allowed.has(status)),
+        ),
+      ];
+      const result = {
+        deleted: false,
+        messageCount: messages.rowCount ?? messages.rows.length,
+        flowResponseCount: flowResponses.rowCount ?? flowResponses.rows.length,
+        blockedStatuses,
+      };
+      if (result.flowResponseCount > 0 || blockedStatuses.length > 0) {
+        return result;
+      }
+
       await client.query(
         `DELETE FROM message_events
          WHERE campaign_message_id IN (
@@ -2675,8 +2832,9 @@ export class DatabaseService implements OnModuleDestroy {
          )`,
         [campaignId],
       );
-      await client.query('DELETE FROM flow_responses WHERE campaign_id = $1', [campaignId]);
       await client.query('DELETE FROM campaign_messages WHERE campaign_id = $1', [campaignId]);
+      result.deleted = true;
+      return result;
     });
   }
 
