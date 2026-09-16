@@ -71,7 +71,9 @@ async function bootstrap() {
   );
   SwaggerModule.setup('api/docs', app, document, {
     customSiteTitle: 'Uniodonto WABA — API',
-    swaggerOptions: { persistAuthorization: true },
+    // A página é pública: o token funciona durante a aba atual, mas não deve
+    // permanecer no navegador depois de recarregar ou encerrar a sessão.
+    swaggerOptions: { persistAuthorization: false },
   });
 
   await app.listen(env.port);
