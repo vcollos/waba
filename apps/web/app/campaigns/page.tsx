@@ -570,7 +570,60 @@ type ParamSource =
   | { type: 'static'; value: string }
   | { type: 'contact_name' }
   | { type: 'contact_phone' }
-  | { type: 'contact_email' };
+  | { type: 'contact_email' }
+  | { type: 'contact_attribute'; key: string }
+  | { type: 'contact_field'; key: string };
+
+const CONTACT_FIELD_SOURCE_PREFIX = 'contact_field:';
+
+function contactFieldKey(source: ParamSource | undefined): string | null {
+  if (!source || source.type === 'static') return null;
+  if (source.type === 'contact_field') return source.key;
+  if (source.type === 'contact_name') return 'name';
+  if (source.type === 'contact_phone') return 'phoneE164';
+  if (source.type === 'contact_email') return 'email';
+  return source.key.startsWith('attributes.') ? source.key : `attributes.${source.key}`;
+}
+
+function contactFieldFallbackLabel(key: string): string {
+  const knownLabels: Record<string, string> = {
+    name: 'Nome completo',
+    firstName: 'Nome',
+    lastName: 'Sobrenome',
+    phoneE164: 'WhatsApp',
+    email: 'E-mail',
+    category: 'Categoria',
+    clientName: 'Cliente',
+    externalRef: 'Referência externa',
+  };
+  return knownLabels[key] ?? key.replace(/^attributes\./, 'Campo personalizado · ');
+}
+
+function paramSourceSelectValue(source: ParamSource | undefined): string {
+  if (!source || source.type === 'static') return 'static';
+  return `${CONTACT_FIELD_SOURCE_PREFIX}${contactFieldKey(source)}`;
+}
+
+function buildDefaultParameterMapping(template: Template | null): Record<string, ParamSource> {
+  if (!template) return {};
+
+  const next: Record<string, ParamSource> = {};
+  for (const descriptor of template.variableDescriptors) {
+    const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
+    if (descriptor.componentType === 'button') {
+      // O exemplo da Meta para botão contém a URL completa, mas o envio aceita só o sufixo.
+      next[key] = { type: 'static', value: '' };
+    } else {
+      next[key] = descriptor.example
+        ? { type: 'static', value: descriptor.example }
+        : { type: 'contact_name' };
+    }
+  }
+
+  // O header_handle de exemplo da Meta pode expirar ou devolver 403 no envio.
+  if (template.mediaHeader) next['header:media'] = { type: 'static', value: '' };
+  return next;
+}
 
 function CampaignWizard({
   collos,
@@ -644,6 +697,10 @@ function CampaignWizard({
     () => filterOptions.find((field) => field.key === filterField) ?? null,
     [filterField, filterOptions],
   );
+  const filterOptionKeys = useMemo(
+    () => new Set(filterOptions.map((field) => field.key)),
+    [filterOptions],
+  );
 
   const resetAudienceFilter = () => {
     filterOptionsRequest.current += 1;
@@ -695,6 +752,7 @@ function CampaignWizard({
   const handleListChange = (nextListId: string) => {
     filterOptionsRequest.current += 1;
     setListId(nextListId);
+    setMapping(buildDefaultParameterMapping(template));
     setFilterOptions([]);
     setFilterOptionsLoading(false);
     setFilterOptionsError(null);
@@ -703,30 +761,10 @@ function CampaignWizard({
     if (nextListId) void loadFilterOptions(nextListId);
   };
 
-  // Ao escolher o template, pré-preenche cada campo com o exemplo aprovado na Meta
-  // (para o usuário só ajustar, não adivinhar o que inserir).
+  // Cada template começa com defaults determinísticos. A troca de lista reutiliza
+  // o mesmo construtor para nunca carregar um contact_field da lista anterior.
   useEffect(() => {
-    if (!template) return;
-    setMapping((current) => {
-      const next = { ...current };
-      for (const d of template.variableDescriptors) {
-        const key = `${d.componentType}:${d.placeholderIndex}`;
-        if (next[key]) continue;
-        if (d.componentType === 'button') {
-          // O exemplo da Meta para botão de URL é a URL completa (base+sufixo);
-          // pré-preencher quebraria o envio. Deixa vazio p/ o usuário informar o sufixo.
-          next[key] = { type: 'static', value: '' };
-        } else {
-          next[key] = d.example ? { type: 'static', value: d.example } : { type: 'contact_name' };
-        }
-      }
-      // Não pré-preencher com o exemplo da Meta (header_handle da CDN dá 403 no envio).
-      // O usuário informa a própria URL pública.
-      if (template.mediaHeader && !next['header:media']) {
-        next['header:media'] = { type: 'static', value: '' };
-      }
-      return next;
-    });
+    setMapping(buildDefaultParameterMapping(template));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId]);
 
@@ -774,10 +812,18 @@ function CampaignWizard({
   const steps = ['Configuração', 'Público', 'Variáveis', 'Revisão'];
   const hasCompleteFilter =
     (!filterField && !filterValue.trim()) || Boolean(filterField && filterValue.trim());
+  const hasValidDynamicMappings = Object.values(mapping).every((source) => {
+    const fieldKey = contactFieldKey(source);
+    return !fieldKey || filterOptionKeys.has(fieldKey);
+  });
   const canNext =
     (step === 1 && name && integrationId && templateId && (!collos || clientId)) ||
-    (step === 2 && listId && hasCompleteFilter && !filterOptionsLoading) ||
-    step === 3;
+    (step === 2 &&
+      listId &&
+      hasCompleteFilter &&
+      !filterOptionsLoading &&
+      !filterOptionsError) ||
+    (step === 3 && hasValidDynamicMappings);
 
   return (
     <Modal
@@ -1059,6 +1105,10 @@ function CampaignWizard({
             ? template.variableDescriptors.map((descriptor) => {
                 const key = `${descriptor.componentType}:${descriptor.placeholderIndex}`;
                 const source = mapping[key];
+                const selectedContactField = contactFieldKey(source);
+                const selectedFieldIsAvailable = selectedContactField
+                  ? filterOptions.some((field) => field.key === selectedContactField)
+                  : false;
                 const isButton = descriptor.componentType === 'button';
                 const varName = descriptor.paramName
                   ? `{{${descriptor.paramName}}}`
@@ -1079,22 +1129,51 @@ function CampaignWizard({
                       ) : null}
                       <select
                         className="input"
-                        value={source?.type ?? 'static'}
+                        value={paramSourceSelectValue(source)}
                         onChange={(e) => {
-                          const type = e.target.value as ParamSource['type'];
-                          setVar(
-                            key,
-                            type === 'static'
-                              ? { type: 'static', value: isButton ? '' : descriptor.example ?? '' }
-                              : ({ type } as ParamSource),
-                          );
+                          const value = e.target.value;
+                          if (value === 'static') {
+                            setVar(key, {
+                              type: 'static',
+                              value: isButton ? '' : descriptor.example ?? '',
+                            });
+                            return;
+                          }
+                          setVar(key, {
+                            type: 'contact_field',
+                            key: value.slice(CONTACT_FIELD_SOURCE_PREFIX.length),
+                          });
                         }}
                       >
                         <option value="static">Valor fixo</option>
-                        <option value="contact_name">Nome do contato</option>
-                        <option value="contact_phone">Telefone</option>
-                        <option value="contact_email">E-mail</option>
+                        {filterOptions.length > 0 ? (
+                          <optgroup label="Campos da lista selecionada">
+                            {filterOptions.map((field) => (
+                              <option
+                                key={field.key}
+                                value={`${CONTACT_FIELD_SOURCE_PREFIX}${field.key}`}
+                              >
+                                {field.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {selectedContactField && !selectedFieldIsAvailable ? (
+                          <option value={`${CONTACT_FIELD_SOURCE_PREFIX}${selectedContactField}`}>
+                            {contactFieldFallbackLabel(selectedContactField)} (mapeamento existente)
+                          </option>
+                        ) : null}
                       </select>
+                      {selectedContactField && !selectedFieldIsAvailable ? (
+                        <span className="hint" style={{ color: 'var(--danger)' }}>
+                          Este campo não existe na lista atual. Escolha outro campo ou use um valor
+                          fixo.
+                        </span>
+                      ) : filterOptions.length === 0 ? (
+                        <span className="hint">
+                          Esta lista não possui campos preenchidos disponíveis para mapeamento.
+                        </span>
+                      ) : null}
                     </div>
                     {source?.type === 'static' ? (
                       <div className="field">

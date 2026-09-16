@@ -1224,6 +1224,38 @@ O snapshot de audiência registra `afterFilterCount` e `excludedByFilter`. Os
 nomes históricos relacionados a categoria permanecem no contrato para
 compatibilidade com campanhas anteriores.
 
+#### Variáveis do template por campo da lista
+
+O passo **Variáveis** reutiliza a mesma descoberta de campos da lista. Para
+cada placeholder do template, o usuário pode informar um valor fixo ou escolher
+qualquer campo realmente presente nos membros da lista selecionada. Assim,
+`Nome completo`, `Nome` e `Sobrenome` são opções independentes, e colunas
+importadas aparecem com o rótulo cadastrado.
+
+O mapeamento é enviado em `parameterMapping`, indexado por
+`componentType:placeholderIndex`. Novas campanhas usam `contact_field` com uma
+das chaves canônicas ou `attributes.<chave>`:
+
+```json
+{
+  "parameterMapping": {
+    "body:1": { "type": "contact_field", "key": "firstName" },
+    "body:2": {
+      "type": "contact_field",
+      "key": "attributes.institutionRepresented"
+    },
+    "body:3": { "type": "static", "value": "34ª Convenção Nacional" }
+  }
+}
+```
+
+Campos canônicos aceitos: `name`, `firstName`, `lastName`, `phoneE164`,
+`email`, `category`, `clientName` e `externalRef`. O backend lê somente essas
+chaves ou uma chave própria e direta de `contact.attributes`; não interpreta
+caminhos aninhados. Os tipos legados `contact_name`, `contact_phone`,
+`contact_email` e `contact_attribute` continuam válidos para campanhas já
+salvas.
+
 ### Métricas
 
 ```http

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  CampaignAudienceCanonicalFilterField,
+  CampaignAudienceFilterField,
   ContactRecord,
   ParameterSource,
   TemplateMediaHeader,
@@ -30,6 +32,55 @@ export const normalizePhone = (value: string): { phoneE164: string; error?: stri
 export const normalizeKeyword = (value: string): string =>
   value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 
+const CONTACT_PARAMETER_FIELDS = new Set<CampaignAudienceCanonicalFilterField>([
+  'name',
+  'firstName',
+  'lastName',
+  'phoneE164',
+  'email',
+  'category',
+  'clientName',
+  'externalRef',
+]);
+const UNSAFE_CONTACT_ATTRIBUTE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+
+/**
+ * Resolve apenas campos oferecidos pelo contrato de listas. `attributes.*` usa
+ * tudo após o prefixo como uma única chave literal, sem percorrer propriedades.
+ */
+const resolveContactFieldValue = (
+  field: CampaignAudienceFilterField,
+  contact: ContactRecord,
+): string => {
+  if (typeof field !== 'string') {
+    return '';
+  }
+
+  if (CONTACT_PARAMETER_FIELDS.has(field as CampaignAudienceCanonicalFilterField)) {
+    return contact[field as CampaignAudienceCanonicalFilterField] ?? '';
+  }
+
+  if (!field.startsWith('attributes.')) {
+    return '';
+  }
+
+  const key = field.slice('attributes.'.length);
+  const attributes = contact.attributes;
+  if (
+    !key ||
+    key.length > 200 ||
+    /[\s\u0000-\u001f\u007f]/u.test(key) ||
+    UNSAFE_CONTACT_ATTRIBUTE_KEYS.has(key.toLocaleLowerCase('pt-BR')) ||
+    !attributes ||
+    typeof attributes !== 'object' ||
+    !Object.prototype.hasOwnProperty.call(attributes, key)
+  ) {
+    return '';
+  }
+
+  return attributes[key] ?? '';
+};
+
 export const resolveParameterValue = (
   source: ParameterSource | undefined,
   contact: ContactRecord,
@@ -49,6 +100,8 @@ export const resolveParameterValue = (
       return contact.email ?? '';
     case 'contact_attribute':
       return contact.attributes[source.key] ?? '';
+    case 'contact_field':
+      return resolveContactFieldValue(source.key, contact);
   }
 };
 

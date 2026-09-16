@@ -261,7 +261,8 @@ export type ParameterSource =
   | { type: 'contact_name' }
   | { type: 'contact_phone' }
   | { type: 'contact_email' }
-  | { type: 'contact_attribute'; key: string };
+  | { type: 'contact_attribute'; key: string }
+  | { type: 'contact_field'; key: CampaignAudienceFilterField };
 
 export type CampaignAudienceMode = 'all' | 'fixed_count' | 'percentage';
 export type CampaignAudienceOrderMode = 'field' | 'random';

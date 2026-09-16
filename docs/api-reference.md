@@ -700,14 +700,19 @@ fontes:
 
 ```json
 {
-  "body:1": { "type": "contact_name" },
-  "body:2": { "type": "contact_attribute", "key": "numeroContrato" },
+  "body:1": { "type": "contact_field", "key": "firstName" },
+  "body:2": { "type": "contact_field", "key": "attributes.numeroContrato" },
   "header:1": { "type": "static", "value": "https://cdn.example.com/doc.pdf" }
 }
 ```
 
-Tipos: `static`, `contact_name`, `contact_phone`, `contact_email` e
-`contact_attribute`.
+Para novas campanhas, use `static` ou `contact_field`. As chaves canônicas de
+`contact_field` são `name`, `firstName`, `lastName`, `phoneE164`, `email`,
+`category`, `clientName` e `externalRef`; colunas adicionais usam
+`attributes.<chave>`. A interface apresenta somente campos existentes na lista
+selecionada. Os tipos `contact_name`, `contact_phone`, `contact_email` e
+`contact_attribute` permanecem aceitos para compatibilidade com campanhas
+salvas anteriormente.
 
 `audience` suporta:
 
