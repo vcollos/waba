@@ -24,6 +24,17 @@ const text = (value: unknown, max = 200): string => typeof value === 'string' ? 
 const normalized = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const digits = (value: string) => value.replace(/\D/g, '');
 const date = (value: unknown): string | null => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+function contactProfile(value: unknown) {
+  try {
+    // LEGACY_COMPAT: contacts.attributes_json pode ser TEXT ou JSONB; remover após uniformizar o schema.
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
+    const attributes = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : {};
+    return { institutionRepresented: text(attributes.institutionRepresented) || null, jobTitle: text(attributes.jobTitle) || null };
+  } catch {
+    return { institutionRepresented: null, jobTitle: null };
+  }
+}
 const ANSWER_KEYS = new Set([
   'presenca', 'confirmapresenca', 'confirmacaopresenca', 'presence', 'attendance',
   'observacao', 'observacoes', 'observation', 'observations',
@@ -143,8 +154,7 @@ export class PublicCampaignsService {
     ]);
     const ids = [...new Set(messages.map((message) => message.contactId).filter(Boolean))];
     const contacts = ids.length ? await this.database.postgresQuery<Record<string, unknown>>(
-      `SELECT id, first_name, last_name, name, phone_e164, email, category,
-        attributes_json->>'institutionRepresented' AS institution, attributes_json->>'jobTitle' AS job_title
+      `SELECT id, first_name, last_name, name, phone_e164, email, category, attributes_json
        FROM contacts WHERE id = ANY($1::text[]) AND client_id = $2`, [ids, clientId],
     ) : [];
     const byContact = new Map(contacts.map((contact) => [String(contact.id), contact]));
@@ -185,7 +195,7 @@ export class PublicCampaignsService {
         messageId: message.id, contactId: message.contactId, name: text(contact?.name),
         firstName: text(contact?.first_name), lastName: text(contact?.last_name), phone,
         email: text(contact?.email) || null, category: text(contact?.category) || null,
-        institutionRepresented: text(contact?.institution) || null, jobTitle: text(contact?.job_title) || null,
+        ...contactProfile(contact?.attributes_json),
         status, sentAt: date(message.sentAt), deliveredAt: date(message.deliveredAt), readAt: date(message.readAt),
         evidence: { accepted: sent || Boolean(message.providerMessageId) || status === 'accepted', sent, delivered, read },
         responded: Boolean(response), respondedAt: date(response?.completedAt), presence: answerPresence(answers),

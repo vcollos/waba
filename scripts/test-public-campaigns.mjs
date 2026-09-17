@@ -81,11 +81,27 @@ test('resposta sem contactId usa telefone snapshot do envio', async () => {
   assert.equal((await service.results('list', 'campaign', 'tenant')).items[0].responded, true);
 });
 test('sete campos separados, busca sem acentos e total filtrado sem adulterar KPIs', async () => {
-  const { service } = setup({ messages: [msg('1'), msg('2')], responses: [response('r')], contacts: [{ id: 'contact-1', first_name: 'Márcia', last_name: 'Silva', name: 'Márcia Silva', email: 'marcia@example.com', category: 'Titular', institution: 'Uniodonto', job_title: 'Presidente' }] });
+  const { service } = setup({ messages: [msg('1'), msg('2')], responses: [response('r')], contacts: [{ id: 'contact-1', first_name: 'Márcia', last_name: 'Silva', name: 'Márcia Silva', email: 'marcia@example.com', category: 'Titular', attributes_json: { institutionRepresented: 'Uniodonto', jobTitle: 'Presidente' } }] });
   const result = await service.results('list', 'campaign', 'tenant', { search: 'marcia', response: 'yes', presence: 'yes' });
   assert.equal(result.total, 1); assert.equal(result.campaign.counters.total, 2);
   assert.equal(result.items[0].institutionRepresented, 'Uniodonto'); assert.equal(result.items[0].jobTitle, 'Presidente');
 });
+for (const attributes of [{ institutionRepresented: 'Uniodonto', jobTitle: 'Presidente', cpf: 'private' }, JSON.stringify({ institutionRepresented: 'Uniodonto', jobTitle: 'Presidente', cpf: 'private' })]) {
+  test(`atributos de contato ${typeof attributes} preservam campos sem operador JSON SQL`, async () => {
+    const { service, calls } = setup({ messages: [msg('1')], contacts: [{ id: 'contact-1', attributes_json: attributes }] });
+    const result = await service.results('list', 'campaign', 'tenant');
+    assert.equal(result.items[0].institutionRepresented, 'Uniodonto'); assert.equal(result.items[0].jobTitle, 'Presidente');
+    assert.ok(calls.filter((call) => call.sql?.includes('FROM contacts')).every((call) => !call.sql.includes('->')));
+    assert.ok(!JSON.stringify(result).includes('private')); assert.ok(!JSON.stringify(result).includes('attributes_json'));
+  });
+}
+for (const attributes of [null, '', '{invalid', '[]', 'null', 42]) {
+  test(`atributos ausentes ou malformados ${JSON.stringify(attributes)} não quebram a consulta`, async () => {
+    const { service } = setup({ messages: [msg('1')], contacts: [{ id: 'contact-1', attributes_json: attributes }] });
+    const result = await service.results('list', 'campaign', 'tenant');
+    assert.equal(result.items[0].institutionRepresented, null); assert.equal(result.items[0].jobTitle, null);
+  });
+}
 for (const query of [{ limit: 0 }, { limit: 101 }, { limit: NaN }, { offset: -1 }, { offset: 0.5 }, { offset: 1_000_001 }, { status: 'bogus' }, { presence: 'maybe' }, { response: 'bogus' }, { search: 'x'.repeat(201) }]) {
   test(`query inválida ${JSON.stringify(query)} não consulta dados`, async () => {
     const { service, calls } = setup(); await assert.rejects(service.results('list', 'campaign', 'tenant', query), /Filtros/); assert.equal(calls.length, 0);
