@@ -64,6 +64,9 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
 - guard: `apps/api/src/api-tokens/api-token.guard.ts` (Authorization: Bearer)
 - rotas sob `/api/public/v1`:
   - `GET/POST /lists`, `POST /lists/:id/contacts` (ingestão de contatos, ADR 0002)
+  - `GET /lists/:listId/campaigns` e
+    `GET /lists/:listId/campaigns/:campaignId/results` — leitura de campanhas e
+    respostas permitidas, com validação de tenant/lista/campanha (ADR 0012)
   - `POST /messages` — **disparo transacional** (OTP/assinatura), envio síncrono
     fora do poller, categorias `UTILITY`/`AUTHENTICATION` (ADR 0005)
 - o tenant vem **sempre** do token; nunca confiar em `clientId` do corpo

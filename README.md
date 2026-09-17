@@ -269,6 +269,15 @@ A Swagger pública aceita API Token no botão **Authorize** e expõe somente as
 rotas `/api/public/v1/*`. As rotas administrativas do painel permanecem fora do
 documento público.
 
+O acompanhamento externo de campanhas usa
+`GET /public/v1/lists/{listId}/campaigns` e
+`GET /public/v1/lists/{listId}/campaigns/{campaignId}/results`, com o mesmo token
+do tenant. A segunda consulta pagina destinatários, situações de entrega e
+respostas de negócio permitidas. Inclui campanhas sem respostas e preserva o
+histórico de mensagens mesmo se o contato sair da lista. Ver
+[ADR 0012](docs/decisions/0012-resultados-campanhas-api-publica.md) e
+[contrato HTTP](docs/api-reference.md#54-resultados-de-campanhas-da-lista).
+
 ### Campos dos membros de listas
 
 A lista exibe Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.

@@ -1575,3 +1575,19 @@ Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.
 como texto opcional de até 200 caracteres, armazenados em `attributes_json`.
 O upsert preserva outros atributos e o opt-out existente; omissão/vazio não apaga
 a instituição ou função anterior. Nenhum campo de identificação muda `client_id`.
+
+## Consulta externa de resultados por lista
+
+`GET /public/v1/lists/{listId}/campaigns` inclui campanhas sem respostas.
+`GET /public/v1/lists/{listId}/campaigns/{campaignId}/results` retorna mensagens
+paginadas e sua última resposta associada. Ambas usam o tenant do token e validam
+lista e campanha antes de acessar resultados; integração compartilhada não dá
+acesso às campanhas de outro tenant.
+
+Os registros de mensagens definem o histórico, sem depender dos membros atuais
+da lista. Aceite, envio, entrega e leitura são evidências cumulativas; resposta
+e presença são dimensões separadas. Somente campos de negócio permitidos do Flow
+integram a resposta pública. A consulta não envia mensagens, não sincroniza Flow
+e não altera a coleta. Detalhes no
+[ADR 0012](decisions/0012-resultados-campanhas-api-publica.md) e no
+[contrato HTTP](api-reference.md#54-resultados-de-campanhas-da-lista).

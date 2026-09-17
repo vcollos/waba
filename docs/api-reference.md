@@ -486,6 +486,61 @@ Valide a assinatura sobre os bytes brutos antes de fazer `JSON.parse`, dedupe po
 garante integridade e autenticidade, mas não contém timestamp ou nonce próprio;
 portanto, não impede replay e a idempotência no consumidor é obrigatória.
 
+### 5.4 Resultados de campanhas da lista
+
+Ambos os endpoints usam `Authorization: Bearer <token>` e exigem que a lista
+pertença ao tenant do token. A consulta de resultados também exige campanha do
+mesmo tenant e lista, antes da leitura de mensagens/respostas. Lista ou campanha
+fora desse escopo retorna `404`; token ausente, inválido ou revogado retorna `401`.
+
+#### `GET /public/v1/lists/{listId}/campaigns`
+
+Retorna `{ listId, listName, campaigns }`, incluindo campanhas sem respostas.
+Cada campanha contém `id`, `name`, `status`, `createdAt`, `startedAt`,
+`finishedAt` e `counters`: `total`, `accepted`, `sent`, `delivered`, `read`,
+`failed`, `responded`, `notResponded`, `presenceYes` e `presenceNo`.
+
+#### `GET /public/v1/lists/{listId}/campaigns/{campaignId}/results`
+
+| Query | Valores |
+|---|---|
+| `limit` | Inteiro 1–100; padrão 25. |
+| `offset` | Inteiro 0–1.000.000; padrão 0. |
+| `search` | Texto de até 200 caracteres; nome, telefone, e-mail, instituição, cargo e categoria. |
+| `response` | `all`, `yes`, `no`. |
+| `presence` | `all`, `yes`, `no`, `unknown`. |
+| `status` | `all`, `pending`, `accepted`, `sent`, `delivered`, `read`, `failed`, `skipped`, `cancelled`. |
+
+Filtros inválidos retornam `400`. A resposta contém `{ listId, campaign, total,
+limit, offset, items }`: `total` é o total filtrado; `campaign.counters` descreve
+a campanha inteira. Cada item representa uma mensagem, com:
+
+- `messageId`, `contactId`, `name`, `firstName`, `lastName`, `phone`, `email`,
+  `category`, `institutionRepresented`, `jobTitle`;
+- `status`, `sentAt`, `deliveredAt`, `readAt`;
+- `responded`, `respondedAt`, `presence`, `observation`;
+- `answers`, lista de `{ key, label, value }`.
+
+Aceite, envio, entrega e leitura são cumulativos nos contadores e filtros.
+`providerMessageId` comprova aceite; `sentAt` comprova envio;
+`deliveredAt`/`readAt` preservam entrega/leitura mesmo após status tardio.
+Uma mensagem com falha posterior ao envio pode contar em `failed` e `sent`.
+Resposta não equivale a entrega nem a confirmação de inscrição.
+
+As respostas usam uma allowlist de chaves normalizadas: `presenca`,
+`confirmapresenca`, `confirmacaopresenca`, `presence`, `attendance`, `observacao`,
+`observacoes`, `observation`, `observations`, `atividade`, `activity`, `evento`
+e `event`. Valores são escalares ou arrays curtos de strings; não são devolvidos
+webhook bruto, token do Flow ou identificadores técnicos do payload. Novas
+perguntas exigem extensão explícita desse contrato.
+
+O histórico parte das mensagens, não dos membros atuais da lista. Usa a última
+resposta vinculada à mensagem; na ausência desse vínculo, associa por contato
+ou, sem contato, telefone, somente à mensagem mais recente correspondente.
+Campos cadastrais vêm do contato atual do tenant, quando existente; o telefone
+da mensagem preserva o destino do envio. Não há disparo ou sync de Flow nesta
+consulta. Ver [ADR 0012](decisions/0012-resultados-campanhas-api-publica.md).
+
 ## 6. API do painel — referência de endpoints
 
 Todas as rotas abaixo usam JWT, exceto onde indicado. `clientId` só seleciona um

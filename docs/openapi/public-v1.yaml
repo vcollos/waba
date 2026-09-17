@@ -28,6 +28,65 @@ tags:
 security:
   - ApiToken: []
 paths:
+  /api/public/v1/lists/{listId}/campaigns:
+    get:
+      tags: [Listas]
+      operationId: listPublicCampaigns
+      summary: Campanhas da lista vinculada, inclusive sem respostas
+      parameters:
+        - {name: listId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Campanhas do tenant do token e da lista solicitada.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [listId, listName, campaigns]
+                properties:
+                  listId: {type: string}
+                  listName: {type: string}
+                  campaigns: {type: array, items: {$ref: '#/components/schemas/PublicCampaign'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/public/v1/lists/{listId}/campaigns/{campaignId}/results:
+    get:
+      tags: [Listas]
+      operationId: getPublicCampaignResults
+      summary: Destinatários reais e respostas de negócio, somente leitura
+      description: |
+        Uma linha por mensagem real, independente dos membros atuais da lista.
+        KPIs abrangem a campanha inteira; total reflete os filtros. Filtros
+        accepted/sent/delivered/read são cumulativos por evidência. Respostas
+        limitadas a presença, observação, atividade e evento (e aliases); sem
+        payload técnico, token, CPF ou webhook. Não dispara mensagens.
+      parameters:
+        - {name: listId, in: path, required: true, schema: {type: string}}
+        - {name: campaignId, in: path, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 1000000, default: 0}}
+        - {name: search, in: query, schema: {type: string, maxLength: 200}}
+        - {name: response, in: query, schema: {type: string, enum: [all, yes, no]}}
+        - {name: presence, in: query, schema: {type: string, enum: [all, yes, no, unknown]}}
+        - {name: status, in: query, schema: {type: string, enum: [all, pending, accepted, sent, delivered, read, failed, skipped, cancelled]}}
+      responses:
+        '200':
+          description: Resultados paginados após validar tenant, lista e campanha.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [listId, campaign, total, limit, offset, items]
+                properties:
+                  listId: {type: string}
+                  campaign: {$ref: '#/components/schemas/PublicCampaign'}
+                  total: {type: integer, minimum: 0}
+                  limit: {type: integer, minimum: 1, maximum: 100}
+                  offset: {type: integer, minimum: 0}
+                  items: {type: array, maxItems: 100, items: {$ref: '#/components/schemas/PublicCampaignRecipient'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /api/public/v1/lists:
     get:
       tags: [Listas]
@@ -311,6 +370,64 @@ components:
             message: Lista não encontrada
             error: Not Found
   schemas:
+    PublicCampaign:
+      type: object
+      required: [id, name, status, createdAt, startedAt, finishedAt, counters]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        status: {type: string}
+        createdAt: {type: string}
+        startedAt: {type: [string, 'null']}
+        finishedAt: {type: [string, 'null']}
+        counters:
+          type: object
+          required: [total, accepted, sent, delivered, read, failed, responded, notResponded, presenceYes, presenceNo]
+          properties:
+            total: {type: integer, minimum: 0}
+            accepted: {type: integer, minimum: 0}
+            sent: {type: integer, minimum: 0}
+            delivered: {type: integer, minimum: 0}
+            read: {type: integer, minimum: 0}
+            failed: {type: integer, minimum: 0}
+            responded: {type: integer, minimum: 0}
+            notResponded: {type: integer, minimum: 0}
+            presenceYes: {type: integer, minimum: 0}
+            presenceNo: {type: integer, minimum: 0}
+    PublicCampaignRecipient:
+      type: object
+      additionalProperties: false
+      required: [messageId, contactId, name, firstName, lastName, phone, email, category, institutionRepresented, jobTitle, status, sentAt, deliveredAt, readAt, responded, respondedAt, presence, observation, answers]
+      properties:
+        messageId: {type: string}
+        contactId: {type: string}
+        name: {type: string}
+        firstName: {type: string}
+        lastName: {type: string}
+        phone: {type: string}
+        email: {type: [string, 'null']}
+        category: {type: [string, 'null']}
+        institutionRepresented: {type: [string, 'null']}
+        jobTitle: {type: [string, 'null']}
+        status: {type: string, enum: [pending, accepted, sent, delivered, read, failed, skipped, cancelled]}
+        sentAt: {type: [string, 'null']}
+        deliveredAt: {type: [string, 'null']}
+        readAt: {type: [string, 'null']}
+        responded: {type: boolean}
+        respondedAt: {type: [string, 'null']}
+        presence: {type: string, enum: [yes, no, unknown]}
+        observation: {type: [string, 'null']}
+        answers:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, label, value]
+            properties:
+              key: {type: string, maxLength: 100}
+              label: {type: string, maxLength: 100}
+              value: {type: string, maxLength: 2000}
     CreateListRequest:
       type: object
       properties:

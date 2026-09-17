@@ -22,3 +22,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0009](0009-vinculo-n-n-cliente-integracao.md) | Vínculo N:N cliente ↔ integração WABA (uma conta WhatsApp serve vários tenants) | Aceito |
 | [0010](0010-contas-agentes-subtasks-tempo-real.md) | Contas dos agentes, subtarefas e telemetria real no Plane | Aceito |
 | [0011](0011-identificacao-membros-listas.md) | Identificação dos membros de listas | Aceito |
+| [0012](0012-resultados-campanhas-api-publica.md) | Resultados de campanhas pela API pública de tenant | Aceito no escopo de leitura autorizado |

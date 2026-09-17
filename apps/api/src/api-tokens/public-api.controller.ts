@@ -6,6 +6,7 @@ import {
   Headers,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -37,6 +38,7 @@ import {
   IngestContactsResponseDto,
 } from './dto/public-lists.dto';
 import { ApiTokenGuard } from './api-token.guard';
+import { PublicCampaignsService, type CampaignResultsQuery } from './public-campaigns.service';
 
 interface ApiRequest {
   user: UserSession;
@@ -70,6 +72,7 @@ export class PublicApiController {
     private readonly contacts: ContactsService,
     private readonly transactional: TransactionalService,
     private readonly rateLimiter: TransactionalRateLimiter,
+    private readonly publicCampaigns: PublicCampaignsService,
   ) {}
 
   @Get('lists')
@@ -80,6 +83,30 @@ export class PublicApiController {
   })
   lists(@Req() request: ApiRequest) {
     return this.contacts.listLists(resolveClientScope(request.user));
+  }
+
+  @Get('lists/:listId/campaigns')
+  @ApiOperation({ summary: 'Consulta campanhas da lista no tenant do token, inclusive sem respostas' })
+  campaigns(@Param('listId') listId: string, @Req() request: ApiRequest) {
+    return this.publicCampaigns.list(listId, request.apiClientId);
+  }
+
+  @Get('lists/:listId/campaigns/:campaignId/results')
+  @ApiOperation({ summary: 'Consulta destinatários e respostas da campanha, paginados e sem payload técnico' })
+  campaignResults(
+    @Param('listId') listId: string,
+    @Param('campaignId') campaignId: string,
+    @Query() query: Record<string, string>,
+    @Req() request: ApiRequest,
+  ) {
+    return this.publicCampaigns.results(listId, campaignId, request.apiClientId, {
+      limit: query.limit === undefined ? undefined : Number(query.limit),
+      offset: query.offset === undefined ? undefined : Number(query.offset),
+      search: query.search,
+      response: query.response as CampaignResultsQuery['response'],
+      presence: query.presence as CampaignResultsQuery['presence'],
+      status: query.status as CampaignResultsQuery['status'],
+    });
   }
 
   @Post('lists')
