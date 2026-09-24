@@ -23,3 +23,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0010](0010-contas-agentes-subtasks-tempo-real.md) | Contas dos agentes, subtarefas e telemetria real no Plane | Aceito |
 | [0011](0011-identificacao-membros-listas.md) | Identificação dos membros de listas | Aceito |
 | [0012](0012-resultados-campanhas-api-publica.md) | Resultados de campanhas pela API pública de tenant | Aceito no escopo de leitura autorizado |
+| [0013](0013-identidade-meta-estavel-em-campanhas.md) | Identidade Meta estável nas campanhas apesar de cache renovável | Aceito |

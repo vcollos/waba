@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PublicCampaignsService, sanitizeCampaignAnswers } from '../apps/api/dist/api-tokens/public-campaigns.service.js';
+import { CampaignsService } from '../apps/api/dist/campaigns/campaigns.service.js';
 
 const campaign = { id: 'campaign', clientId: 'tenant', listId: 'list', integrationId: 'shared', mode: 'template', name: 'Pesquisa', status: 'completed', createdAt: '2026-09-01T10:00:00Z' };
 const msg = (id, patch = {}) => ({ id, campaignId: 'campaign', contactId: `contact-${id}`, phoneE164: `+551199999000${id}`, status: 'pending', createdAt: `2026-09-01T10:0${id}:00Z`, ...patch });
@@ -68,6 +69,68 @@ test('cache órfão ou de outra integração não vira vínculo por nome', async
   assert.equal(item.templateId, null); assert.equal(item.templateName, null);
   assert.equal(item.flowId, null); assert.equal(item.flowName, null);
   assert.equal(item.flowIdentityStatus, 'unresolved');
+});
+test('ID do Flow no botão aprovado resolve campanha antiga sem flowCacheId', async () => {
+  const { service } = setup({
+    campaigns: [{ ...campaign, mode: 'template_flow', templateCacheId: 'template-cache', flowCacheId: null }],
+    templates: [{ id: 'template-cache', integrationId: 'shared', metaTemplateId: 'meta-template-1', name: 'Confirmação', hasFlowButton: true, flowButtonMeta: { flow_id: 'meta-flow-1' } }],
+  });
+  const item = (await service.list('list', 'tenant')).campaigns[0];
+  assert.equal(item.templateId, 'meta-template-1');
+  assert.equal(item.flowId, 'meta-flow-1');
+  assert.equal(item.flowIdentityStatus, 'resolved');
+});
+test('snapshot Meta preserva a identidade após caches órfãos, sem adotar nomes de outra integração', async () => {
+  const { service } = setup({
+    campaigns: [{ ...campaign, mode: 'template_flow', templateCacheId: 'orphan', flowCacheId: 'orphan-flow', metaTemplateId: 'meta-template-1', metaFlowId: 'meta-flow-1' }],
+    templates: [
+      { id: 'foreign', integrationId: 'other', metaTemplateId: 'meta-template-1', name: 'Outro tenant' },
+      { id: 'current', integrationId: 'shared', metaTemplateId: 'meta-template-1', name: 'Confirmação' },
+    ],
+    flows: [{ id: 'foreign-flow', integrationId: 'other', metaFlowId: 'meta-flow-1', name: 'Outro tenant' }],
+  });
+  const item = (await service.results('list', 'campaign', 'tenant')).campaign;
+  assert.deepEqual({ templateId: item.templateId, templateName: item.templateName, flowId: item.flowId, flowName: item.flowName, flowIdentityStatus: item.flowIdentityStatus },
+    { templateId: 'meta-template-1', templateName: 'Confirmação', flowId: 'meta-flow-1', flowName: null, flowIdentityStatus: 'resolved' });
+});
+test('criação rejeita Flow diferente do botão aprovado antes de gravar campanha', async () => {
+  let writes = 0;
+  const database = {
+    readMeta: async () => ({
+      integrations: [{ id: 'shared', clientId: 'tenant' }],
+      clientIntegrations: [{ integrationId: 'shared', clientId: 'tenant' }],
+      templates: [{ id: 'template-cache', integrationId: 'shared', hasFlowButton: true, flowButtonMeta: { flow_id: 'flow-approved' }, variableDescriptors: [] }],
+      flows: [{ id: 'flow-other', integrationId: 'shared', metaFlowId: 'flow-other-meta' }],
+    }),
+    postgresQuery: async () => [{ id: 'list', client_id: 'tenant', name: 'Evento', source_type: 'manual' }],
+    write: async () => { writes += 1; },
+  };
+  const service = new CampaignsService(database, {}, {});
+  await assert.rejects(service.create({ name: 'Pesquisa', clientId: 'tenant', integrationId: 'shared', listId: 'list', mode: 'template_flow', templateCacheId: 'template-cache', flowCacheId: 'flow-other' },
+    { id: 'actor', role: 'client_admin', clientIds: ['tenant'] }), /Flow selecionado não corresponde/);
+  assert.equal(writes, 0);
+});
+test('criação rejeita Flow selecionado quando o template não comprova o botão', async () => {
+  for (const template of [
+    { hasFlowButton: false },
+    { hasFlowButton: true, flowButtonMeta: {} },
+  ]) {
+    let writes = 0;
+    const database = {
+      readMeta: async () => ({
+        integrations: [{ id: 'shared', clientId: 'tenant' }],
+        clientIntegrations: [{ integrationId: 'shared', clientId: 'tenant' }],
+        templates: [{ id: 'template-cache', integrationId: 'shared', variableDescriptors: [], ...template }],
+        flows: [{ id: 'flow-selected', integrationId: 'shared', metaFlowId: 'meta-flow-1' }],
+      }),
+      postgresQuery: async () => [{ id: 'list', client_id: 'tenant', name: 'Evento', source_type: 'manual' }],
+      write: async () => { writes += 1; },
+    };
+    const service = new CampaignsService(database, {}, {});
+    await assert.rejects(service.create({ name: 'Pesquisa', clientId: 'tenant', integrationId: 'shared', listId: 'list', mode: 'template_flow', templateCacheId: 'template-cache', flowCacheId: 'flow-selected' },
+      { id: 'actor', role: 'client_admin', clientIds: ['tenant'] }), /Flow selecionado não corresponde/);
+    assert.equal(writes, 0);
+  }
 });
 test('modo Flow sem cache e template com botão de Flow são indeterminados, não ausência de Flow', async () => {
   for (const data of [

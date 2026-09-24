@@ -328,6 +328,9 @@ export interface CampaignRecord {
   mode: 'template' | 'template_flow' | 'session_flow';
   templateCacheId?: string | null;
   flowCacheId?: string | null;
+  /** Identidade Meta no momento da criação; sobrevive à renovação dos caches. */
+  metaTemplateId?: string | null;
+  metaFlowId?: string | null;
   listId: string;
   parameterMapping: Record<string, ParameterSource>;
   audience: CampaignAudienceConfig;

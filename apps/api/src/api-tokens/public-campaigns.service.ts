@@ -89,14 +89,19 @@ function evidenceStatus(message: CampaignMessageRecord): DeliveryStatus {
 function campaignIdentity(campaign: CampaignRecord, state: Readonly<AppState>) {
   const template = state.templates.find((item) => item.id === campaign.templateCacheId && item.integrationId === campaign.integrationId);
   const flow = state.flows.find((item) => item.id === campaign.flowCacheId && item.integrationId === campaign.integrationId);
-  const templateId = text(template?.metaTemplateId) || null;
-  const flowId = text(flow?.metaFlowId) || null;
+  const templateId = text(campaign.metaTemplateId) || text(template?.metaTemplateId) || null;
+  const flowId = text(campaign.metaFlowId) || text(flow?.metaFlowId) ||
+    (template?.hasFlowButton ? text(template.flowButtonMeta?.flow_id) : '') || null;
+  const namedTemplate = templateId && (template?.metaTemplateId === templateId ? template :
+    state.templates.find((item) => item.integrationId === campaign.integrationId && item.metaTemplateId === templateId));
+  const namedFlow = flowId && (flow?.metaFlowId === flowId ? flow :
+    state.flows.find((item) => item.integrationId === campaign.integrationId && item.metaFlowId === flowId));
   return {
     integrationId: campaign.integrationId,
     templateId,
-    templateName: templateId ? text(template?.name) || null : null,
+    templateName: namedTemplate ? text(namedTemplate.name) || null : null,
     flowId,
-    flowName: flowId ? text(flow?.name) || null : null,
+    flowName: namedFlow ? text(namedFlow.name) || null : null,
     flowIdentityStatus: flowId ? 'resolved' :
       campaign.mode === 'template' && !campaign.flowCacheId && template?.hasFlowButton !== true ? 'none' : 'unresolved',
   };
