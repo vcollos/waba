@@ -271,8 +271,16 @@ export class CampaignsService {
     const inferredFlow = template?.hasFlowButton
       ? findFlowForTemplate(template, integrationFlows)
       : undefined;
-    if (input.flowCacheId && !integrationFlows.some((flow) => flow.id === input.flowCacheId)) {
+    const selectedFlow = input.flowCacheId
+      ? integrationFlows.find((flow) => flow.id === input.flowCacheId)
+      : undefined;
+    if (input.flowCacheId && !selectedFlow) {
       throw new NotFoundException('Flow não encontrado');
+    }
+    const approvedFlowId = template?.hasFlowButton && typeof template.flowButtonMeta?.flow_id === 'string'
+      ? template.flowButtonMeta.flow_id.trim() : '';
+    if (selectedFlow && (!approvedFlowId || selectedFlow.metaFlowId !== approvedFlowId)) {
+      throw new BadRequestException('O Flow selecionado não corresponde ao botão aprovado no template');
     }
 
     const mapping = input.parameterMapping ?? {};
@@ -305,6 +313,8 @@ export class CampaignsService {
       mode: input.mode,
       templateCacheId: input.templateCacheId ?? null,
       flowCacheId: input.flowCacheId ?? inferredFlow?.id ?? null,
+      metaTemplateId: template?.metaTemplateId ?? null,
+      metaFlowId: approvedFlowId || selectedFlow?.metaFlowId || inferredFlow?.metaFlowId || null,
       listId: input.listId,
       parameterMapping: mapping,
       audience: normalizeAudienceConfig(input.audience),
