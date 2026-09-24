@@ -331,6 +331,12 @@ export interface CampaignRecord {
   /** Identidade Meta no momento da criação; sobrevive à renovação dos caches. */
   metaTemplateId?: string | null;
   metaFlowId?: string | null;
+  /** Reenvio público: origem e chave para idempotência, sem dados pessoais. */
+  followupSourceCampaignId?: string | null;
+  followupRequestKeyHash?: string | null;
+  followupPreviewHash?: string | null;
+  /** Hash da definição aprovada no momento da confirmação; guard de envio. */
+  followupTemplateFingerprint?: string | null;
   listId: string;
   parameterMapping: Record<string, ParameterSource>;
   audience: CampaignAudienceConfig;

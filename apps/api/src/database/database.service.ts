@@ -1037,6 +1037,8 @@ export class DatabaseService implements OnModuleDestroy {
           ON contacts(updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_contacts_phone_hash_pg
           ON contacts(phone_hash);
+        CREATE INDEX IF NOT EXISTS idx_contacts_client_phone_e164_pg
+          ON contacts(client_id, phone_e164);
         CREATE INDEX IF NOT EXISTS idx_list_members_list_id_pg
           ON list_members(list_id);
         CREATE INDEX IF NOT EXISTS idx_list_members_contact_id_pg
@@ -1102,6 +1104,9 @@ export class DatabaseService implements OnModuleDestroy {
           ON flow_responses (completed_at DESC);
         CREATE INDEX IF NOT EXISTS idx_flow_responses_campaign
           ON flow_responses (campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_flow_responses_unlinked_identity
+          ON flow_responses (integration_id, meta_flow_id)
+          WHERE campaign_id IS NULL;
         CREATE INDEX IF NOT EXISTS idx_flow_responses_contact
           ON flow_responses (contact_id);
         CREATE INDEX IF NOT EXISTS idx_flow_responses_flow_cache

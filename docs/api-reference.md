@@ -554,6 +554,43 @@ Campos cadastrais vêm do contato atual do tenant, quando existente; o telefone
 da mensagem preserva o destino do envio. Não há disparo ou sync de Flow nesta
 consulta. Ver [ADR 0012](decisions/0012-resultados-campanhas-api-publica.md).
 
+### 5.5 Reenvio de grupo sem resposta
+
+Ambos os POSTs usam `Authorization: Bearer <token>` e corpo com
+`integrationId`, `templateId` e `flowId` (IDs Meta estáveis). O servidor valida
+tenant/lista/integração e considera apenas campanhas dessa lista e desse grupo.
+
+`POST /public/v1/lists/{listId}/campaign-followups/preview` não envia mensagens.
+Retorna `group` (`templateName`, `flowName`, `sourceCampaignId`,
+`sourceCampaignName`, `mappingVariants`), `campaignIds`, `counts`,
+`currentTemplate` (`id`, `name`, `languageCode`, `lastSyncedAt`, `components`),
+`historicalContentVerified: false` e `previewHash`. Os componentes mostram o
+conteúdo do template aprovado no último sync. O payload histórico não preserva
+o texto estático enviado, então a igualdade literal com a mensagem anterior
+não pode ser comprovada; mostre o conteúdo atual e esse aviso na confirmação.
+`counts` traz `sentPeople`, `responded`, `eligible` e
+`excluded` com `responded`, `notInList`, `inactive`, `optedOut`, `invalidPhone`
+e `duplicatePhone`. O mapeamento de variáveis vem da execução enviada mais
+recente. `mappingVariants: true` indica que outra execução usou mapeamento
+diferente; mostre a origem antes de confirmar.
+O opt-out vale por telefone em qualquer contato do tenant, inclusive fora da
+lista. Respostas de Flow sem campanha vinculada também excluem o telefone
+quando integração, ID Meta do Flow e waId/contato coincidem.
+
+`POST /public/v1/lists/{listId}/campaign-followups` recebe os mesmos IDs,
+`previewHash` e `confirm: true`, mais header `Idempotency-Key` (8–128 caracteres
+ASCII alfanuméricos, `_`, `:`, `.`, `-`). Revalida a audiência e o template,
+cria outra campanha e devolve `{ campaignId, status: "queued", recipientCount,
+replayed }`. A repetição da chave devolve a execução original. `409` indica
+prévia alterada, grupo indisponível ou outra execução ativa; peça nova prévia.
+Se a definição do template aprovado mudar no cache após entrar na fila, o
+dispatcher marca cada destinatário ainda pendente como `skipped` antes de chamar
+a Meta; a execução guarda o fingerprint da definição confirmada.
+`queued` significa entrada na fila, não entrega ou aceite pela Meta. Ver
+[ADR 0014](decisions/0014-reenvio-de-grupo-sem-resposta.md).
+A prévia retorna `400` para grupos com mais de 20 execuções, 5.000 mensagens
+ou 5.000 respostas; requer processamento dedicado para volumes maiores.
+
 ## 6. API do painel — referência de endpoints
 
 Todas as rotas abaixo usam JWT, exceto onde indicado. `clientId` só seleciona um

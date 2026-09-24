@@ -81,14 +81,14 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
 
     await this.database.write((draft) => {
       const item = draft.campaigns.find((record) => record.id === campaign.id);
-      if (item) {
+      if (item && ['queued', 'sending'].includes(item.status)) {
         item.status = 'sending';
         item.updatedAt = nowIso();
       }
     });
 
     for (const message of candidates) {
-      this.launchSend(message, integration);
+      this.launchSend(message, integration, campaign);
     }
   }
 
@@ -107,10 +107,10 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
     return this.database.claimDispatchBatchInDatabase(campaignId, batchSize, leaseUntil);
   }
 
-  private launchSend(message: CampaignMessageRecord, integration: IntegrationRecord) {
+  private launchSend(message: CampaignMessageRecord, integration: IntegrationRecord, campaign: CampaignRecord) {
     this.addInFlight(message.campaignId, message.id);
 
-    void this.sendMessage(message, integration)
+    void this.sendMessage(message, integration, campaign)
       .catch((error) => {
         this.logger.error(
           `Dispatch send failed for message ${message.id}`,
@@ -164,8 +164,27 @@ export class DispatchService implements OnModuleInit, OnModuleDestroy {
   private async sendMessage(
     message: CampaignMessageRecord,
     integration: IntegrationRecord,
+    campaign: CampaignRecord,
   ): Promise<void> {
     try {
+      if (campaign.followupSourceCampaignId) {
+        const latest = (await this.database.readMetaSnapshot()).campaigns.find((item) => item.id === campaign.id);
+        if (!latest || !['queued', 'sending'].includes(latest.status)) {
+          await this.database.saveCampaignMessageInDatabase({
+            ...message, status: latest?.status === 'paused' ? 'pending' : 'skipped',
+            skipReason: latest?.status === 'paused' ? null : 'followup_campaign_inactive',
+            nextAttemptAt: null, updatedAt: nowIso(),
+          });
+          return;
+        }
+        const skipReason = await this.campaignsService.followupSkipReason(latest, message);
+        if (skipReason) {
+          await this.database.saveCampaignMessageInDatabase({
+            ...message, status: 'skipped', skipReason, nextAttemptAt: null, updatedAt: nowIso(),
+          });
+          return;
+        }
+      }
       const response = await this.metaGraph.sendMessage(integration, message.payload);
       const providerMessageId = Array.isArray(response.messages)
         ? String((response.messages[0] as Record<string, unknown>)?.id ?? '')

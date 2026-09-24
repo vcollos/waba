@@ -12,6 +12,7 @@ import {
   resolveParameterValue,
 } from '../database/helpers';
 import { MetaApiError, MetaGraphService } from '../integrations/meta-graph.service';
+import { campaignIdentity } from '../api-tokens/public-campaigns.service';
 import { isWithinScope, resolveClientScope } from '../common/scope';
 import {
   CampaignAudienceCanonicalFilterField,
@@ -45,6 +46,17 @@ export interface CreateCampaignInput {
   parameterMapping?: Record<string, ParameterSource>;
   audience?: Partial<CampaignAudienceConfig>;
 }
+
+/** Versão da definição aprovada que afeta o conteúdo entregue ao destinatário. */
+export const approvedTemplateFingerprint = (template: TemplateCacheRecord): string => hash(JSON.stringify({
+  metaTemplateId: template.metaTemplateId,
+  name: template.name,
+  languageCode: template.languageCode,
+  status: template.status,
+  components: template.components,
+  variableDescriptors: template.variableDescriptors,
+  flowButtonMeta: template.flowButtonMeta,
+}));
 
 interface GetCampaignOptions {
   limit?: number;
@@ -525,6 +537,72 @@ export class CampaignsService {
 
     await this.refreshCampaignSummary(id);
     return this.getCampaign(id);
+  }
+
+  /** Última barreira para uma execução de follow-up, imediatamente antes da Meta. */
+  async followupSkipReason(campaign: CampaignRecord, message: CampaignMessageRecord): Promise<string | null> {
+    if (!campaign.followupSourceCampaignId) return null;
+    if (!campaign.clientId || !campaign.metaTemplateId || !campaign.metaFlowId || message.campaignId !== campaign.id) {
+      return 'followup_identity_invalid';
+    }
+    const phone = message.phoneE164.replace(/\D/g, '');
+    if (!phone) return 'followup_phone_invalid';
+    const state = await this.database.readMetaSnapshot();
+    const approvedTemplate = state.templates.find((item) => item.integrationId === campaign.integrationId &&
+      item.metaTemplateId === campaign.metaTemplateId && String(item.status).toUpperCase() === 'APPROVED' &&
+      (!item.clientId || item.clientId === campaign.clientId) && item.hasFlowButton &&
+      String(item.flowButtonMeta?.flow_id ?? '') === campaign.metaFlowId);
+    if (!approvedTemplate) return 'followup_template_unavailable';
+    if (!campaign.followupTemplateFingerprint ||
+        approvedTemplateFingerprint(approvedTemplate) !== campaign.followupTemplateFingerprint) {
+      return 'followup_template_changed';
+    }
+    const groupIds = state.campaigns.filter((item) => {
+      const identity = campaignIdentity(item, state);
+      return item.clientId === campaign.clientId && item.listId === campaign.listId &&
+        item.integrationId === campaign.integrationId && identity.templateId === campaign.metaTemplateId &&
+        identity.flowId === campaign.metaFlowId && identity.flowIdentityStatus === 'resolved' && item.id !== campaign.id;
+    }).map((item) => item.id);
+    if (groupIds.length === 0) return 'followup_group_missing';
+    const [eligibility, responses] = await Promise.all([
+      this.database.postgresQuery<{ opted_out: boolean; eligible: boolean }>(
+        `SELECT
+           EXISTS (
+             SELECT 1 FROM contacts c
+             WHERE c.client_id = $2
+               AND c.phone_e164 IN ($4, '+' || $4)
+               AND c.is_opted_out = TRUE
+           ) AS opted_out,
+           EXISTS (
+             SELECT 1 FROM list_members lm
+             JOIN lists l ON l.id = lm.list_id AND l.client_id = $2
+             JOIN contacts c ON c.id = lm.contact_id AND c.client_id = l.client_id
+             WHERE lm.list_id = $1 AND c.id = $3
+               AND c.phone_e164 IN ($4, '+' || $4)
+               AND c.record_status = 'active' AND c.is_valid = TRUE AND c.is_opted_out = FALSE
+           ) AS eligible`, [campaign.listId, campaign.clientId, message.contactId, phone]),
+      this.database.postgresQuery<{ id: string }>(
+        `SELECT fr.id FROM flow_responses fr
+         WHERE fr.integration_id = $1 AND (
+           (fr.campaign_id = ANY($2::text[]) AND (
+             fr.contact_id = $3
+             OR regexp_replace(COALESCE(fr.record_json->>'waId', ''), '[^0-9]', '', 'g') = $4
+             OR EXISTS (
+               SELECT 1 FROM campaign_messages cm
+               WHERE cm.campaign_id = fr.campaign_id
+                 AND (cm.id = fr.campaign_message_id OR cm.contact_id = fr.contact_id)
+                 AND regexp_replace(COALESCE(cm.record_json->>'phoneE164', ''), '[^0-9]', '', 'g') = $4
+             )
+           )) OR (fr.campaign_id IS NULL AND fr.meta_flow_id = $5 AND (
+             regexp_replace(COALESCE(fr.record_json->>'waId', ''), '[^0-9]', '', 'g') = $4
+             OR fr.contact_id = $3
+           ))
+         ) LIMIT 1`, [campaign.integrationId, groupIds, message.contactId, phone, campaign.metaFlowId]),
+    ]);
+    if (!eligibility[0] || eligibility[0].opted_out) return 'followup_phone_opted_out';
+    if (!eligibility[0].eligible) return 'followup_contact_ineligible';
+    if (responses.length) return 'followup_already_responded';
+    return null;
   }
 
   async remove(id: string, actor: UserSession) {

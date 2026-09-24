@@ -1591,3 +1591,25 @@ integram a resposta pública. A consulta não envia mensagens, não sincroniza F
 e não altera a coleta. Detalhes no
 [ADR 0012](decisions/0012-resultados-campanhas-api-publica.md) e no
 [contrato HTTP](api-reference.md#54-resultados-de-campanhas-da-lista).
+
+## Reenvio de grupo sem resposta
+
+Os dois POSTs públicos de `campaign-followups` usam integração + ID Meta do
+template + ID Meta do Flow e o tenant do token. A prévia reúne execuções da
+mesma lista, conta pessoas por telefone e exclui quem respondeu a qualquer
+execução, saiu da lista, ficou inativo, inválido ou optou por não receber.
+Opt-out de qualquer registro do tenant com o mesmo telefone prevalece, mesmo
+fora da lista. Resposta sem campanha vinculada conta quando waId/contato,
+integração e ID Meta do Flow identificam o mesmo grupo.
+O template atual precisa estar aprovado e manter o mesmo botão de Flow.
+A prévia expõe componentes, idioma e data do último sync do template aprovado
+atual e marca `historicalContentVerified: false`: o histórico não salva o texto
+estático, portanto não prova igualdade literal entre versões do template.
+A confirmação deve mostrar o conteúdo atual e essa ressalva.
+A execução guarda o fingerprint da definição confirmada; antes de cada chamada
+à Meta, o dispatcher compara o template aprovado atual e pula a mensagem se
+conteúdo, idioma, variáveis ou botão de Flow mudaram após a fila.
+A execução nova reaproveita as variáveis da execução enviada mais recente,
+indicada na prévia, e não altera campanhas antigas. O hash da prévia inclui
+identidade, origem, template, contatos e respostas; alterações exigem nova
+prévia. Ver [ADR 0014](decisions/0014-reenvio-de-grupo-sem-resposta.md).

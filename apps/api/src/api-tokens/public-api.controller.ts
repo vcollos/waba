@@ -39,6 +39,7 @@ import {
 } from './dto/public-lists.dto';
 import { ApiTokenGuard } from './api-token.guard';
 import { PublicCampaignsService, type CampaignResultsQuery } from './public-campaigns.service';
+import { PublicFollowupsService, type FollowupGroupInput } from './public-followups.service';
 
 interface ApiRequest {
   user: UserSession;
@@ -73,6 +74,7 @@ export class PublicApiController {
     private readonly transactional: TransactionalService,
     private readonly rateLimiter: TransactionalRateLimiter,
     private readonly publicCampaigns: PublicCampaignsService,
+    private readonly publicFollowups: PublicFollowupsService,
   ) {}
 
   @Get('lists')
@@ -107,6 +109,28 @@ export class PublicApiController {
       presence: query.presence as CampaignResultsQuery['presence'],
       status: query.status as CampaignResultsQuery['status'],
     });
+  }
+
+  @Post('lists/:listId/campaign-followups/preview')
+  @ApiOperation({ summary: 'Prévia dos destinatários sem resposta em todas as execuções de um grupo' })
+  followupPreview(
+    @Param('listId') listId: string,
+    @Body() body: FollowupGroupInput,
+    @Req() request: ApiRequest,
+  ) {
+    return this.publicFollowups.preview(listId, request.apiClientId, body);
+  }
+
+  @Post('lists/:listId/campaign-followups')
+  @ApiOperation({ summary: 'Confirma reenvio como nova execução de campanha' })
+  @ApiHeader({ name: 'Idempotency-Key', required: true })
+  followupExecute(
+    @Param('listId') listId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: FollowupGroupInput & { previewHash?: string; confirm?: boolean },
+    @Req() request: ApiRequest,
+  ) {
+    return this.publicFollowups.execute(listId, request.apiClientId, body, idempotencyKey, request.user.id);
   }
 
   @Post('lists')
