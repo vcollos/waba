@@ -497,8 +497,19 @@ fora desse escopo retorna `404`; token ausente, inválido ou revogado retorna `4
 
 Retorna `{ listId, listName, campaigns }`, incluindo campanhas sem respostas.
 Cada campanha contém `id`, `name`, `status`, `createdAt`, `startedAt`,
-`finishedAt` e `counters`: `total`, `accepted`, `sent`, `delivered`, `read`,
+`finishedAt`, `integrationId`, `templateId`, `templateName`, `flowId`,
+`flowName`, `flowIdentityStatus` e `counters`: `total`, `accepted`, `sent`, `delivered`, `read`,
 `failed`, `responded`, `notResponded`, `presenceYes` e `presenceNo`.
+`templateId` e `flowId` são os IDs estáveis da Meta, resolvidos pelos vínculos
+`templateCacheId` e `flowCacheId` da campanha em caches da **mesma integração**.
+Quando o vínculo ou o registro correspondente não existe, os campos de ID e
+nome desse modelo ou Flow são `null`; o nome da campanha nunca é usado para
+inferir um vínculo. `integrationId` identifica a integração da campanha.
+`flowIdentityStatus` distingue `resolved` (ID Meta confirmado), `none`
+(campanha em modo somente template, sem vínculo de Flow e sem botão de Flow
+conhecido) e `unresolved` (Flow esperado, cache ausente ou vínculo órfão).
+Um `flowId: null` com `unresolved` não comprova ausência de Flow e não deve
+ser agrupado com campanhas `none`.
 
 #### `GET /public/v1/lists/{listId}/campaigns/{campaignId}/results`
 
@@ -513,7 +524,8 @@ Cada campanha contém `id`, `name`, `status`, `createdAt`, `startedAt`,
 
 Filtros inválidos retornam `400`. A resposta contém `{ listId, campaign, total,
 limit, offset, items }`: `total` é o total filtrado; `campaign.counters` descreve
-a campanha inteira. Cada item representa uma mensagem, com:
+a campanha inteira e inclui os mesmos campos de identidade da listagem. Cada
+item representa uma mensagem, com:
 
 - `messageId`, `contactId`, `name`, `firstName`, `lastName`, `phone`, `email`,
   `category`, `institutionRepresented`, `jobTitle`;
