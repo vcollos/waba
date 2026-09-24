@@ -86,7 +86,7 @@ function evidenceStatus(message: CampaignMessageRecord): DeliveryStatus {
   return message.status;
 }
 
-function campaignIdentity(campaign: CampaignRecord, state: Readonly<AppState>) {
+export function campaignIdentity(campaign: CampaignRecord, state: Readonly<AppState>) {
   const template = state.templates.find((item) => item.id === campaign.templateCacheId && item.integrationId === campaign.integrationId);
   const flow = state.flows.find((item) => item.id === campaign.flowCacheId && item.integrationId === campaign.integrationId);
   const templateId = text(campaign.metaTemplateId) || text(template?.metaTemplateId) || null;

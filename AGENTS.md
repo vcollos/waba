@@ -67,6 +67,10 @@ A Collos opera este painel para múltiplas Uniodontos (tenants). Regras:
   - `GET /lists/:listId/campaigns` e
     `GET /lists/:listId/campaigns/:campaignId/results` — leitura de campanhas e
     respostas permitidas, com validação de tenant/lista/campanha (ADR 0012)
+  - `POST /lists/:listId/campaign-followups/preview` e
+    `POST /lists/:listId/campaign-followups` — prévia e nova execução para quem
+    recebeu mensagem do grupo e não respondeu; confirmação por hash e chave
+    idempotente, sem alterar envios antigos (ADR 0014)
   - `POST /messages` — **disparo transacional** (OTP/assinatura), envio síncrono
     fora do poller, categorias `UTILITY`/`AUTHENTICATION` (ADR 0005)
 - o tenant vem **sempre** do token; nunca confiar em `clientId` do corpo

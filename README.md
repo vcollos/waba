@@ -278,6 +278,12 @@ histórico de mensagens mesmo se o contato sair da lista. Ver
 [ADR 0012](docs/decisions/0012-resultados-campanhas-api-publica.md) e
 [contrato HTTP](docs/api-reference.md#54-resultados-de-campanhas-da-lista).
 
+O reenvio de quem ainda não respondeu usa uma prévia em
+`POST /public/v1/lists/{listId}/campaign-followups/preview` e confirmação em
+`POST /public/v1/lists/{listId}/campaign-followups`. A confirmação cria uma nova
+execução, preserva as mensagens anteriores e exige `Idempotency-Key`, hash da
+prévia e `confirm: true`. Ver [ADR 0014](docs/decisions/0014-reenvio-de-grupo-sem-resposta.md).
+
 ### Campos dos membros de listas
 
 A lista exibe Nome, Sobrenome, Uniodonto, Cargo/Função, WhatsApp, E-mail e Categoria.

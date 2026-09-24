@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Uniodonto WABA — API pública
   version: 1.0.0
-  summary: Listas, contatos e mensagens transacionais por API Token de tenant.
+  summary: Listas, campanhas e mensagens transacionais por API Token de tenant.
   description: |
     API REST pública do WABA Collos. O tenant é derivado exclusivamente do API
     Token enviado em `Authorization: Bearer wba_...`; nenhum endpoint aceita
@@ -25,9 +25,71 @@ tags:
     description: Ingestão em lote com upsert por telefone dentro do tenant.
   - name: Mensagens
     description: Disparo síncrono de templates transacionais aprovados.
+  - name: Campanhas
+    description: Prévia e confirmação de nova execução para destinatários sem resposta.
 security:
   - ApiToken: []
 paths:
+  /api/public/v1/lists/{listId}/campaign-followups/preview:
+    post:
+      tags: [Campanhas]
+      operationId: previewUnansweredCampaignFollowup
+      summary: Prévia de pessoas sem resposta no grupo de template e Flow
+      parameters:
+        - {name: listId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FollowupGroup'}
+      responses:
+        '201':
+          description: Contagens e hash da audiência, sem enviar mensagens.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FollowupPreview'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Template/Flow indisponível ou grupo incompatível.}
+  /api/public/v1/lists/{listId}/campaign-followups:
+    post:
+      tags: [Campanhas]
+      operationId: createUnansweredCampaignFollowup
+      summary: Confirma o reenvio como campanha nova
+      parameters:
+        - {name: listId, in: path, required: true, schema: {type: string}}
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/FollowupGroup'}
+                - type: object
+                  required: [previewHash, confirm]
+                  properties:
+                    previewHash: {type: string, pattern: '^[a-f0-9]{64}$'}
+                    confirm: {type: boolean, const: true}
+      responses:
+        '201':
+          description: Campanha nova enfileirada; aceite/entrega pela Meta são assíncronos.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [campaignId, status, recipientCount, replayed]
+                properties:
+                  campaignId: {type: string}
+                  status: {type: string, const: queued}
+                  recipientCount: {type: integer, minimum: 1}
+                  replayed: {type: boolean}
+                  currentStatus: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {description: Prévia desatualizada, chave reutilizada ou reenvio ativo.}
   /api/public/v1/lists/{listId}/campaigns:
     get:
       tags: [Listas]
@@ -370,6 +432,58 @@ components:
             message: Lista não encontrada
             error: Not Found
   schemas:
+    FollowupGroup:
+      type: object
+      required: [integrationId, templateId, flowId]
+      properties:
+        integrationId: {type: string}
+        templateId: {type: string}
+        flowId: {type: string}
+    FollowupPreview:
+      type: object
+      required: [group, campaignIds, counts, currentTemplate, historicalContentVerified, previewHash]
+      properties:
+        group:
+          allOf:
+            - {$ref: '#/components/schemas/FollowupGroup'}
+            - type: object
+              required: [sourceCampaignId, sourceCampaignName, mappingVariants]
+              properties:
+                templateName: {type: string}
+                flowName: {type: [string, 'null']}
+                sourceCampaignId: {type: string}
+                sourceCampaignName: {type: string}
+                mappingVariants: {type: boolean}
+        campaignIds: {type: array, items: {type: string}}
+        currentTemplate:
+          type: object
+          description: Definição aprovada no último sync; o conteúdo estático histórico não foi preservado.
+          required: [id, name, languageCode, lastSyncedAt, components]
+          properties:
+            id: {type: string}
+            name: {type: string}
+            languageCode: {type: string}
+            lastSyncedAt: {type: string, format: date-time}
+            components: {type: array, items: {type: object, additionalProperties: true}}
+        historicalContentVerified: {type: boolean, enum: [false]}
+        counts:
+          type: object
+          required: [sentPeople, responded, eligible, excluded]
+          properties:
+            sentPeople: {type: integer, minimum: 0}
+            responded: {type: integer, minimum: 0}
+            eligible: {type: integer, minimum: 0}
+            excluded:
+              type: object
+              required: [responded, notInList, inactive, optedOut, invalidPhone, duplicatePhone]
+              properties:
+                responded: {type: integer, minimum: 0}
+                notInList: {type: integer, minimum: 0}
+                inactive: {type: integer, minimum: 0}
+                optedOut: {type: integer, minimum: 0}
+                invalidPhone: {type: integer, minimum: 0}
+                duplicatePhone: {type: integer, minimum: 0}
+        previewHash: {type: string, pattern: '^[a-f0-9]{64}$'}
     PublicCampaign:
       type: object
       required: [id, name, status, createdAt, startedAt, finishedAt, counters]
