@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PublicCampaignsService, sanitizeCampaignAnswers } from '../apps/api/dist/api-tokens/public-campaigns.service.js';
 
-const campaign = { id: 'campaign', clientId: 'tenant', listId: 'list', integrationId: 'shared', name: 'Pesquisa', status: 'completed', createdAt: '2026-09-01T10:00:00Z' };
+const campaign = { id: 'campaign', clientId: 'tenant', listId: 'list', integrationId: 'shared', mode: 'template', name: 'Pesquisa', status: 'completed', createdAt: '2026-09-01T10:00:00Z' };
 const msg = (id, patch = {}) => ({ id, campaignId: 'campaign', contactId: `contact-${id}`, phoneE164: `+551199999000${id}`, status: 'pending', createdAt: `2026-09-01T10:0${id}:00Z`, ...patch });
 const response = (id, patch = {}) => ({ id, campaignId: 'campaign', campaignMessageId: '1', integrationId: 'shared', contactId: 'contact-1', waId: '5511999990001', completedAt: '2026-09-02T10:00:00Z', responsePayload: { presenca: 'Sim', observacao: 'Confirmado' }, ...patch });
-function setup({ lists = [{ id: 'list', name: 'Evento' }], campaigns = [campaign], messages = [], responses = [], contacts = [] } = {}) {
+function setup({ lists = [{ id: 'list', name: 'Evento' }], campaigns = [campaign], templates = [], flows = [], messages = [], responses = [], contacts = [] } = {}) {
   const calls = [];
   const db = {
     postgresQuery: async (sql, args) => {
@@ -13,7 +13,7 @@ function setup({ lists = [{ id: 'list', name: 'Evento' }], campaigns = [campaign
       assert.match(sql, /client_id = \$2/); assert.equal(args[1], 'tenant');
       return sql.includes('FROM lists') ? lists : contacts;
     },
-    readMetaSnapshot: async () => ({ campaigns }),
+    readMetaSnapshot: async () => ({ campaigns, templates, flows }),
     listCampaignMessagesInDatabase: async (query) => { calls.push({ kind: 'messages', query }); assert.deepEqual(query, { campaignId: 'campaign' }); return messages; },
     listFlowResponsesInDatabase: async (query) => { calls.push({ kind: 'responses', query }); assert.deepEqual(query, { campaignId: 'campaign' }); return responses; },
   };
@@ -35,6 +35,48 @@ test('overview inclui campanha sem respostas e sem destinatários', async () => 
   const { service } = setup();
   const result = await service.list('list', 'tenant');
   assert.equal(result.campaigns.length, 1); assert.equal(result.campaigns[0].counters.total, 0);
+  assert.deepEqual({ integrationId: result.campaigns[0].integrationId, templateId: result.campaigns[0].templateId,
+    templateName: result.campaigns[0].templateName, flowId: result.campaigns[0].flowId, flowName: result.campaigns[0].flowName },
+  { integrationId: 'shared', templateId: null, templateName: null, flowId: null, flowName: null });
+  assert.equal(result.campaigns[0].flowIdentityStatus, 'none');
+});
+test('listagem e detalhe expõem IDs Meta estáveis somente dos caches da integração da campanha', async () => {
+  const data = {
+    campaigns: [{ ...campaign, templateCacheId: 'template-cache', flowCacheId: 'flow-cache' }],
+    templates: [
+      { id: 'template-cache', integrationId: 'other', metaTemplateId: 'wrong', name: 'Outro tenant' },
+      { id: 'template-cache', integrationId: 'shared', metaTemplateId: 'meta-template-1', name: 'Confirmação' },
+    ],
+    flows: [
+      { id: 'flow-cache', integrationId: 'other', metaFlowId: 'wrong', name: 'Outro tenant' },
+      { id: 'flow-cache', integrationId: 'shared', metaFlowId: 'meta-flow-1', name: 'Presença' },
+    ],
+  };
+  const { service } = setup(data);
+  const expected = { integrationId: 'shared', templateId: 'meta-template-1', templateName: 'Confirmação', flowId: 'meta-flow-1', flowName: 'Presença', flowIdentityStatus: 'resolved' };
+  for (const item of [(await service.list('list', 'tenant')).campaigns[0], (await service.results('list', 'campaign', 'tenant')).campaign]) {
+    assert.deepEqual(Object.fromEntries(Object.keys(expected).map((key) => [key, item[key]])), expected);
+  }
+});
+test('cache órfão ou de outra integração não vira vínculo por nome', async () => {
+  const { service } = setup({
+    campaigns: [{ ...campaign, templateCacheId: 'orphan', flowCacheId: 'foreign', name: 'Igual ao modelo' }],
+    templates: [{ id: 'another', integrationId: 'shared', metaTemplateId: 'meta-template-1', name: 'Igual ao modelo' }],
+    flows: [{ id: 'foreign', integrationId: 'other', metaFlowId: 'meta-flow-1', name: 'Igual ao modelo' }],
+  });
+  const item = (await service.results('list', 'campaign', 'tenant')).campaign;
+  assert.equal(item.templateId, null); assert.equal(item.templateName, null);
+  assert.equal(item.flowId, null); assert.equal(item.flowName, null);
+  assert.equal(item.flowIdentityStatus, 'unresolved');
+});
+test('modo Flow sem cache e template com botão de Flow são indeterminados, não ausência de Flow', async () => {
+  for (const data of [
+    { campaigns: [{ ...campaign, mode: 'template_flow' }] },
+    { campaigns: [{ ...campaign, templateCacheId: 'template-cache' }], templates: [{ id: 'template-cache', integrationId: 'shared', metaTemplateId: 'meta-template-1', name: 'Fluxo', hasFlowButton: true }] },
+  ]) {
+    const { service } = setup(data);
+    assert.equal((await service.list('list', 'tenant')).campaigns[0].flowIdentityStatus, 'unresolved');
+  }
 });
 test('todos destinatários reais permanecem mesmo sem contato ou membro atual', async () => {
   const { service, calls } = setup({ messages: [msg('1'), msg('2')] });

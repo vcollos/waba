@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import type { CampaignMessageRecord, CampaignRecord, FlowResponseRecord } from '../database/types';
+import type { AppState, CampaignMessageRecord, CampaignRecord, FlowResponseRecord } from '../database/types';
 
 type DeliveryStatus = CampaignMessageRecord['status'];
 type Presence = 'yes' | 'no' | 'unknown';
@@ -86,11 +86,28 @@ function evidenceStatus(message: CampaignMessageRecord): DeliveryStatus {
   return message.status;
 }
 
-function summarize(campaign: CampaignRecord, rows: InternalRecipient[]) {
+function campaignIdentity(campaign: CampaignRecord, state: Readonly<AppState>) {
+  const template = state.templates.find((item) => item.id === campaign.templateCacheId && item.integrationId === campaign.integrationId);
+  const flow = state.flows.find((item) => item.id === campaign.flowCacheId && item.integrationId === campaign.integrationId);
+  const templateId = text(template?.metaTemplateId) || null;
+  const flowId = text(flow?.metaFlowId) || null;
+  return {
+    integrationId: campaign.integrationId,
+    templateId,
+    templateName: templateId ? text(template?.name) || null : null,
+    flowId,
+    flowName: flowId ? text(flow?.name) || null : null,
+    flowIdentityStatus: flowId ? 'resolved' :
+      campaign.mode === 'template' && !campaign.flowCacheId && template?.hasFlowButton !== true ? 'none' : 'unresolved',
+  };
+}
+
+function summarize(campaign: CampaignRecord, rows: InternalRecipient[], state: Readonly<AppState>) {
   const count = (predicate: (row: InternalRecipient) => boolean) => rows.filter(predicate).length;
   const responded = count((row) => row.responded);
   return {
     id: campaign.id, name: text(campaign.name), status: campaign.status, createdAt: campaign.createdAt,
+    ...campaignIdentity(campaign, state),
     startedAt: date(campaign.startedAt), finishedAt: date(campaign.finishedAt),
     counters: {
       total: rows.length, accepted: count((row) => row.evidence.accepted),
@@ -115,21 +132,21 @@ export class PublicCampaignsService {
     const state = await this.database.readMetaSnapshot();
     // A integração é compartilhada N:N; seu client_id nunca autoriza campanha.
     const campaigns = state.campaigns.filter((campaign) => campaign.clientId === clientId && campaign.listId === listId);
-    return { list, campaigns };
+    return { list, campaigns, state };
   }
 
   async list(listId: string, clientId: string) {
-    const { list, campaigns } = await this.campaignsForList(listId, clientId);
+    const { list, campaigns, state } = await this.campaignsForList(listId, clientId);
     const items = [];
     for (const campaign of campaigns.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))) {
-      items.push(summarize(campaign, await this.recipients(campaign, clientId)));
+      items.push(summarize(campaign, await this.recipients(campaign, clientId), state));
     }
     return { listId: list.id, listName: text(list.name), campaigns: items };
   }
 
   async results(listId: string, campaignId: string, clientId: string, input: CampaignResultsQuery = {}) {
     const query = validateCampaignQuery(input);
-    const { campaigns } = await this.campaignsForList(listId, clientId);
+    const { campaigns, state } = await this.campaignsForList(listId, clientId);
     const campaign = campaigns.find((item) => item.id === campaignId);
     if (!campaign) throw new NotFoundException('Campanha não encontrada nesta lista');
     // Autorização completa ocorre ANTES de carregar mensagens, mesmo sem respostas.
@@ -143,7 +160,7 @@ export class PublicCampaignsService {
       }
       return !search || normalized([row.name, row.phone, row.email, row.institutionRepresented, row.jobTitle, row.category].join(' ')).includes(search);
     });
-    return { listId, campaign: summarize(campaign, rows), total: filtered.length, limit: query.limit, offset: query.offset,
+    return { listId, campaign: summarize(campaign, rows, state), total: filtered.length, limit: query.limit, offset: query.offset,
       items: filtered.slice(query.offset, query.offset + query.limit).map(({ evidence: _evidence, ...row }) => row) };
   }
 
