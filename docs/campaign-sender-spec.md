@@ -1586,8 +1586,10 @@ acesso às campanhas de outro tenant.
 
 Os registros de mensagens definem o histórico, sem depender dos membros atuais
 da lista. Aceite, envio, entrega e leitura são evidências cumulativas; resposta
-e presença são dimensões separadas. Somente campos de negócio permitidos do Flow
-integram a resposta pública. A consulta não envia mensagens, não sincroniza Flow
+e presença são dimensões separadas. Campos permitidos do Flow e textos com contexto explícito validado
+integram a resposta pública; textos sem contexto são excluídos para preservar
+isolamento de integrações compartilhadas. O [ADR 0015](decisions/0015-respostas-textuais-campanha.md)
+registra o contrato aditivo, inclusive conteúdo com CPF e limites. A consulta não envia mensagens, não sincroniza Flow
 e não altera a coleta. Detalhes no
 [ADR 0012](decisions/0012-resultados-campanhas-api-publica.md) e no
 [contrato HTTP](api-reference.md#54-resultados-de-campanhas-da-lista).

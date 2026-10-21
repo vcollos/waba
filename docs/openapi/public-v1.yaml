@@ -511,7 +511,7 @@ components:
     PublicCampaignRecipient:
       type: object
       additionalProperties: false
-      required: [messageId, contactId, name, firstName, lastName, phone, email, category, institutionRepresented, jobTitle, status, sentAt, deliveredAt, readAt, responded, respondedAt, presence, observation, answers]
+      required: [messageId, contactId, name, firstName, lastName, phone, email, category, institutionRepresented, jobTitle, status, sentAt, deliveredAt, readAt, responded, respondedAt, presence, observation, answers, textReplies]
       properties:
         messageId: {type: string}
         contactId: {type: string}
@@ -531,6 +531,18 @@ components:
         respondedAt: {type: [string, 'null']}
         presence: {type: string, enum: [yes, no, unknown]}
         observation: {type: [string, 'null']}
+        textReplies:
+          type: array
+          maxItems: 100
+          description: Textos com contexto explícito validado; ausências não comprovam ausência de mensagens livres. Acima de 100, a consulta retorna 503 sem truncar.
+          items:
+            type: object
+            additionalProperties: false
+            required: [messageId, text, receivedAt]
+            properties:
+              messageId: {type: string}
+              text: {type: string, maxLength: 4096}
+              receivedAt: {type: string, format: date-time}
         answers:
           type: array
           maxItems: 100

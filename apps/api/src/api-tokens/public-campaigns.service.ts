@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { AppState, CampaignMessageRecord, CampaignRecord, FlowResponseRecord } from '../database/types';
 
@@ -15,6 +15,7 @@ interface Recipient {
   institutionRepresented: string | null; jobTitle: string | null;
   status: DeliveryStatus; sentAt: string | null; deliveredAt: string | null; readAt: string | null;
   responded: boolean; respondedAt: string | null; presence: Presence; observation: string | null;
+  textReplies: Array<{ messageId: string; text: string; receivedAt: string }>;
   answers: Array<{ key: string; label: string; value: string }>;
 }
 type InternalRecipient = Recipient & { evidence: { accepted: boolean; sent: boolean; delivered: boolean; read: boolean } };
@@ -144,7 +145,7 @@ export class PublicCampaignsService {
     const { list, campaigns, state } = await this.campaignsForList(listId, clientId);
     const items = [];
     for (const campaign of campaigns.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))) {
-      items.push(summarize(campaign, await this.recipients(campaign, clientId), state));
+      items.push(summarize(campaign, await this.recipients(campaign, clientId, state), state));
     }
     return { listId: list.id, listName: text(list.name), campaigns: items };
   }
@@ -155,7 +156,7 @@ export class PublicCampaignsService {
     const campaign = campaigns.find((item) => item.id === campaignId);
     if (!campaign) throw new NotFoundException('Campanha não encontrada nesta lista');
     // Autorização completa ocorre ANTES de carregar mensagens, mesmo sem respostas.
-    const rows = await this.recipients(campaign, clientId);
+    const rows = await this.recipients(campaign, clientId, state);
     const search = normalized(query.search?.trim() ?? '');
     const filtered = rows.filter((row) => {
       if (query.response && query.response !== 'all' && row.responded !== (query.response === 'yes')) return false;
@@ -169,11 +170,50 @@ export class PublicCampaignsService {
       items: filtered.slice(query.offset, query.offset + query.limit).map(({ evidence: _evidence, ...row }) => row) };
   }
 
-  private async recipients(campaign: CampaignRecord, clientId: string): Promise<InternalRecipient[]> {
+  private async recipients(campaign: CampaignRecord, clientId: string, state: Readonly<AppState>): Promise<InternalRecipient[]> {
     const [messages, responses] = await Promise.all([
       this.database.listCampaignMessagesInDatabase({ campaignId: campaign.id }),
       this.database.listFlowResponsesInDatabase({ campaignId: campaign.id }),
     ]);
+    // N:N: campaign_message_id do webhook é heurístico; só contexto Meta explícito
+    // + remetente + número receptor comprovam o vínculo para esta exposição.
+    const phoneNumberId = state.integrations?.find((item) => item.id === campaign.integrationId)?.phoneNumberId;
+    const textReplies = phoneNumberId && messages.length
+      ? await this.database.postgresQuery<{ campaign_message_id: string; message_id: string; body: string; received_at: string }>(
+        `SELECT DISTINCT cm.id AS campaign_message_id, me.provider_message_id AS message_id,
+                inbound->'text'->>'body' AS body, me.received_at::text AS received_at
+         FROM message_events me
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(me.record_json->'payload'->'entry') = 'array'
+           THEN me.record_json->'payload'->'entry' ELSE '[]'::jsonb END) entry
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(entry->'changes') = 'array'
+           THEN entry->'changes' ELSE '[]'::jsonb END) change
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(change->'value'->'messages') = 'array'
+           THEN change->'value'->'messages' ELSE '[]'::jsonb END) inbound
+         JOIN campaign_messages cm ON cm.provider_message_id = inbound->'context'->>'id'
+         WHERE me.event_type = 'meta.inbound' AND cm.campaign_id = $1
+           AND change->'value'->'metadata'->>'phone_number_id' = $2
+           AND inbound->>'id' = me.provider_message_id AND me.provider_message_id <> ''
+           AND inbound->>'type' = 'text' AND jsonb_typeof(inbound->'text'->'body') = 'string'
+           AND length(inbound->'text'->>'body') BETWEEN 1 AND 4096
+           AND inbound->>'from' ~ '^[0-9]{7,15}$'
+           AND inbound->>'from' = regexp_replace(cm.record_json->>'phoneE164', '[^0-9]', '', 'g')
+           AND cm.provider_message_id <> ''
+           AND (SELECT count(*) FROM campaign_messages duplicate
+                WHERE duplicate.provider_message_id = cm.provider_message_id) = 1
+         ORDER BY received_at, message_id`, [campaign.id, phoneNumberId]) : [];
+    const repliesByMessage = new Map<string, Recipient['textReplies']>();
+    for (const reply of textReplies) {
+      const receivedAt = date(reply.received_at);
+      if (!receivedAt || !reply.message_id || typeof reply.body !== 'string' || !reply.body.trim() || reply.body.length > 4096) continue;
+      const replies = repliesByMessage.get(reply.campaign_message_id) ?? [];
+      if (!replies.some((item) => item.messageId === reply.message_id)) {
+        replies.push({ messageId: reply.message_id, text: reply.body, receivedAt });
+      }
+      repliesByMessage.set(reply.campaign_message_id, replies);
+    }
+    if ([...repliesByMessage.values()].some((replies) => replies.length > 100)) {
+      throw new ServiceUnavailableException('Mais de 100 respostas textuais para um destinatário; consulta requer paginação de respostas');
+    }
     const ids = [...new Set(messages.map((message) => message.contactId).filter(Boolean))];
     const contacts = ids.length ? await this.database.postgresQuery<Record<string, unknown>>(
       `SELECT id, first_name, last_name, name, phone_e164, email, category, attributes_json
@@ -209,6 +249,9 @@ export class PublicCampaignsService {
         (latestMessageByContact.get(message.contactId) === message.id ? unlinkedContact.get(message.contactId) : undefined) ??
         (latestMessageByPhone.get(digits(phone)) === message.id ? unlinkedPhone.get(digits(phone)) : undefined);
       const answers = response ? sanitizeCampaignAnswers(response.responsePayload) : [];
+      const replies = repliesByMessage.get(message.id) ?? [];
+      const respondedAt = [date(response?.completedAt), ...replies.map((reply) => reply.receivedAt)]
+        .filter((value): value is string => Boolean(value)).sort().at(-1) ?? null;
       const status = evidenceStatus(message);
       const read = status === 'read';
       const delivered = read || status === 'delivered';
@@ -220,9 +263,9 @@ export class PublicCampaignsService {
         ...contactProfile(contact?.attributes_json),
         status, sentAt: date(message.sentAt), deliveredAt: date(message.deliveredAt), readAt: date(message.readAt),
         evidence: { accepted: sent || Boolean(message.providerMessageId) || status === 'accepted', sent, delivered, read },
-        responded: Boolean(response), respondedAt: date(response?.completedAt), presence: answerPresence(answers),
+        responded: Boolean(response) || replies.length > 0, respondedAt, presence: answerPresence(answers),
         observation: answers.find(({ key }) => ['observacao', 'observacoes', 'observation'].includes(normalized(key).replace(/[^a-z]/g, '')))?.value ?? null,
-        answers,
+        answers, textReplies: replies,
       };
     });
   }

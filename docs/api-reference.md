@@ -532,7 +532,24 @@ item representa uma mensagem, com:
   `category`, `institutionRepresented`, `jobTitle`;
 - `status`, `sentAt`, `deliveredAt`, `readAt`;
 - `responded`, `respondedAt`, `presence`, `observation`;
-- `answers`, lista de `{ key, label, value }`.
+- `answers`, lista de `{ key, label, value }`;
+- `textReplies`, lista de `{ messageId, text, receivedAt }`, em ordem de recebimento.
+
+`textReplies` inclui somente texto inbound com `context.id` igual ao ID Meta
+único de um envio desta campanha, remetente igual ao telefone do envio e
+`phone_number_id` da integração. O vínculo heurístico do webhook não autoriza
+exposição. Texto livre sem contexto permanece fora desta consulta, mesmo se o
+número tiver histórico somente neste tenant. Array vazio não prova ausência de
+mensagens recebidas. Texto pode conter CPF conforme autorização do
+[ADR 0015](decisions/0015-respostas-textuais-campanha.md); renderize como texto,
+nunca HTML, e não o envie a logs/telemetria. Não há extração automática de CPF.
+
+Texto válido tem até 4.096 caracteres; conteúdo malformado é excluído, sem
+truncamento. Mais de 100 respostas distintas por envio retorna `503` explícito
+(em ambas as consultas), sem entrega parcial. `responded`, `respondedAt`, filtros
+e contadores incluem esses textos; `presence` continua derivada exclusivamente
+do Flow. A elegibilidade de reenvio de Flow mantém seu contrato próprio de
+resposta ao Flow, sem mudança automática por um texto recebido.
 
 Aceite, envio, entrega e leitura são cumulativos nos contadores e filtros.
 `providerMessageId` comprova aceite; `sentAt` comprova envio;
