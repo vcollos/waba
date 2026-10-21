@@ -21,7 +21,9 @@ ID de envio único, mesmo remetente e mesmo número receptor da integração.
 Sem esse contexto, só uma classificação manual explicitamente autorizada e
 auditada pode liberar o texto. Em 21/10/2026 Vitor autorizou: "Sim, vincule as
 que forem sobre o pedido de CPF", após identificar sete mensagens de três
-titulares. Isso não autoriza classificação de conversas futuras.
+titulares. O manifesto limita a aplicação às quatro mensagens diretamente
+pertinentes, excluindo saudações e agradecimento. Isso não autoriza classificação
+de conversas futuras.
 
 O script operacional `scripts/link-campaign-text-replies.mjs` recebe manifesto
 fechado de IDs, ator administrador ativo, motivo e referência de autorização.
