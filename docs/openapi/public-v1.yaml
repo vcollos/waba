@@ -534,7 +534,7 @@ components:
         textReplies:
           type: array
           maxItems: 100
-          description: Textos com contexto explícito validado; ausências não comprovam ausência de mensagens livres. Acima de 100, a consulta retorna 503 sem truncar.
+          description: Textos com contexto explícito validado ou classificação manual auditada; ausências não comprovam ausência de mensagens livres. Acima de 100, a consulta retorna 503 sem truncar.
           items:
             type: object
             additionalProperties: false

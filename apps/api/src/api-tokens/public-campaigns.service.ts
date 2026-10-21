@@ -176,7 +176,7 @@ export class PublicCampaignsService {
       this.database.listFlowResponsesInDatabase({ campaignId: campaign.id }),
     ]);
     // N:N: campaign_message_id do webhook é heurístico; só contexto Meta explícito
-    // + remetente + número receptor comprovam o vínculo para esta exposição.
+    // + remetente + número receptor, ou classificação manual auditada, autorizam exposição.
     const phoneNumberId = state.integrations?.find((item) => item.id === campaign.integrationId)?.phoneNumberId;
     const textReplies = phoneNumberId && messages.length
       ? await this.database.postgresQuery<{ campaign_message_id: string; message_id: string; body: string; received_at: string }>(
@@ -189,7 +189,8 @@ export class PublicCampaignsService {
            THEN entry->'changes' ELSE '[]'::jsonb END) change
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(change->'value'->'messages') = 'array'
            THEN change->'value'->'messages' ELSE '[]'::jsonb END) inbound
-         JOIN campaign_messages cm ON cm.provider_message_id = inbound->'context'->>'id'
+         JOIN campaign_messages cm ON (cm.provider_message_id = inbound->'context'->>'id'
+           OR (inbound->'context'->>'id' IS NULL AND cm.id = me.record_json->'manualCampaignAssociation'->>'campaignMessageId'))
          WHERE me.event_type = 'meta.inbound' AND cm.campaign_id = $1
            AND change->'value'->'metadata'->>'phone_number_id' = $2
            AND inbound->>'id' = me.provider_message_id AND me.provider_message_id <> ''
@@ -198,9 +199,25 @@ export class PublicCampaignsService {
            AND inbound->>'from' ~ '^[0-9]{7,15}$'
            AND inbound->>'from' = regexp_replace(cm.record_json->>'phoneE164', '[^0-9]', '', 'g')
            AND cm.provider_message_id <> ''
-           AND (SELECT count(*) FROM campaign_messages duplicate
-                WHERE duplicate.provider_message_id = cm.provider_message_id) = 1
-         ORDER BY received_at, message_id`, [campaign.id, phoneNumberId]) : [];
+           AND (
+             (cm.provider_message_id = inbound->'context'->>'id'
+               AND (SELECT count(*) FROM campaign_messages duplicate
+                    WHERE duplicate.provider_message_id = cm.provider_message_id) = 1)
+             OR (inbound->'context'->>'id' IS NULL
+               AND me.record_json->'manualCampaignAssociation'->>'clientId' = $3
+               AND me.record_json->'manualCampaignAssociation'->>'listId' = $4
+               AND me.record_json->'manualCampaignAssociation'->>'campaignId' = $1
+               AND me.record_json->'manualCampaignAssociation'->>'integrationId' = $5
+               AND me.record_json->'manualCampaignAssociation'->>'phoneNumberId' = $2
+               AND EXISTS (SELECT 1 FROM audit_logs audit
+                 WHERE audit.id = me.record_json->'manualCampaignAssociation'->>'auditLogId'
+                   AND audit.record_json->>'action' = 'campaign.text_reply.linked'
+                   AND audit.record_json->>'entityType' = 'message_event'
+                   AND audit.record_json->>'entityId' = me.provider_message_id
+                   AND audit.record_json->>'actorUserId' <> ''
+                   AND audit.record_json->'metadata'->'association' = me.record_json->'manualCampaignAssociation'))
+           )
+         ORDER BY received_at, message_id`, [campaign.id, phoneNumberId, clientId, campaign.listId, campaign.integrationId]) : [];
     const repliesByMessage = new Map<string, Recipient['textReplies']>();
     for (const reply of textReplies) {
       const receivedAt = date(reply.received_at);

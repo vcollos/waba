@@ -538,8 +538,9 @@ item representa uma mensagem, com:
 `textReplies` inclui somente texto inbound com `context.id` igual ao ID Meta
 único de um envio desta campanha, remetente igual ao telefone do envio e
 `phone_number_id` da integração. O vínculo heurístico do webhook não autoriza
-exposição. Texto livre sem contexto permanece fora desta consulta, mesmo se o
-número tiver histórico somente neste tenant. Array vazio não prova ausência de
+exposição. Texto sem contexto só entra com classificação manual explicitamente
+autorizada e auditada, validada contra o mesmo remetente/integração/escopo.
+Histórico exclusivo de telefone não constitui autorização. Array vazio não prova ausência de
 mensagens recebidas. Texto pode conter CPF conforme autorização do
 [ADR 0015](decisions/0015-respostas-textuais-campanha.md); renderize como texto,
 nunca HTML, e não o envie a logs/telemetria. Não há extração automática de CPF.

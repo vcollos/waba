@@ -275,7 +275,7 @@ O acompanhamento externo de campanhas usa
 do tenant. A segunda consulta pagina destinatários, situações de entrega e
 respostas de negócio permitidas e `textReplies` com contexto explícito validado
 ([ADR 0015](docs/decisions/0015-respostas-textuais-campanha.md)). Mensagens livres
-sem contexto não são atribuídas à campanha. Inclui campanhas sem respostas e preserva o
+sem contexto exigem classificação manual auditada explícita. Inclui campanhas sem respostas e preserva o
 histórico de mensagens mesmo se o contato sair da lista. Ver
 [ADR 0012](docs/decisions/0012-resultados-campanhas-api-publica.md) e
 [contrato HTTP](docs/api-reference.md#54-resultados-de-campanhas-da-lista).
