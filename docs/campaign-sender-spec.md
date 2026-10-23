@@ -1615,3 +1615,9 @@ A execução nova reaproveita as variáveis da execução enviada mais recente,
 indicada na prévia, e não altera campanhas antigas. O hash da prévia inclui
 identidade, origem, template, contatos e respostas; alterações exigem nova
 prévia. Ver [ADR 0014](decisions/0014-reenvio-de-grupo-sem-resposta.md).
+
+A pesquisa da Convenção 2026 usa Flow JSON 7.3 estático, nove telas,
+26 avaliações CSAT, NPS e dois comentários opcionais. O contrato público
+libera somente as chaves explícitas e rótulos descritos em
+[API pública](api-reference.md#pesquisa-da-convenção-2026). A ressalva de
+NA no cálculo genérico do Waba permanece indicada nesse contrato.

@@ -1,0 +1,2022 @@
+{
+  "version": "7.3",
+  "screens": [
+    {
+      "id": "CIDADE",
+      "title": "Cidade e hotel",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 1 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Sua opinião ajuda a melhorar as próximas edições. As respostas serão recebidas pela organização do evento."
+              },
+              {
+                "type": "TextSubheading",
+                "text": "1. Cidade escolhida para a convenção"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_cidade",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "2. Localização do hotel do evento"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_localizacao_hotel",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "3. Instalações e serviços do hotel"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_hotel",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "ESTRUTURA"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${form.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${form.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${form.csat_conv_hotel}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ESTRUTURA",
+      "title": "Estrutura do evento",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 2 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "4. Espaços e conforto"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_estrutura",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "5. Qualidade do som"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_som",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "6. Qualidade e visibilidade das imagens e projeções"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_imagem",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "PROGRAMACAO"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${form.csat_conv_estrutura}",
+                    "csat_conv_som": "${form.csat_conv_som}",
+                    "csat_conv_imagem": "${form.csat_conv_imagem}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "PROGRAMACAO",
+      "title": "Programação",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 3 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "7. Programação geral"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_programacao",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "8. Distribuição dos horários e intervalos"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_horarios",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "9. Atividades sociais e de integração"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_atividades",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "PALESTRAS_A"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${form.csat_conv_programacao}",
+                    "csat_conv_horarios": "${form.csat_conv_horarios}",
+                    "csat_conv_atividades": "${form.csat_conv_atividades}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "PALESTRAS_A",
+      "title": "Palestras 1/2",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextCaption",
+                "text": "Etapa 4 de 9"
+              },
+              {
+                "type": "TextBody",
+                "text": "Qual é seu nível de satisfação com cada palestra ou painel? Se não acompanhou, selecione “Não participei”."
+              },
+              {
+                "type": "TextSubheading",
+                "text": "10. Cultura cooperativista: atração e retenção"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Thais Jerônimo"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_cultura",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "11. Regulação e reforma tributária"
+              },
+              {
+                "type": "TextCaption",
+                "text": "André Branco de Miranda e Mário Vicente Gallucci"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_regulacao",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "12. Uniodonto 360° e U-hub: mercado e conexão"
+              },
+              {
+                "type": "TextCaption",
+                "text": "José Alves e Vitor Collos"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_uhub",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "13. Painel: cultura, atração e retenção"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Cases: Uniodonto Londrina, Minas e Campinas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_cases",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "14. Governança e gestão: estratégia e sustentabilidade"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Ana Cláudia Carnelossi"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_governanca",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "PALESTRAS_B"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${form.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${form.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${form.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${form.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${form.csat_conv_palestra_governanca}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "PALESTRAS_B",
+      "title": "Palestras 2/2",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextCaption",
+                "text": "Etapa 5 de 9"
+              },
+              {
+                "type": "TextBody",
+                "text": "Qual é seu nível de satisfação com cada palestra ou painel? Se não acompanhou, selecione “Não participei”."
+              },
+              {
+                "type": "TextSubheading",
+                "text": "15. Introdução à RDC 1002: impactos e primeiros passos"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Luna Cosenza"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_rdc",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "16. Liderança em cinco dimensões"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Veridiana Cavalheri"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_lideranca",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "17. OPT IN MARKETING: construindo marca e valor"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Márcio Callage — Olimpikus"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_marketing",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "18. Projeto Expedicionários"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Uniodonto Campinas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_expedicionarios",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "19. O riso é um negócio sério!"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Nelson Freitas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_riso",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "FEIRA"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${form.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${form.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${form.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${form.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${form.csat_conv_palestra_riso}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "FEIRA",
+      "title": "Feira e relacionamento",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 6 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "20. Feira de negócios"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_feira",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "21. Oportunidades de troca entre cooperativas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_trocas",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "ORGANIZACAO"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
+                    "csat_conv_feira": "${form.csat_conv_feira}",
+                    "csat_conv_trocas": "${form.csat_conv_trocas}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ORGANIZACAO",
+      "title": "Organização",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_feira": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_trocas": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 7 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "22. Informações e orientações sobre o evento"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_informacoes",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "23. Credenciamento e recepção"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_credenciamento",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "24. Equipe de organização do evento"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_organizacao",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "GERAL"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
+                    "csat_conv_feira": "${data.csat_conv_feira}",
+                    "csat_conv_trocas": "${data.csat_conv_trocas}",
+                    "csat_conv_informacoes": "${form.csat_conv_informacoes}",
+                    "csat_conv_credenciamento": "${form.csat_conv_credenciamento}",
+                    "csat_conv_organizacao": "${form.csat_conv_organizacao}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "GERAL",
+      "title": "Avaliação geral",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_feira": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_trocas": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_informacoes": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_credenciamento": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_organizacao": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextBody",
+                "text": "Etapa 8 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
+              },
+              {
+                "type": "TextSubheading",
+                "text": "25. Contribuição da convenção para sua atuação na cooperativa"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_contribuicao",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não se aplica / Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "26. De forma geral, sua satisfação com a convenção"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_geral",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "27. Você recomendaria a convenção?"
+              },
+              {
+                "type": "TextBody",
+                "text": "De 0 a 10, quanto você recomendaria esta convenção a outro dirigente ou membro de uma cooperativa do Sistema Uniodonto?"
+              },
+              {
+                "type": "Dropdown",
+                "name": "nps_convencao",
+                "label": "Nota de 0 a 10",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "0",
+                    "title": "0 — Nada provável"
+                  },
+                  {
+                    "id": "1",
+                    "title": "1"
+                  },
+                  {
+                    "id": "2",
+                    "title": "2"
+                  },
+                  {
+                    "id": "3",
+                    "title": "3"
+                  },
+                  {
+                    "id": "4",
+                    "title": "4"
+                  },
+                  {
+                    "id": "5",
+                    "title": "5"
+                  },
+                  {
+                    "id": "6",
+                    "title": "6"
+                  },
+                  {
+                    "id": "7",
+                    "title": "7"
+                  },
+                  {
+                    "id": "8",
+                    "title": "8"
+                  },
+                  {
+                    "id": "9",
+                    "title": "9"
+                  },
+                  {
+                    "id": "10",
+                    "title": "10 — Extremamente provável"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "OPINIAO"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
+                    "csat_conv_feira": "${data.csat_conv_feira}",
+                    "csat_conv_trocas": "${data.csat_conv_trocas}",
+                    "csat_conv_informacoes": "${data.csat_conv_informacoes}",
+                    "csat_conv_credenciamento": "${data.csat_conv_credenciamento}",
+                    "csat_conv_organizacao": "${data.csat_conv_organizacao}",
+                    "csat_conv_contribuicao": "${form.csat_conv_contribuicao}",
+                    "csat_conv_geral": "${form.csat_conv_geral}",
+                    "nps_convencao": "${form.nps_convencao}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "OPINIAO",
+      "title": "Comentários e sugestões",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_feira": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_trocas": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_informacoes": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_credenciamento": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_organizacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_contribuicao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_geral": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "nps_convencao": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextHeading",
+                "text": "Sua opinião faz a diferença"
+              },
+              {
+                "type": "TextBody",
+                "text": "Etapa 9 de 9. Os dois campos abaixo são opcionais."
+              },
+              {
+                "type": "TextBody",
+                "text": "Quer compartilhar sua opinião sobre a convenção? Deixe aqui elogios, sugestões de melhoria, dúvidas ou perguntas."
+              },
+              {
+                "type": "TextArea",
+                "name": "conv_opiniao",
+                "label": "Sua opinião",
+                "required": false,
+                "max-length": 1000
+              },
+              {
+                "type": "TextBody",
+                "text": "Pensando nas próximas edições, quais cidades ou locais, temas e palestrantes você sugere?"
+              },
+              {
+                "type": "TextArea",
+                "name": "conv_sugestoes",
+                "label": "Próximas edições",
+                "required": false,
+                "max-length": 1000
+              },
+              {
+                "type": "Footer",
+                "label": "Enviar avaliação",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
+                    "csat_conv_feira": "${data.csat_conv_feira}",
+                    "csat_conv_trocas": "${data.csat_conv_trocas}",
+                    "csat_conv_informacoes": "${data.csat_conv_informacoes}",
+                    "csat_conv_credenciamento": "${data.csat_conv_credenciamento}",
+                    "csat_conv_organizacao": "${data.csat_conv_organizacao}",
+                    "csat_conv_contribuicao": "${data.csat_conv_contribuicao}",
+                    "csat_conv_geral": "${data.csat_conv_geral}",
+                    "nps_convencao": "${data.nps_convencao}",
+                    "conv_opiniao": "${form.conv_opiniao}",
+                    "conv_sugestoes": "${form.conv_sugestoes}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -221,3 +221,41 @@ test('presença nao_comparecerei é negativa, sem substring ambígua', async () 
   const result = await service.results('list', 'campaign', 'tenant', { presence: 'no' });
   assert.equal(result.total, 1); assert.equal(result.campaign.counters.presenceNo, 1);
 });
+
+ test('pesquisa da convenção expõe somente campos explícitos e preserva NPS zero e não aplicável', () => {
+  const result = sanitizeCampaignAnswers({ csat_conv_cidade: '5', csat_conv_hotel: 'na', nps_convencao: 0, conv_opiniao: 'Minha opinião', conv_sugestoes: 'Novos temas', csat_conv_cpf: 'omit', flow_token: 'omit', cpf: 'omit', access_token: 'omit' });
+  assert.deepEqual(result.map(a => a.key), ['csat_conv_cidade', 'csat_conv_hotel', 'nps_convencao', 'conv_opiniao', 'conv_sugestoes']);
+  assert.equal(result[0].label, 'Cidade escolhida para a convenção');
+  assert.equal(result[1].value, 'na');
+  assert.equal(result[2].value, '0');
+});
+
+test('Flow da convenção preserva 27 avaliações e transmite todos os 29 campos', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const flow = JSON.parse(await readFile(new URL('../flows/convencao-2026-satisfacao.json', import.meta.url), 'utf8'));
+  let carried = {};
+  let ratings = 0;
+  for (const [index, screen] of flow.screens.entries()) {
+    const children = screen.layout.children[0].children;
+    const local = {};
+    for (const item of children) {
+      if (item.type === 'Dropdown') { local[item.name] = item.name === 'nps_convencao' ? '0' : '4'; ratings++; }
+      if (item.type === 'TextArea') local[item.name] = '';
+      if (item.type === 'TextSubheading') assert.ok(item.text.length <= 80);
+    }
+    const action = children.at(-1)['on-click-action'];
+    const next = {};
+    for (const [key, expression] of Object.entries(action.payload)) {
+      const match = expression.match(/^\$\{(data|form)\.([^}]+)\}$/);
+      assert.ok(match, expression);
+      next[key] = (match[1] === 'data' ? carried : local)[match[2]];
+      assert.notEqual(next[key], undefined, key);
+    }
+    if (index < flow.screens.length - 1) assert.equal(action.next.name, flow.screens[index + 1].id);
+    carried = next;
+  }
+  assert.equal(ratings, 27);
+  assert.equal(Object.keys(carried).length, 29);
+  assert.equal(sanitizeCampaignAnswers({ ...carried, conv_opiniao: 'Comentário', conv_sugestoes: 'Sugestão' }).length, 29);
+  assert.equal(carried.nps_convencao, '0');
+});

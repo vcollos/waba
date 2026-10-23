@@ -1087,3 +1087,19 @@ curl --fail --silent https://waba-api.collos.com.br/api/docs-json \
 8. conferir CORS com `Origin: https://waba.collos.com.br`;
 9. publicar junto da versão que implementa o contrato;
 10. registrar data, versão e responsável pela revisão.
+
+### Pesquisa da Convenção 2026
+
+A consulta de resultados libera explicitamente as 26 chaves `csat_conv_*`
+declaradas em `flows/convencao-2026-satisfacao.json`, `nps_convencao`,
+`conv_opiniao` e `conv_sugestoes`; o prefixo não é uma permissão genérica.
+Os rótulos são projetados para leitura no portal. A opção `na` representa
+não participação/não aplicável e não é nota zero. Respostas ficam no Waba,
+com acesso pelo vínculo tenant/lista/campanha existente.
+
+Flow estático JSON 7.3, nove telas, sem endpoint de Data Exchange. Conclusão
+usa `complete` e o webhook já existente; API de Dados 4.0 não se aplica a
+este Flow estático. Criar o Flow não envia campanha nem valida recebimento
+real. Conforme ADR-0016, `na` com rótulo explícito de não participação fica
+fora da escala e do denominador do CSAT. O cálculo preserva a escala declarada
+1–5 e considera satisfeitas as notas 4 e 5, mesmo sem respostas na nota 5.

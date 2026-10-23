@@ -26,3 +26,4 @@ subagentes: correções diretas + ADR aqui + `AGENTS.md`.
 | [0013](0013-identidade-meta-estavel-em-campanhas.md) | Identidade Meta estável nas campanhas apesar de cache renovável | Aceito |
 | [0014](0014-reenvio-de-grupo-sem-resposta.md) | Reenvio de grupo sem resposta como execução nova | Aceito no escopo do reenvio |
 | [0015](0015-respostas-textuais-campanha.md) | Respostas textuais com vínculo explícito à campanha | Aceito no escopo de leitura autorizado |
+| [0016](0016-csat-com-nao-participacao.md) | CSAT com opção explícita de não participação | Aceito |

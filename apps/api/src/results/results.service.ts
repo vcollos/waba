@@ -1006,6 +1006,14 @@ const toDeclaredScale = (input: FlowInputFieldDefinition): DeclaredScale | null 
   const labels = new Map<number, string>();
   const unique = new Set<number>();
   for (const option of options) {
+    // ADR-0016: ausência explícita não altera a escala numérica declarada.
+    // Outros ids/rótulos textuais continuam ambíguos e falham fechado.
+    if (
+      option.id === 'na' &&
+      ['Não participei', 'Não se aplica / Não participei'].includes(option.title ?? '')
+    ) {
+      continue;
+    }
     const parsed = Number(option.id);
     if (!Number.isInteger(parsed)) {
       // Escala não numérica (ex.: ids textuais): não serve de faixa.
