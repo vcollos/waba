@@ -65,7 +65,17 @@ const CONVENTION_SURVEY_LABELS: Readonly<Record<string, string>> = {
   "csat_conv_geral": "De forma geral, sua satisfação com a convenção",
   "nps_convencao": "Recomendação da convenção (NPS)",
   "conv_opiniao": "Opinião, sugestões, dúvidas ou perguntas",
-  "conv_sugestoes": "Sugestões de locais, temas ou palestrantes"
+  "conv_sugestoes": "Sugestões de locais, temas ou palestrantes",
+  "csat_conv_palestra_cultura": "Cultura cooperativista: atração e retenção",
+  "csat_conv_palestra_regulacao": "Regulação e reforma tributária",
+  "csat_conv_palestra_uhub": "Uniodonto 360° e U-hub: mercado e conexão",
+  "csat_conv_palestra_cases": "Painel: cultura, atração e retenção",
+  "csat_conv_palestra_governanca": "Governança e gestão: estratégia e sustentabilidade",
+  "csat_conv_palestra_rdc": "Introdução à RDC 1002: impactos e primeiros passos",
+  "csat_conv_palestra_lideranca": "Liderança em cinco dimensões",
+  "csat_conv_palestra_marketing": "OPT IN MARKETING: construindo marca e valor",
+  "csat_conv_palestra_expedicionarios": "Projeto Expedicionários",
+  "csat_conv_palestra_riso": "O riso é um negócio sério!"
 };
 
 export function validateCampaignQuery(input: CampaignResultsQuery) {

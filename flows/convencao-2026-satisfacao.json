@@ -14,7 +14,7 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 1 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 1 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextCaption",
@@ -40,7 +40,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -76,7 +76,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -112,7 +112,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -175,7 +175,7 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 2 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 2 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextSubheading",
@@ -197,7 +197,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -233,7 +233,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -269,7 +269,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -347,7 +347,7 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 3 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 3 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextSubheading",
@@ -369,7 +369,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -405,7 +405,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -441,7 +441,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -464,7 +464,7 @@
                   "name": "navigate",
                   "next": {
                     "type": "screen",
-                    "name": "PALESTRAS"
+                    "name": "PALESTRAS_A"
                   },
                   "payload": {
                     "csat_conv_cidade": "${data.csat_conv_cidade}",
@@ -485,8 +485,8 @@
       }
     },
     {
-      "id": "PALESTRAS",
-      "title": "Palestras",
+      "id": "PALESTRAS_A",
+      "title": "Palestras 1/2",
       "data": {
         "csat_conv_cidade": {
           "type": "string",
@@ -533,16 +533,24 @@
             "name": "formulario",
             "children": [
               {
+                "type": "TextCaption",
+                "text": "Etapa 4 de 9"
+              },
+              {
                 "type": "TextBody",
-                "text": "Etapa 4 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Qual é seu nível de satisfação com cada palestra ou painel? Se não acompanhou, selecione “Não participei”."
               },
               {
                 "type": "TextSubheading",
-                "text": "10. Temas escolhidos para as palestras"
+                "text": "10. Cultura cooperativista: atração e retenção"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Thais Jerônimo"
               },
               {
                 "type": "Dropdown",
-                "name": "csat_conv_temas",
+                "name": "csat_conv_palestra_cultura",
                 "label": "Sua avaliação",
                 "required": true,
                 "data-source": [
@@ -556,7 +564,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -568,17 +576,21 @@
                   },
                   {
                     "id": "na",
-                    "title": "Não se aplica / Não participei"
+                    "title": "Não participei"
                   }
                 ]
               },
               {
                 "type": "TextSubheading",
-                "text": "11. Qualidade dos conteúdos apresentados"
+                "text": "11. Regulação e reforma tributária"
+              },
+              {
+                "type": "TextCaption",
+                "text": "André Branco de Miranda e Mário Vicente Gallucci"
               },
               {
                 "type": "Dropdown",
-                "name": "csat_conv_conteudos",
+                "name": "csat_conv_palestra_regulacao",
                 "label": "Sua avaliação",
                 "required": true,
                 "data-source": [
@@ -592,7 +604,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -604,17 +616,21 @@
                   },
                   {
                     "id": "na",
-                    "title": "Não se aplica / Não participei"
+                    "title": "Não participei"
                   }
                 ]
               },
               {
                 "type": "TextSubheading",
-                "text": "12. Clareza e didática dos palestrantes"
+                "text": "12. Uniodonto 360° e U-hub: mercado e conexão"
+              },
+              {
+                "type": "TextCaption",
+                "text": "José Alves e Vitor Collos"
               },
               {
                 "type": "Dropdown",
-                "name": "csat_conv_palestrantes",
+                "name": "csat_conv_palestra_uhub",
                 "label": "Sua avaliação",
                 "required": true,
                 "data-source": [
@@ -628,7 +644,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -640,7 +656,395 @@
                   },
                   {
                     "id": "na",
-                    "title": "Não se aplica / Não participei"
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "13. Painel: cultura, atração e retenção"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Cases: Uniodonto Londrina, Minas e Campinas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_cases",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "14. Governança e gestão: estratégia e sustentabilidade"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Ana Cláudia Carnelossi"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_governanca",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "Footer",
+                "label": "Continuar",
+                "on-click-action": {
+                  "name": "navigate",
+                  "next": {
+                    "type": "screen",
+                    "name": "PALESTRAS_B"
+                  },
+                  "payload": {
+                    "csat_conv_cidade": "${data.csat_conv_cidade}",
+                    "csat_conv_localizacao_hotel": "${data.csat_conv_localizacao_hotel}",
+                    "csat_conv_hotel": "${data.csat_conv_hotel}",
+                    "csat_conv_estrutura": "${data.csat_conv_estrutura}",
+                    "csat_conv_som": "${data.csat_conv_som}",
+                    "csat_conv_imagem": "${data.csat_conv_imagem}",
+                    "csat_conv_programacao": "${data.csat_conv_programacao}",
+                    "csat_conv_horarios": "${data.csat_conv_horarios}",
+                    "csat_conv_atividades": "${data.csat_conv_atividades}",
+                    "csat_conv_palestra_cultura": "${form.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${form.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${form.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${form.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${form.csat_conv_palestra_governanca}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "PALESTRAS_B",
+      "title": "Palestras 2/2",
+      "data": {
+        "csat_conv_cidade": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_localizacao_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_hotel": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_estrutura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_som": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_imagem": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_programacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_horarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_atividades": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cultura": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_regulacao": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "Form",
+            "name": "formulario",
+            "children": [
+              {
+                "type": "TextCaption",
+                "text": "Etapa 5 de 9"
+              },
+              {
+                "type": "TextBody",
+                "text": "Qual é seu nível de satisfação com cada palestra ou painel? Se não acompanhou, selecione “Não participei”."
+              },
+              {
+                "type": "TextSubheading",
+                "text": "15. Introdução à RDC 1002: impactos e primeiros passos"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Luna Cosenza"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_rdc",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "16. Liderança em cinco dimensões"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Veridiana Cavalheri"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_lideranca",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "17. OPT IN MARKETING: construindo marca e valor"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Márcio Callage — Olimpikus"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_marketing",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "18. Projeto Expedicionários"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Uniodonto Campinas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_expedicionarios",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
+                  }
+                ]
+              },
+              {
+                "type": "TextSubheading",
+                "text": "19. O riso é um negócio sério!"
+              },
+              {
+                "type": "TextCaption",
+                "text": "Nelson Freitas"
+              },
+              {
+                "type": "Dropdown",
+                "name": "csat_conv_palestra_riso",
+                "label": "Sua avaliação",
+                "required": true,
+                "data-source": [
+                  {
+                    "id": "1",
+                    "title": "Muito insatisfeito"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Insatisfeito"
+                  },
+                  {
+                    "id": "3",
+                    "title": "Neutro"
+                  },
+                  {
+                    "id": "4",
+                    "title": "Satisfeito"
+                  },
+                  {
+                    "id": "5",
+                    "title": "Muito satisfeito"
+                  },
+                  {
+                    "id": "na",
+                    "title": "Não participei"
                   }
                 ]
               },
@@ -663,9 +1067,16 @@
                     "csat_conv_programacao": "${data.csat_conv_programacao}",
                     "csat_conv_horarios": "${data.csat_conv_horarios}",
                     "csat_conv_atividades": "${data.csat_conv_atividades}",
-                    "csat_conv_temas": "${form.csat_conv_temas}",
-                    "csat_conv_conteudos": "${form.csat_conv_conteudos}",
-                    "csat_conv_palestrantes": "${form.csat_conv_palestrantes}"
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${form.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${form.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${form.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${form.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${form.csat_conv_palestra_riso}"
                   }
                 }
               }
@@ -714,15 +1125,43 @@
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_temas": {
+        "csat_conv_palestra_cultura": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_conteudos": {
+        "csat_conv_palestra_regulacao": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_palestrantes": {
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
           "type": "string",
           "__example__": "4"
         }
@@ -736,11 +1175,11 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 5 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 6 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextSubheading",
-                "text": "13. Feira de negócios"
+                "text": "20. Feira de negócios"
               },
               {
                 "type": "Dropdown",
@@ -758,7 +1197,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -776,7 +1215,7 @@
               },
               {
                 "type": "TextSubheading",
-                "text": "14. Oportunidades de troca entre cooperativas"
+                "text": "21. Oportunidades de troca entre cooperativas"
               },
               {
                 "type": "Dropdown",
@@ -794,7 +1233,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -829,9 +1268,16 @@
                     "csat_conv_programacao": "${data.csat_conv_programacao}",
                     "csat_conv_horarios": "${data.csat_conv_horarios}",
                     "csat_conv_atividades": "${data.csat_conv_atividades}",
-                    "csat_conv_temas": "${data.csat_conv_temas}",
-                    "csat_conv_conteudos": "${data.csat_conv_conteudos}",
-                    "csat_conv_palestrantes": "${data.csat_conv_palestrantes}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
                     "csat_conv_feira": "${form.csat_conv_feira}",
                     "csat_conv_trocas": "${form.csat_conv_trocas}"
                   }
@@ -882,15 +1328,43 @@
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_temas": {
+        "csat_conv_palestra_cultura": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_conteudos": {
+        "csat_conv_palestra_regulacao": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_palestrantes": {
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
           "type": "string",
           "__example__": "4"
         },
@@ -912,11 +1386,11 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 6 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 7 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextSubheading",
-                "text": "15. Informações e orientações sobre o evento"
+                "text": "22. Informações e orientações sobre o evento"
               },
               {
                 "type": "Dropdown",
@@ -934,7 +1408,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -952,7 +1426,7 @@
               },
               {
                 "type": "TextSubheading",
-                "text": "16. Credenciamento e recepção"
+                "text": "23. Credenciamento e recepção"
               },
               {
                 "type": "Dropdown",
@@ -970,7 +1444,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -988,7 +1462,7 @@
               },
               {
                 "type": "TextSubheading",
-                "text": "17. Equipe de organização do evento"
+                "text": "24. Equipe de organização do evento"
               },
               {
                 "type": "Dropdown",
@@ -1006,7 +1480,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -1041,9 +1515,16 @@
                     "csat_conv_programacao": "${data.csat_conv_programacao}",
                     "csat_conv_horarios": "${data.csat_conv_horarios}",
                     "csat_conv_atividades": "${data.csat_conv_atividades}",
-                    "csat_conv_temas": "${data.csat_conv_temas}",
-                    "csat_conv_conteudos": "${data.csat_conv_conteudos}",
-                    "csat_conv_palestrantes": "${data.csat_conv_palestrantes}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
                     "csat_conv_feira": "${data.csat_conv_feira}",
                     "csat_conv_trocas": "${data.csat_conv_trocas}",
                     "csat_conv_informacoes": "${form.csat_conv_informacoes}",
@@ -1097,15 +1578,43 @@
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_temas": {
+        "csat_conv_palestra_cultura": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_conteudos": {
+        "csat_conv_palestra_regulacao": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_palestrantes": {
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
           "type": "string",
           "__example__": "4"
         },
@@ -1139,11 +1648,11 @@
             "children": [
               {
                 "type": "TextBody",
-                "text": "Etapa 7 de 8. Qual é o seu nível de satisfação com os itens abaixo?"
+                "text": "Etapa 8 de 9. Qual é o seu nível de satisfação com os itens abaixo?"
               },
               {
                 "type": "TextSubheading",
-                "text": "18. Contribuição da convenção para sua atuação na cooperativa"
+                "text": "25. Contribuição da convenção para sua atuação na cooperativa"
               },
               {
                 "type": "Dropdown",
@@ -1161,7 +1670,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -1179,7 +1688,7 @@
               },
               {
                 "type": "TextSubheading",
-                "text": "19. De forma geral, sua satisfação com a convenção"
+                "text": "26. De forma geral, sua satisfação com a convenção"
               },
               {
                 "type": "Dropdown",
@@ -1197,7 +1706,7 @@
                   },
                   {
                     "id": "3",
-                    "title": "Nem satisfeito nem insatisfeito"
+                    "title": "Neutro"
                   },
                   {
                     "id": "4",
@@ -1211,7 +1720,7 @@
               },
               {
                 "type": "TextSubheading",
-                "text": "20. Você recomendaria a convenção?"
+                "text": "27. Você recomendaria a convenção?"
               },
               {
                 "type": "TextBody",
@@ -1288,9 +1797,16 @@
                     "csat_conv_programacao": "${data.csat_conv_programacao}",
                     "csat_conv_horarios": "${data.csat_conv_horarios}",
                     "csat_conv_atividades": "${data.csat_conv_atividades}",
-                    "csat_conv_temas": "${data.csat_conv_temas}",
-                    "csat_conv_conteudos": "${data.csat_conv_conteudos}",
-                    "csat_conv_palestrantes": "${data.csat_conv_palestrantes}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
                     "csat_conv_feira": "${data.csat_conv_feira}",
                     "csat_conv_trocas": "${data.csat_conv_trocas}",
                     "csat_conv_informacoes": "${data.csat_conv_informacoes}",
@@ -1349,15 +1865,43 @@
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_temas": {
+        "csat_conv_palestra_cultura": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_conteudos": {
+        "csat_conv_palestra_regulacao": {
           "type": "string",
           "__example__": "4"
         },
-        "csat_conv_palestrantes": {
+        "csat_conv_palestra_uhub": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_cases": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_governanca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_rdc": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_lideranca": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_marketing": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_expedicionarios": {
+          "type": "string",
+          "__example__": "4"
+        },
+        "csat_conv_palestra_riso": {
           "type": "string",
           "__example__": "4"
         },
@@ -1407,7 +1951,7 @@
               },
               {
                 "type": "TextBody",
-                "text": "Etapa 8 de 8. Os dois campos abaixo são opcionais."
+                "text": "Etapa 9 de 9. Os dois campos abaixo são opcionais."
               },
               {
                 "type": "TextBody",
@@ -1446,9 +1990,16 @@
                     "csat_conv_programacao": "${data.csat_conv_programacao}",
                     "csat_conv_horarios": "${data.csat_conv_horarios}",
                     "csat_conv_atividades": "${data.csat_conv_atividades}",
-                    "csat_conv_temas": "${data.csat_conv_temas}",
-                    "csat_conv_conteudos": "${data.csat_conv_conteudos}",
-                    "csat_conv_palestrantes": "${data.csat_conv_palestrantes}",
+                    "csat_conv_palestra_cultura": "${data.csat_conv_palestra_cultura}",
+                    "csat_conv_palestra_regulacao": "${data.csat_conv_palestra_regulacao}",
+                    "csat_conv_palestra_uhub": "${data.csat_conv_palestra_uhub}",
+                    "csat_conv_palestra_cases": "${data.csat_conv_palestra_cases}",
+                    "csat_conv_palestra_governanca": "${data.csat_conv_palestra_governanca}",
+                    "csat_conv_palestra_rdc": "${data.csat_conv_palestra_rdc}",
+                    "csat_conv_palestra_lideranca": "${data.csat_conv_palestra_lideranca}",
+                    "csat_conv_palestra_marketing": "${data.csat_conv_palestra_marketing}",
+                    "csat_conv_palestra_expedicionarios": "${data.csat_conv_palestra_expedicionarios}",
+                    "csat_conv_palestra_riso": "${data.csat_conv_palestra_riso}",
                     "csat_conv_feira": "${data.csat_conv_feira}",
                     "csat_conv_trocas": "${data.csat_conv_trocas}",
                     "csat_conv_informacoes": "${data.csat_conv_informacoes}",
