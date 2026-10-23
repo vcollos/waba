@@ -1100,6 +1100,6 @@ com acesso pelo vínculo tenant/lista/campanha existente.
 Flow estático JSON 7.3, nove telas, sem endpoint de Data Exchange. Conclusão
 usa `complete` e o webhook já existente; API de Dados 4.0 não se aplica a
 este Flow estático. Criar o Flow não envia campanha nem valida recebimento
-real. O relatório genérico do Waba atualmente considera a escala contendo
-`na` não numérica e sinaliza `observed`; não tratar esse agregado como CSAT
-validado para esta pesquisa antes de adequar a política do ADR-0008.
+real. Conforme ADR-0016, `na` com rótulo explícito de não participação fica
+fora da escala e do denominador do CSAT. O cálculo preserva a escala declarada
+1–5 e considera satisfeitas as notas 4 e 5, mesmo sem respostas na nota 5.
