@@ -42,6 +42,32 @@ const ANSWER_KEYS = new Set([
   'atividade', 'activity', 'evento', 'event',
 ]);
 
+// Campos explícitos da pesquisa da Convenção; não liberar prefixos arbitrários.
+const CONVENTION_SURVEY_LABELS: Readonly<Record<string, string>> = {
+  "csat_conv_cidade": "Cidade escolhida para a convenção",
+  "csat_conv_localizacao_hotel": "Localização do hotel do evento",
+  "csat_conv_hotel": "Instalações e serviços do hotel",
+  "csat_conv_estrutura": "Espaços e conforto",
+  "csat_conv_som": "Qualidade do som",
+  "csat_conv_imagem": "Qualidade e visibilidade das imagens e projeções",
+  "csat_conv_programacao": "Programação geral",
+  "csat_conv_horarios": "Distribuição dos horários e intervalos",
+  "csat_conv_atividades": "Atividades sociais e de integração",
+  "csat_conv_temas": "Temas escolhidos para as palestras",
+  "csat_conv_conteudos": "Qualidade dos conteúdos apresentados",
+  "csat_conv_palestrantes": "Clareza e didática dos palestrantes",
+  "csat_conv_feira": "Feira de negócios",
+  "csat_conv_trocas": "Oportunidades de troca entre cooperativas",
+  "csat_conv_informacoes": "Informações e orientações sobre o evento",
+  "csat_conv_credenciamento": "Credenciamento e recepção",
+  "csat_conv_organizacao": "Equipe de organização do evento",
+  "csat_conv_contribuicao": "Contribuição da convenção para sua atuação na cooperativa",
+  "csat_conv_geral": "De forma geral, sua satisfação com a convenção",
+  "nps_convencao": "Recomendação da convenção (NPS)",
+  "conv_opiniao": "Opinião, sugestões, dúvidas ou perguntas",
+  "conv_sugestoes": "Sugestões de locais, temas ou palestrantes"
+};
+
 export function validateCampaignQuery(input: CampaignResultsQuery) {
   const limit = input.limit ?? 25;
   const offset = input.offset ?? 0;
@@ -58,14 +84,15 @@ export function sanitizeCampaignAnswers(payload: Record<string, unknown>) {
   const answers: Recipient['answers'] = [];
   for (const [key, raw] of Object.entries(payload).slice(0, 100)) {
     const normalizedKey = normalized(key).replace(/[^a-z0-9]/g, '');
-    if (!key || key.length > 100 || !ANSWER_KEYS.has(normalizedKey)) continue;
+    const surveyLabel = Object.hasOwn(CONVENTION_SURVEY_LABELS, key) ? CONVENTION_SURVEY_LABELS[key] : undefined;
+    if (!key || key.length > 100 || (!ANSWER_KEYS.has(normalizedKey) && !surveyLabel)) continue;
     let value: string;
     if (typeof raw === 'string') value = raw.trim().slice(0, 2000);
     else if (typeof raw === 'number' && Number.isFinite(raw)) value = String(raw);
     else if (typeof raw === 'boolean') value = raw ? 'Sim' : 'Não';
     else if (Array.isArray(raw) && raw.length <= 20 && raw.every((item) => typeof item === 'string')) value = raw.map((item) => item.slice(0, 100)).join(', ');
     else continue;
-    if (value) answers.push({ key, label: key.replace(/[_-]+/g, ' '), value });
+    if (value) answers.push({ key, label: surveyLabel ?? key.replace(/[_-]+/g, ' '), value });
   }
   return answers;
 }

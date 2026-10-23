@@ -293,3 +293,6 @@ A API pública de ingestão aceita `institutionRepresented` e `jobTitle` opciona
 (até 200 caracteres), persistidos nos atributos do contato. Campos omitidos ou
 vazios preservam dados existentes. A instituição representada é um dado do
 contato e não altera o tenant de autorização. Ver ADR 0011.
+
+Pesquisa da Convenção 2026: definição em `flows/convencao-2026-satisfacao.json`
+e contrato/limites em [API pública](docs/api-reference.md#pesquisa-da-convenção-2026).

@@ -221,3 +221,11 @@ test('presença nao_comparecerei é negativa, sem substring ambígua', async () 
   const result = await service.results('list', 'campaign', 'tenant', { presence: 'no' });
   assert.equal(result.total, 1); assert.equal(result.campaign.counters.presenceNo, 1);
 });
+
+ test('pesquisa da convenção expõe somente campos explícitos e preserva NPS zero e não aplicável', () => {
+  const result = sanitizeCampaignAnswers({ csat_conv_cidade: '5', csat_conv_hotel: 'na', nps_convencao: 0, conv_opiniao: 'Minha opinião', conv_sugestoes: 'Novos temas', csat_conv_cpf: 'omit', flow_token: 'omit', cpf: 'omit', access_token: 'omit' });
+  assert.deepEqual(result.map(a => a.key), ['csat_conv_cidade', 'csat_conv_hotel', 'nps_convencao', 'conv_opiniao', 'conv_sugestoes']);
+  assert.equal(result[0].label, 'Cidade escolhida para a convenção');
+  assert.equal(result[1].value, 'na');
+  assert.equal(result[2].value, '0');
+});
