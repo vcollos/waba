@@ -15,7 +15,7 @@ import {
   usePagedRows,
   useToasts,
 } from '../../components/ui';
-import { apiRequest } from '../../lib/api';
+import { ApiError, apiRequest } from '../../lib/api';
 import { ENTITY_STATUS, badgeFor } from '../../lib/badges';
 import { fmtDateTime, fmtInt } from '../../lib/format';
 import { canWrite } from '../../lib/session';
@@ -29,6 +29,7 @@ interface CategoryStat {
 
 interface ListRow {
   id: string;
+  clientId: string | null;
   name: string;
   description?: string | null;
   sourceType: 'csv' | 'manual' | 'api';
@@ -408,8 +409,9 @@ function ListDrawer({
           </div>
           {adding ? (
             <AddContactForm
+              key={`${list.id}:${list.clientId}:${scopeClientId}`}
               listId={list.id}
-              scopeClientId={scopeClientId}
+              scopeClientId={list.clientId}
               onCancel={() => setAdding(false)}
               onSaved={() => {
                 setAdding(false);
@@ -654,6 +656,11 @@ function AddContactForm({
   const [category, setCategory] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [existingContact, setExistingContact] = useState<{
+    id: string;
+    name: string;
+    phoneE164: string;
+  } | null>(null);
 
   const submit = async () => {
     if (!firstName.trim() || !phone.trim()) {
@@ -674,11 +681,16 @@ function AddContactForm({
           category: category || undefined,
           clientId: scopeClientId ?? undefined,
           listIds: [listId],
+          existingContactId: existingContact?.id,
         }),
       });
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao adicionar contato.');
+      if (err instanceof ApiError && err.payload.code === 'CONTACT_ALREADY_EXISTS') {
+        setExistingContact(err.payload.existingContact as NonNullable<typeof existingContact>);
+      } else {
+        setError(err instanceof Error ? err.message : 'Falha ao adicionar contato.');
+      }
       setSaving(false);
     }
   };
@@ -707,7 +719,11 @@ function AddContactForm({
         <label>
           WhatsApp <span className="req">*</span>
         </label>
-        <input className="input" placeholder="+55 11 99999-8888" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <input className="input" placeholder="+55 11 99999-8888" value={phone} disabled={saving} onChange={(e) => {
+          setPhone(e.target.value);
+          setExistingContact(null);
+          setError(null);
+        }} />
       </div>
       <div className="field">
         <label>E-mail</label>
@@ -718,13 +734,22 @@ function AddContactForm({
         <input className="input" value={category} onChange={(e) => setCategory(e.target.value)} />
       </div>
       <div className="field" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-        <button className="btn primary md" onClick={submit} disabled={saving}>
+        <button className="btn primary md" onClick={submit} disabled={saving || !!existingContact}>
           {saving ? 'Salvando…' : 'Adicionar'}
         </button>
         <button className="btn tertiary md" onClick={onCancel} disabled={saving}>
           Cancelar
         </button>
       </div>
+      {existingContact ? (
+        <div className="field col-2" role="status">
+          <p>Já existe um contato com este telefone: <strong>{existingContact.name}</strong> ({existingContact.phoneE164}). Deseja adicionar à lista?</p>
+          <p className="muted">O cadastro e as outras listas serão preservados.</p>
+          <button className="btn primary md" onClick={submit} disabled={saving}>
+            {saving ? 'Adicionando…' : '+ Adicionar à lista'}
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <div className="field col-2">
           <span style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</span>

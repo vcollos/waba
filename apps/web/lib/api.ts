@@ -14,6 +14,13 @@ export const clearToken = () => {
   window.localStorage.removeItem('campaign_sender_token');
 };
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly payload: Record<string, unknown>) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -65,8 +72,9 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(
+    throw new ApiError(
       String((payload as { message?: string }).message ?? `Erro ${response.status}`),
+      payload,
     );
   }
 

@@ -185,6 +185,12 @@ Wireframe textual:
 [Listas]
 - criar lista
 - adicionar/remover contatos
+- inclusão manual: telefone existente no mesmo cliente oferece confirmação
+  “+ Adicionar à lista”; apenas o vínculo é criado, sem alterar cadastro, opt-out
+  ou outras listas. Telefone novo mantém o cadastro normal. `POST /contacts`
+  retorna `CONTACT_ALREADY_EXISTS` com identificação mínima; a confirmação reenvia
+  `existingContactId` e `listIds`. O backend revalida telefone, cliente e listas;
+  repetir a confirmação não duplica o vínculo.
 - ver contagem elegível
 ```
 

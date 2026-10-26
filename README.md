@@ -40,6 +40,8 @@ Incidente resolvido em `2026-04-02`:
   - dashboard
   - cadastro de integração
   - importação de contatos/listas
+  - inclusão manual em listas com confirmação para reutilizar telefone já cadastrado
+    no mesmo cliente, preservando cadastro, opt-out e vínculos anteriores
   - biblioteca de templates/flows
   - criação e monitoramento básico de campanhas
   - página `/reports` (relatório de custos + tarifas/NF), restrita por papel

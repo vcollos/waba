@@ -51,6 +51,7 @@ interface ContactInput {
   externalRef?: string | null;
   attributes?: Record<string, string>;
   listIds?: string[];
+  existingContactId?: string;
 }
 
 interface CsvImportDefaults {
@@ -1435,12 +1436,45 @@ export class ContactsService {
     const normalized = normalizePhone(String(input.phone ?? ''));
     // Tenant do novo contato: cliente => o próprio; Collos => o informado (ou nenhum).
     const scopedInput = { ...input, clientId: writeClientId(actor, input.clientId) };
-    const contact = createNewContact(scopedInput, normalized, timestamp);
+    let contact = createNewContact(scopedInput, normalized, timestamp);
+    let reused = false;
 
     await this.database.postgresTransaction(async (client) => {
-      await ensurePhoneIsUniqueInDatabase(client, contact.phoneHash, contact.clientId ?? null);
       await ensureListIdsExistInDatabase(client, input.listIds, resolveClientScope(actor, input.clientId));
-      await insertContactPg(client, contact);
+      const existingRows = await client.query(
+        `SELECT ${CONTACT_COLUMNS} FROM contacts
+         WHERE phone_hash = $1 AND COALESCE(client_id, '') = COALESCE($2, '') LIMIT 1 FOR UPDATE`,
+        [contact.phoneHash, contact.clientId ?? null],
+      );
+      const existing = existingRows.rows[0] ? mapContactRow(existingRows.rows[0]) : null;
+      if (existing) {
+        if (!input.listIds?.length) {
+          throw new BadRequestException('Já existe um contato com este telefone');
+        }
+        // Mesmo para Collos, a reutilização só associa listas do tenant do contato.
+        const lists = await client.query(
+          `SELECT id FROM lists WHERE id = ANY($1::text[])
+           AND COALESCE(client_id, '') = COALESCE($2, '') FOR UPDATE`,
+          [input.listIds, existing.clientId ?? null],
+        );
+        if (lists.rows.length !== new Set(input.listIds).size) {
+          throw new NotFoundException('Uma ou mais listas não foram encontradas');
+        }
+        if (input.existingContactId !== existing.id) {
+          throw new BadRequestException({
+            message: 'Já existe um contato com este telefone. Deseja adicionar à lista?',
+            code: 'CONTACT_ALREADY_EXISTS',
+            existingContact: { id: existing.id, name: existing.name, phoneE164: existing.phoneE164 },
+          });
+        }
+        contact = existing;
+        reused = true;
+      } else {
+        if (input.existingContactId) {
+          throw new BadRequestException('O contato mudou. Confira o telefone e tente novamente.');
+        }
+        await insertContactPg(client, contact);
+      }
       for (const listId of input.listIds ?? []) {
         await client.query(
           `INSERT INTO list_members (id, list_id, contact_id, created_at)
@@ -1453,13 +1487,14 @@ export class ContactsService {
 
     await this.audit.log({
       actorUserId: actor.id,
-      action: 'contact.created',
+      action: reused ? 'contact.assigned_to_lists' : 'contact.created',
       entityType: 'contact',
       entityId: contact.id,
       metadata: {
         clientName: contact.clientName,
         category: contact.category,
         recordStatus: contact.recordStatus,
+        ...(reused ? { listIds: input.listIds } : {}),
       },
     });
 

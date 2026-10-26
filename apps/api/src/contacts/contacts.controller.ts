@@ -87,6 +87,7 @@ export class ContactsController {
       email?: string | null;
       externalRef?: string | null;
       listIds?: string[];
+      existingContactId?: string;
     },
     @Req() request: { user: UserSession },
   ) {
