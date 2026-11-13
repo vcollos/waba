@@ -70,6 +70,19 @@ test('prévia deduplica telefone, exclui resposta em qualquer tentativa e opt-ou
   assert.ok(!JSON.stringify(preview).includes('+5511999990001'));
 });
 
+test('prévia de campanha legada reconhece Flow numérico do botão e exclui respondentes', async () => {
+  const flowId = '2080625443327961';
+  const { service } = setup({
+    campaigns: [{ ...source, metaFlowId: null, flowCacheId: null, templateCacheId: template.id }],
+    templates: [{ ...template, flowButtonMeta: { flow_id: Number(flowId) } }],
+  });
+  const preview = await service.preview('list', 'tenant', { ...input, flowId });
+  assert.equal(preview.group.flowId, flowId);
+  assert.equal(preview.counts.responded, 1);
+  assert.equal(preview.counts.eligible, 1);
+  assert.equal(preview.counts.excluded.responded, 1);
+});
+
 test('sem lista/integração do tenant a consulta para antes de mensagens', async () => {
   for (const options of [{ list: false }, { linked: false }]) {
     const { service } = setup(options);

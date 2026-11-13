@@ -128,8 +128,11 @@ export function campaignIdentity(campaign: CampaignRecord, state: Readonly<AppSt
   const template = state.templates.find((item) => item.id === campaign.templateCacheId && item.integrationId === campaign.integrationId);
   const flow = state.flows.find((item) => item.id === campaign.flowCacheId && item.integrationId === campaign.integrationId);
   const templateId = text(campaign.metaTemplateId) || text(template?.metaTemplateId) || null;
+  const buttonFlowId = template?.flowButtonMeta?.flow_id;
+  const normalizedButtonFlowId = typeof buttonFlowId === 'number' && Number.isSafeInteger(buttonFlowId) && buttonFlowId > 0
+    ? String(buttonFlowId) : text(buttonFlowId);
   const flowId = text(campaign.metaFlowId) || text(flow?.metaFlowId) ||
-    (template?.hasFlowButton ? text(template.flowButtonMeta?.flow_id) : '') || null;
+    (template?.hasFlowButton ? normalizedButtonFlowId : '') || null;
   const namedTemplate = templateId && (template?.metaTemplateId === templateId ? template :
     state.templates.find((item) => item.integrationId === campaign.integrationId && item.metaTemplateId === templateId));
   const namedFlow = flowId && (flow?.metaFlowId === flowId ? flow :
