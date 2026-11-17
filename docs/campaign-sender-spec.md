@@ -275,7 +275,24 @@ Wizard recomendado:
 - exportar resultado
 ```
 
-### 3.7 Relatórios de custo (`/reports`)
+### 3.7 Relatórios (`/reports`)
+
+A aba inicial **Respostas por pesquisa** permite selecionar uma pesquisa e
+consolida todo o histórico pelo cliente, integração e ID Meta do Flow. O telefone
+registrado no envio identifica a pessoa, evitando duplicidade entre campanhas,
+listas e reenvios. São exibidas pessoas contatadas (envio confirmado ou resposta),
+respondentes únicos, contatados sem resposta e taxa `respondentes / contatados`.
+O detalhe por envio e o CSV usam a mesma contagem; os totais por envio não devem
+ser somados para obter pessoas únicas. Não há filtro de período nessa aba.
+Respostas precisam estar vinculadas a uma campanha do grupo e à mesma integração;
+respostas sem vínculo não entram. Associações ambíguas ficam fora e são sinalizadas.
+A pesquisa usa IDs Meta estáveis e não depende de novo sync. Acesso mantém os
+papéis administrativos e o escopo de cliente já existentes em Relatórios.
+
+Rotas: `GET /reports/surveys`, `GET /reports/surveys/:campaignId` e
+`GET /reports/surveys/:campaignId/export.csv`, com `clientId` opcional para Collos.
+Qualquer campanha do grupo pode identificar a pesquisa; campanha fora do escopo
+retorna 404 antes de consultar mensagens e respostas.
 
 Relatório financeiro de campanhas por período e tenant. Ver ADR 0007 para a
 decisão completa.

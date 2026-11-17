@@ -885,12 +885,15 @@ declarada no FLOW_JSON quando inequívoca; caso contrário usam valores observad
 e retornam `scaleSource: observed`. `scaleOrientation` é `ascending`,
 `descending` ou `assumed`.
 
-### 6.11 Relatórios financeiros
+### 6.11 Relatórios
 
 Leitura: `super_admin`, `admin`, `client_admin`. Escrita: somente Collos.
 
 | Método e rota | Papel | Operação |
 |---|---|---|
+| `GET /reports/surveys?clientId` | admin financeiro | Pesquisas agrupadas por cliente, integração e ID Meta do Flow. |
+| `GET /reports/surveys/:campaignId?clientId` | admin financeiro | Pessoas únicas, respostas e detalhe por envio de todo o histórico do Flow. |
+| `GET /reports/surveys/:campaignId/export.csv?clientId` | admin financeiro | CSV com consolidado e detalhe por envio. |
 | `GET /reports/campaigns?from&to&clientId` | admin financeiro | Relatório consolidado JSON. |
 | `GET /reports/campaigns/export.csv?...` | admin financeiro | CSV. |
 | `GET /reports/campaigns/export.pdf?...` | admin financeiro | PDF real; flags `mostrarGlossario`, `mostrarIds`. |
@@ -899,7 +902,16 @@ Leitura: `super_admin`, `admin`, `client_admin`. Escrita: somente Collos.
 | `GET /reports/settings?clientId` | admin financeiro | Percentual de nota fiscal. |
 | `PUT /reports/settings` | Collos | Atualiza `notaFiscalPct`. |
 
-`from` date-only começa em `00:00:00.000Z`; `to` date-only termina em
+Nas pesquisas, `totals` e `executions[]` incluem `audience`, `contacted`,
+`delivered`, `responded`, `unanswered`, `responseRate`, `messages` e
+`failedMessages`. Telefone histórico deduplica pessoas. Contatado exige evidência
+de envio ou resposta; `unanswered = contacted - responded`. Respostas sem campanha
+ficam fora; `unmatchedResponses` sinaliza respostas vinculadas sem identidade de
+pessoa resolvida. Não há filtro de período. Qualquer campanha do grupo identifica
+a pesquisa; fora do tenant retorna 404. Nenhum payload de resposta ou telefone é
+exposto nesse contrato.
+
+Nos custos, `from` date-only começa em `00:00:00.000Z`; `to` date-only termina em
 `23:59:59.999Z`. `from > to` retorna `400`. Flags de PDF são ligadas por default;
 somente `false`, `0` ou `no` desligam.
 

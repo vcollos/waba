@@ -44,7 +44,8 @@ Incidente resolvido em `2026-04-02`:
     no mesmo cliente, preservando cadastro, opt-out e vínculos anteriores
   - biblioteca de templates/flows
   - criação e monitoramento básico de campanhas
-  - página `/reports` (relatório de custos + tarifas/NF), restrita por papel
+  - página `/reports` com respostas por pesquisa (pessoas únicas entre envio
+    original e reenvios, detalhe por envio e CSV), custos e tarifas/NF, restrita por papel
   - página `/results` com métricas de pesquisa (NPS/CSAT) calculadas sobre a
     escala declarada no flow, sinalizando escala inferida, escala invertida e
     orientação não confirmada (ver ADR 0008)

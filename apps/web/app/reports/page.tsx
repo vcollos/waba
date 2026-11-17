@@ -18,6 +18,7 @@ import { apiDownload, apiRequest } from '../../lib/api';
 import { CAMPAIGN_STATUS, badgeFor } from '../../lib/badges';
 import { fmtBRL, fmtDateTime, fmtInt } from '../../lib/format';
 import { Role, isCollosRole } from '../../lib/session';
+import { SurveyReportTab } from '../../components/survey-report';
 
 /* ---- Contrato de GET /reports/campaigns ---------------------------------- */
 
@@ -172,7 +173,7 @@ export default function ReportsPage() {
 function ReportsContent() {
   const { session } = useShell();
   const admin = canAdminRates(session.role);
-  const [tab, setTab] = useState<'report' | 'rates'>('report');
+  const [tab, setTab] = useState<'surveys' | 'report' | 'rates'>('surveys');
 
   if (!canViewReports(session.role)) {
     return (
@@ -196,28 +197,29 @@ function ReportsContent() {
       <div className="op-head">
         <div className="op-head-titles">
           <h1 className="op-title">Relatórios</h1>
-          <p className="op-sub">Custos de campanhas por período, com tarifas e nota fiscal.</p>
+          <p className="op-sub">Respostas por pesquisa e custos de campanhas.</p>
         </div>
       </div>
 
-      {admin ? (
         <div className="tabs-list page-tabs">
+          <button className={`tab-trigger${tab === 'surveys' ? ' active' : ''}`} onClick={() => setTab('surveys')}>
+            Respostas por pesquisa
+          </button>
           <button
             className={`tab-trigger${tab === 'report' ? ' active' : ''}`}
             onClick={() => setTab('report')}
           >
-            Relatório de campanhas
+            Custos de campanhas
           </button>
-          <button
+          {admin ? <button
             className={`tab-trigger${tab === 'rates' ? ' active' : ''}`}
             onClick={() => setTab('rates')}
           >
             Tarifas e nota fiscal
-          </button>
+          </button> : null}
         </div>
-      ) : null}
 
-      {tab === 'report' || !admin ? (
+      {tab === 'surveys' ? <SurveyReportTab /> : tab === 'report' || !admin ? (
         <ReportTab canAdminRates={admin} onGoToRates={() => setTab('rates')} />
       ) : (
         <RatesTab />

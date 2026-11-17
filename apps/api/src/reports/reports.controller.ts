@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Put, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Put, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Roles } from '../common/roles';
 import { RolesGuard } from '../common/roles.guard';
 import { resolveClientScope } from '../common/scope';
 import { UserSession } from '../database/types';
 import { ReportsService } from './reports.service';
+import { SurveyReportsService } from './survey-reports.service';
 
 // Relatórios expõem valores financeiros: apenas papéis administrativos leem
 // (viewer/operator NÃO). @Roles em nível de classe cobre todas as leituras; as
@@ -13,7 +14,26 @@ import { ReportsService } from './reports.service';
 @UseGuards(RolesGuard)
 @Roles('super_admin', 'admin', 'client_admin')
 export class ReportsController {
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(private readonly reportsService: ReportsService, private readonly surveys: SurveyReportsService) {}
+
+  @Get('surveys')
+  surveyList(@Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
+    return this.surveys.list(resolveClientScope(request.user, clientId));
+  }
+
+  @Get('surveys/:campaignId')
+  surveyReport(@Param('campaignId') campaignId: string, @Req() request: { user: UserSession }, @Query('clientId') clientId?: string) {
+    return this.surveys.report(campaignId, resolveClientScope(request.user, clientId));
+  }
+
+  @Get('surveys/:campaignId/export.csv')
+  async surveyCsv(@Param('campaignId') campaignId: string, @Req() request: { user: UserSession },
+    @Res() response: Response, @Query('clientId') clientId?: string) {
+    const csv = await this.surveys.csv(campaignId, resolveClientScope(request.user, clientId));
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', 'attachment; filename="respostas-pesquisa.csv"');
+    response.send(csv);
+  }
 
   @Get('campaigns')
   campaigns(
