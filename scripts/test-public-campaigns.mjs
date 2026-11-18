@@ -165,7 +165,7 @@ test('última resposta por mensagem vence; nunca expõe payload técnico, CPF ou
   const { service } = setup({ messages: [msg('1')], responses: [response('old'), response('latest', { completedAt: '2026-09-03T10:00:00Z', responsePayload: { presenca: 'Não', observacao: 'Viagem', flow_token: 'secret', CPF: '123', payload: { nested: 'secret' }, nps: 9 }, rawWebhook: { secret: true } })] });
   const result = await service.results('list', 'campaign', 'tenant');
   assert.equal(result.items[0].presence, 'no'); assert.equal(result.items[0].observation, 'Viagem');
-  assert.deepEqual(result.items[0].answers.map((a) => a.key), ['presenca', 'observacao']);
+  assert.deepEqual(result.items[0].answers.map((a) => a.key), ['presenca', 'observacao', 'nps']);
   assert.ok(!JSON.stringify(result).includes('secret')); assert.equal(result.campaign.counters.responded, 1);
 });
 test('resposta ligada a outra mensagem não vaza por fallback telefone/contato', async () => {
@@ -258,4 +258,9 @@ test('Flow da convenção preserva 27 avaliações e transmite todos os 29 campo
   assert.equal(Object.keys(carried).length, 29);
   assert.equal(sanitizeCampaignAnswers({ ...carried, conv_opiniao: 'Comentário', conv_sugestoes: 'Sugestão' }).length, 29);
   assert.equal(carried.nps_convencao, '0');
+});
+
+test('pesquisa Campinas libera somente os campos explícitos de negócio', () => {
+  const payload = { nps: '10_10', atendimento: '0_Muito_satisfeito', esforco: '1_Fácil', comentario: 'Ótimo', csat_comercial: '5', csat_disponibilidade: '4', csat_entrega: '3', justificativa: 'Entrega', nome: 'Pessoa', flow_token: 'secret', cpf: 'private', csat_qualquer: '5', nested: { nps: '10' } };
+  assert.deepEqual(sanitizeCampaignAnswers(payload).map((answer) => answer.key), ['nps', 'atendimento', 'esforco', 'comentario', 'csat_comercial', 'csat_disponibilidade', 'csat_entrega', 'justificativa']);
 });

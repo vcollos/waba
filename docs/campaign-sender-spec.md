@@ -1644,3 +1644,8 @@ A pesquisa da Convenção 2026 usa Flow JSON 7.3 estático, nove telas,
 libera somente as chaves explícitas e rótulos descritos em
 [API pública](api-reference.md#pesquisa-da-convenção-2026). A ressalva de
 NA no cálculo genérico do Waba permanece indicada nesse contrato.
+
+O consumidor `nps_campinas` usa a API pública de resultados (WABA-63), com
+token de tenant restrito ao servidor e Dental separada. As oito chaves de
+Campinas constam do [contrato HTTP](api-reference.md). Não requer sync de Flow
+nem altera coleta, histórico ou vínculo de tenant.

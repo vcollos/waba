@@ -299,3 +299,9 @@ contato e não altera o tenant de autorização. Ver ADR 0011.
 
 Pesquisa da Convenção 2026: definição em `flows/convencao-2026-satisfacao.json`
 e contrato/limites em [API pública](docs/api-reference.md#pesquisa-da-convenção-2026).
+
+O dashboard [008 NPS Campinas](https://008nps.collos.com.br/) consome os GETs
+de resultados por token do tenant Campinas no servidor. O contrato permite
+NPS/atendimento/esforço/comentário dos prestadores e os três CSATs/justificativa
+da Dental em campos explícitos; Dental é um recorte separado. Ver
+[contrato público de resultados](docs/api-reference.md).

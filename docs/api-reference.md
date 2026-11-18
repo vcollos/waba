@@ -565,6 +565,12 @@ e `event`. Valores são escalares ou arrays curtos de strings; não são devolvi
 webhook bruto, token do Flow ou identificadores técnicos do payload. Novas
 perguntas exigem extensão explícita desse contrato.
 
+A pesquisa Campinas libera também as chaves exatas `nps`, `atendimento`,
+`esforco`, `comentario`, `csat_comercial`, `csat_disponibilidade`, `csat_entrega`
+e `justificativa`. Não libera prefixos arbitrários, nome ou token de Flow.
+O dashboard 008 consome estes GETs apenas no servidor com token do tenant
+Campinas; Dental é apresentada separadamente dos prestadores.
+
 O histórico parte das mensagens, não dos membros atuais da lista. Usa a última
 resposta vinculada à mensagem; na ausência desse vínculo, associa por contato
 ou, sem contato, telefone, somente à mensagem mais recente correspondente.

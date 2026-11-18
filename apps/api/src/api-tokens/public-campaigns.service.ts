@@ -42,6 +42,18 @@ const ANSWER_KEYS = new Set([
   'atividade', 'activity', 'evento', 'event',
 ]);
 
+// Pesquisa de prestadores e Dental Campinas: contrato explícito, sem nome/token.
+const CAMPINAS_SURVEY_LABELS: Readonly<Record<string, string>> = {
+  nps: 'Recomendação (NPS)',
+  atendimento: 'Satisfação com o atendimento',
+  esforco: 'Esforço para resolver o problema',
+  comentario: 'Comentário ou sugestão',
+  csat_comercial: 'Atendimento comercial',
+  csat_disponibilidade: 'Disponibilidade de produtos',
+  csat_entrega: 'Entrega',
+  justificativa: 'Justificativa da avaliação',
+};
+
 // Campos explícitos da pesquisa da Convenção; não liberar prefixos arbitrários.
 const CONVENTION_SURVEY_LABELS: Readonly<Record<string, string>> = {
   "csat_conv_cidade": "Cidade escolhida para a convenção",
@@ -94,7 +106,8 @@ export function sanitizeCampaignAnswers(payload: Record<string, unknown>) {
   const answers: Recipient['answers'] = [];
   for (const [key, raw] of Object.entries(payload).slice(0, 100)) {
     const normalizedKey = normalized(key).replace(/[^a-z0-9]/g, '');
-    const surveyLabel = Object.hasOwn(CONVENTION_SURVEY_LABELS, key) ? CONVENTION_SURVEY_LABELS[key] : undefined;
+    const surveyLabel = Object.hasOwn(CONVENTION_SURVEY_LABELS, key) ? CONVENTION_SURVEY_LABELS[key] :
+      Object.hasOwn(CAMPINAS_SURVEY_LABELS, key) ? CAMPINAS_SURVEY_LABELS[key] : undefined;
     if (!key || key.length > 100 || (!ANSWER_KEYS.has(normalizedKey) && !surveyLabel)) continue;
     let value: string;
     if (typeof raw === 'string') value = raw.trim().slice(0, 2000);
